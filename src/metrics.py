@@ -1,0 +1,221 @@
+"""
+Metricas comunes: WAPE global ponderado, mejora relativa, reduccion absoluta
+de error y estadistica descriptiva. Reutilizables tanto para el analisis por
+cliente (Fase 3) como para la comparativa global entre clientes (Fase 4).
+
+Principio metodologico (CLAUDE.md): el WAPE agregado NUNCA se calcula como
+media simple de los WAPE por serie. Siempre es:
+
+    WAPE_GLOBAL = SUM(error_absoluto_total) / SUM(historico_total)
+
+sobre el universo de series comparables correspondiente.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+
+from src.periods import PeriodColumns
+
+EXTREME_LOWER_BOUND_PCT = -100.0
+EXTREME_UPPER_BOUND_PCT = 100.0
+
+
+def safe_divide(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
+    """Division vectorizada que devuelve NaN donde el denominador es 0, nulo o negativo."""
+    denom = denominator.where(denominator > 0)
+    return numerator / denom
+
+
+def period_wape_global(df: pd.DataFrame, pcols: PeriodColumns) -> dict:
+    """
+    WAPE global ponderado por volumen para SCP y ML sobre las filas de `df`
+    (el llamador debe pasar ya el subconjunto comparable del periodo).
+    """
+    history_sum = float(df[pcols.total_history].sum())
+    scp_abs_error_sum = float(df[pcols.scp_total_abs_error].sum())
+    ml_abs_error_sum = float(df[pcols.ml_total_abs_error].sum())
+
+    if history_sum <= 0:
+        return {
+            "history_sum": history_sum,
+            "scp_abs_error_sum": scp_abs_error_sum,
+            "ml_abs_error_sum": ml_abs_error_sum,
+            "scp_wape_global": np.nan,
+            "ml_wape_global": np.nan,
+            "improvement_pct": np.nan,
+        }
+
+    scp_wape = scp_abs_error_sum / history_sum
+    ml_wape = ml_abs_error_sum / history_sum
+    improvement = (scp_wape - ml_wape) / scp_wape * 100 if scp_wape > 0 else np.nan
+
+    return {
+        "history_sum": history_sum,
+        "scp_abs_error_sum": scp_abs_error_sum,
+        "ml_abs_error_sum": ml_abs_error_sum,
+        "scp_wape_global": scp_wape,
+        "ml_wape_global": ml_wape,
+        "improvement_pct": improvement,
+    }
+
+
+def absolute_error_reduction_row(df: pd.DataFrame, pcols: PeriodColumns) -> pd.Series:
+    """positivo = ML reduce error absoluto; negativo = ML lo aumenta."""
+    return df[pcols.scp_total_abs_error] - df[pcols.ml_total_abs_error]
+
+
+def absolute_error_reduction_total(df: pd.DataFrame, pcols: PeriodColumns) -> float:
+    return float(df[pcols.scp_total_abs_error].sum() - df[pcols.ml_total_abs_error].sum())
+
+
+# Casos especiales documentados explicitamente por la spec de mejora relativa.
+CASE_NORMAL = "NORMAL"
+CASE_MISSING_WAPE = "MISSING_WAPE"
+CASE_BOTH_ZERO = "BOTH_ZERO"
+CASE_SCP_ZERO_ML_POSITIVE = "SCP_ZERO_ML_POSITIVE"
+CASE_ML_ZERO_SCP_POSITIVE = "ML_ZERO_SCP_POSITIVE"
+
+
+def relative_improvement_row(scp_wape: pd.Series, ml_wape: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """
+    ML_IMPROVEMENT_VS_SCP_PERIODO = (SCP_WAPE - ML_WAPE) / SCP_WAPE * 100
+
+    Devuelve (valores, casos) donde `casos` documenta explicitamente por que
+    una fila no tiene un valor numerico valido:
+
+    - MISSING_WAPE: SCP_WAPE o ML_WAPE es nulo -> no se calcula (NaN).
+    - BOTH_ZERO: ambos WAPE son 0 -> formula 0/0 no valida (NaN).
+    - SCP_ZERO_ML_POSITIVE: SCP_WAPE=0 y ML_WAPE>0 -> division por cero,
+      ML infinitamente peor; no se inventa un valor (NaN).
+    - ML_ZERO_SCP_POSITIVE: ML_WAPE=0 y SCP_WAPE>0 -> matematicamente valido,
+      da +100% (ML elimina todo el error). Se calcula con la formula normal.
+    - NORMAL: formula estandar.
+    """
+    both_present = scp_wape.notna() & ml_wape.notna()
+    scp_zero = scp_wape == 0
+    ml_zero = ml_wape == 0
+
+    case = pd.Series(CASE_MISSING_WAPE, index=scp_wape.index, dtype=object)
+    case = case.where(~both_present, CASE_NORMAL)
+    case = case.mask(both_present & scp_zero & ml_zero, CASE_BOTH_ZERO)
+    case = case.mask(both_present & scp_zero & ~ml_zero, CASE_SCP_ZERO_ML_POSITIVE)
+    case = case.mask(both_present & ml_zero & ~scp_zero, CASE_ML_ZERO_SCP_POSITIVE)
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        raw = (scp_wape - ml_wape) / scp_wape * 100
+
+    values = raw.where(case.isin([CASE_NORMAL, CASE_ML_ZERO_SCP_POSITIVE]))
+    return values, case
+
+
+def descriptive_stats(series: pd.Series) -> dict:
+    """
+    Estadistica descriptiva completa de una serie de mejoras (%). La mediana
+    debe usarse como referencia principal cuando existan outliers, pero la
+    media siempre se incluye tambien.
+    """
+    clean = series.dropna()
+    n = len(clean)
+    if n == 0:
+        return {
+            "count": 0, "mean": np.nan, "median": np.nan, "std": np.nan,
+            "p10": np.nan, "p25": np.nan, "p75": np.nan, "p90": np.nan,
+            "min": np.nan, "max": np.nan,
+            "n_below_-100": 0, "pct_below_-100": np.nan,
+            "n_above_100": 0, "pct_above_100": np.nan,
+        }
+    n_below = int((clean < EXTREME_LOWER_BOUND_PCT).sum())
+    n_above = int((clean > EXTREME_UPPER_BOUND_PCT).sum())
+    return {
+        "count": n,
+        "mean": clean.mean(),
+        "median": clean.median(),
+        "std": clean.std(ddof=1) if n > 1 else 0.0,
+        "p10": clean.quantile(0.10),
+        "p25": clean.quantile(0.25),
+        "p75": clean.quantile(0.75),
+        "p90": clean.quantile(0.90),
+        "min": clean.min(),
+        "max": clean.max(),
+        "n_below_-100": n_below,
+        "pct_below_-100": n_below / n * 100,
+        "n_above_100": n_above,
+        "pct_above_100": n_above / n * 100,
+    }
+
+
+def winner_distribution(winner: pd.Series) -> dict:
+    """Conteo y porcentaje de ML/SCP/TIE sobre una serie WINNER_METHOD_*."""
+    valid = winner.dropna()
+    total = len(valid)
+    counts = valid.value_counts().to_dict()
+    result = {}
+    for method in ("ML", "SCP", "TIE"):
+        n = int(counts.get(method, 0))
+        result[method] = {"n": n, "pct": (n / total * 100) if total else np.nan}
+    other_methods = set(counts) - {"ML", "SCP", "TIE"}
+    if other_methods:
+        result["OTHER"] = {
+            "n": int(sum(counts[m] for m in other_methods)),
+            "pct": (sum(counts[m] for m in other_methods) / total * 100) if total else np.nan,
+            "values": sorted(other_methods),
+        }
+    result["_total"] = total
+    return result
+
+
+def both_wape_zero_mask(scp_wape: pd.Series, ml_wape: pd.Series) -> pd.Series:
+    """
+    Unica parte de la regla de negocio del winner que esta completamente
+    especificada y por tanto es segura de auditar sin conocer la formula
+    original: "ambos WAPE iguales a cero -> TIE".
+
+    NOTA METODOLOGICA: la formula exacta de `relativeDiff` usada por la
+    generacion original de WINNER_METHOD_* (regla: TIE cuando
+    relativeDiff < 0.0001) no esta documentada en este repositorio. No se
+    inventa esa formula. WINNER_METHOD_* se trata siempre como fuente de
+    verdad salvo para el caso de ambos WAPE=0, que es el unico
+    completamente especificado. Ver quality_checks.check_winner_formula_not_auditable
+    y check_both_zero_wape_is_tie.
+    """
+    return scp_wape.notna() & ml_wape.notna() & (scp_wape == 0) & (ml_wape == 0)
+
+
+def client_contribution_to_total_reduction(client_reductions: pd.Series) -> pd.Series:
+    """
+    CLIENT_CONTRIBUTION_TO_TOTAL_REDUCTION = CLIENT_ABS_ERROR_REDUCTION / TOTAL_ABS_ERROR_REDUCTION * 100
+    Devuelve NaN para todos si el total es 0 (formula no valida).
+    """
+    total = client_reductions.sum()
+    if total == 0:
+        return pd.Series(np.nan, index=client_reductions.index)
+    return client_reductions / total * 100
+
+
+def cross_entity_stats(values: pd.Series, tie_epsilon: float = 0.0) -> dict:
+    """
+    Estadistica de una metrica de mejora calculada una vez por entidad
+    (p.ej. una fila por cliente). Cada entidad pesa igual: no se pondera
+    por volumen ni por numero de series subyacentes.
+
+    Se usa tanto para "mejora por cliente" (Perspectiva 2 del analisis
+    global) como, de forma generica, para cualquier agregacion por entidad
+    con el mismo peso.
+    """
+    stats = descriptive_stats(values)
+    clean = values.dropna()
+    n = len(clean)
+    n_improved = int((clean > tie_epsilon).sum())
+    n_worse = int((clean < -tie_epsilon).sum())
+    n_tie = n - n_improved - n_worse
+    stats.update({
+        "n_improved": n_improved,
+        "pct_improved": (n_improved / n * 100) if n else np.nan,
+        "n_worse": n_worse,
+        "pct_worse": (n_worse / n * 100) if n else np.nan,
+        "n_tie": n_tie,
+        "pct_tie": (n_tie / n * 100) if n else np.nan,
+    })
+    return stats
