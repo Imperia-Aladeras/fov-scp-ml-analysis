@@ -100,6 +100,35 @@ def test_relative_improvement_row_scp_zero_ml_positive():
     assert cases.iloc[0] == CASE_SCP_ZERO_ML_POSITIVE
 
 
+def test_relative_improvement_row_scp_near_zero_floating_point_noise_is_treated_as_zero():
+    """
+    Regresion: SCP_WAPE=2e-16 (ruido de punto flotante, no 0.0 exacto) usado
+    como denominador producia mejoras de billones de por ciento (caso real
+    detectado en el cliente 10204, ID_CONFIGURATION 8590, M1). Debe tratarse
+    como SCP_ZERO_ML_POSITIVE (NaN), no como NORMAL.
+    """
+    scp = pd.Series([2e-16])
+    ml = pd.Series([0.171875])
+    values, cases = relative_improvement_row(scp, ml)
+    assert math.isnan(values.iloc[0])
+    assert cases.iloc[0] == CASE_SCP_ZERO_ML_POSITIVE
+
+
+def test_relative_improvement_row_object_dtype_with_none_does_not_crash():
+    scp = pd.Series([None, 0.2], dtype=object)
+    ml = pd.Series([None, 0.1], dtype=object)
+    values, cases = relative_improvement_row(scp, ml)
+    assert cases.tolist() == [CASE_MISSING_WAPE, CASE_NORMAL]
+    assert math.isclose(values.iloc[1], 50.0)
+
+
+def test_both_wape_zero_mask_treats_floating_point_noise_as_zero():
+    scp = pd.Series([2e-16, 0.0])
+    ml = pd.Series([3e-17, 0.0])
+    mask = both_wape_zero_mask(scp, ml)
+    assert mask.tolist() == [True, True]
+
+
 def test_relative_improvement_row_ml_zero_scp_positive_is_defined_as_100pct():
     scp = pd.Series([0.4])
     ml = pd.Series([0.0])

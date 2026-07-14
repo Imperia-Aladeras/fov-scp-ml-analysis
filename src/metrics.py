@@ -77,6 +77,39 @@ CASE_BOTH_ZERO = "BOTH_ZERO"
 CASE_SCP_ZERO_ML_POSITIVE = "SCP_ZERO_ML_POSITIVE"
 CASE_ML_ZERO_SCP_POSITIVE = "ML_ZERO_SCP_POSITIVE"
 
+# Un WAPE "computacionalmente cero" (p.ej. 2e-16 en vez de 0.0 exacto, ruido
+# de punto flotante heredado de la columna WAPE de origen) no se detecta con
+# una comparacion == 0 estricta. Si ese valor casi-cero actua como denominador
+# en ML_IMPROVEMENT_VS_SCP, el resultado explota a magnitudes absurdas
+# (billones de por ciento) sin ser matematicamente "incorrecto", pero si
+# inutil y enganoso. Por eso el cero se detecta con una tolerancia: muy por
+# debajo de cualquier WAPE real plausible (0.01% = 1e-4 ya seria un WAPE muy
+# bueno) y muy por encima del epsilon de double precision (~2.22e-16).
+NEAR_ZERO_WAPE_EPSILON = 1e-9
+
+
+def _as_numeric(series: pd.Series) -> pd.Series:
+    """
+    Coerciona a numerico antes de operar. Una columna que llegue aqui con
+    dtype `object` (p.ej. una serie construida a mano en tests con valores
+    `None`, o cualquier resto de texto) no debe hacer fallar `.abs()`.
+    """
+    return pd.to_numeric(series, errors="coerce")
+
+
+def both_wape_zero_mask(scp_wape: pd.Series, ml_wape: pd.Series) -> pd.Series:
+    """
+    Unica parte de la regla de negocio del winner que esta completamente
+    especificada y por tanto es segura de auditar sin conocer la formula
+    original: "ambos WAPE iguales a cero -> TIE". Usa tolerancia, no
+    igualdad exacta (ver NEAR_ZERO_WAPE_EPSILON).
+    """
+    scp_wape, ml_wape = _as_numeric(scp_wape), _as_numeric(ml_wape)
+    return (
+        scp_wape.notna() & ml_wape.notna()
+        & (scp_wape.abs() <= NEAR_ZERO_WAPE_EPSILON) & (ml_wape.abs() <= NEAR_ZERO_WAPE_EPSILON)
+    )
+
 
 def relative_improvement_row(scp_wape: pd.Series, ml_wape: pd.Series) -> tuple[pd.Series, pd.Series]:
     """
@@ -86,16 +119,19 @@ def relative_improvement_row(scp_wape: pd.Series, ml_wape: pd.Series) -> tuple[p
     una fila no tiene un valor numerico valido:
 
     - MISSING_WAPE: SCP_WAPE o ML_WAPE es nulo -> no se calcula (NaN).
-    - BOTH_ZERO: ambos WAPE son 0 -> formula 0/0 no valida (NaN).
-    - SCP_ZERO_ML_POSITIVE: SCP_WAPE=0 y ML_WAPE>0 -> division por cero,
-      ML infinitamente peor; no se inventa un valor (NaN).
-    - ML_ZERO_SCP_POSITIVE: ML_WAPE=0 y SCP_WAPE>0 -> matematicamente valido,
+    - BOTH_ZERO: ambos WAPE son ~0 (tolerancia, ver NEAR_ZERO_WAPE_EPSILON) ->
+      formula 0/0 no valida (NaN).
+    - SCP_ZERO_ML_POSITIVE: SCP_WAPE~0 y ML_WAPE>0 -> division por un
+      denominador computacionalmente cero, resultado no interpretable; no se
+      inventa un valor (NaN) en vez de un porcentaje astronomico.
+    - ML_ZERO_SCP_POSITIVE: ML_WAPE~0 y SCP_WAPE>0 -> matematicamente valido,
       da +100% (ML elimina todo el error). Se calcula con la formula normal.
     - NORMAL: formula estandar.
     """
+    scp_wape, ml_wape = _as_numeric(scp_wape), _as_numeric(ml_wape)
     both_present = scp_wape.notna() & ml_wape.notna()
-    scp_zero = scp_wape == 0
-    ml_zero = ml_wape == 0
+    scp_zero = scp_wape.abs() <= NEAR_ZERO_WAPE_EPSILON
+    ml_zero = ml_wape.abs() <= NEAR_ZERO_WAPE_EPSILON
 
     case = pd.Series(CASE_MISSING_WAPE, index=scp_wape.index, dtype=object)
     case = case.where(~both_present, CASE_NORMAL)
@@ -164,23 +200,6 @@ def winner_distribution(winner: pd.Series) -> dict:
         }
     result["_total"] = total
     return result
-
-
-def both_wape_zero_mask(scp_wape: pd.Series, ml_wape: pd.Series) -> pd.Series:
-    """
-    Unica parte de la regla de negocio del winner que esta completamente
-    especificada y por tanto es segura de auditar sin conocer la formula
-    original: "ambos WAPE iguales a cero -> TIE".
-
-    NOTA METODOLOGICA: la formula exacta de `relativeDiff` usada por la
-    generacion original de WINNER_METHOD_* (regla: TIE cuando
-    relativeDiff < 0.0001) no esta documentada en este repositorio. No se
-    inventa esa formula. WINNER_METHOD_* se trata siempre como fuente de
-    verdad salvo para el caso de ambos WAPE=0, que es el unico
-    completamente especificado. Ver quality_checks.check_winner_formula_not_auditable
-    y check_both_zero_wape_is_tie.
-    """
-    return scp_wape.notna() & ml_wape.notna() & (scp_wape == 0) & (ml_wape == 0)
 
 
 def client_contribution_to_total_reduction(client_reductions: pd.Series) -> pd.Series:

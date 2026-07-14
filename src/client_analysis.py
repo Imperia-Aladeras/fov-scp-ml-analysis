@@ -105,6 +105,7 @@ class PeriodResult:
     improvement_stats_scp_wins: dict
     improvement_stats_tie: dict
     comparable_configuration_ids: frozenset = field(default_factory=frozenset)
+    comparable_mask: pd.Series = None  # mascara booleana reutilizable (Fase 3: excel/report/charts)
     quality: QualityReport = field(default_factory=QualityReport)
 
 
@@ -291,6 +292,7 @@ def _analyze_period(df: pd.DataFrame, candidate_mask: pd.Series, period: str, fi
         improvement_stats_all=stats_all, improvement_stats_ml_wins=stats_ml,
         improvement_stats_scp_wins=stats_scp, improvement_stats_tie=stats_tie,
         comparable_configuration_ids=comparable_configuration_ids,
+        comparable_mask=comparable_mask,
         quality=quality,
     )
 
