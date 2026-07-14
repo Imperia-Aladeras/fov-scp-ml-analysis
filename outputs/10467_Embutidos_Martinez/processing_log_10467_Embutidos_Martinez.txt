@@ -1,0 +1,74 @@
+timestamp=2026-07-14T15:09:37.840191
+archivo=TA_FOV_SCP_ML_10467_Embutidos_Martinez.csv
+etiqueta_cliente=10467_Embutidos_Martinez
+id_client=10467
+id_batch=[63]
+id_run_staging=[62]
+source_run_id=[1]
+fase=Fase 3 - outputs individuales
+fichero_valido=True
+estado_global_cliente=SUCCESS_WITH_WARNINGS
+csv_reparado_comillas_dobladas=True
+filas_totales=389
+series_candidatas=389
+duracion_segundos=2.272
+
+--- Periodos ---
+  periodo=M1         estado=WARNING  candidatas=389      comparables=207      pct_comparable=53.2%
+  periodo=M2         estado=WARNING  candidatas=389      comparables=221      pct_comparable=56.8%
+  periodo=M3         estado=WARNING  candidatas=389      comparables=222      pct_comparable=57.1%
+  periodo=M4         estado=WARNING  candidatas=389      comparables=225      pct_comparable=57.8%
+  periodo=M5         estado=WARNING  candidatas=389      comparables=235      pct_comparable=60.4%
+  periodo=M6         estado=WARNING  candidatas=389      comparables=236      pct_comparable=60.7%
+  periodo=RECENT_3M  estado=WARNING  candidatas=389      comparables=224      pct_comparable=57.6%
+  periodo=OLDER_3M   estado=WARNING  candidatas=389      comparables=239      pct_comparable=61.4%
+  periodo=6M         estado=WARNING  candidatas=389      comparables=241      pct_comparable=62.0%
+
+--- Chequeos de calidad: OK=0 WARNING=16 ERROR=0 ---
+  [WARNING] WRAPPED_CSV_NORMALIZED (ambito=file): El CSV no se pudo leer con el parser estandar (La lectura estandar no genero una tokenizacion CSV valida (columnas obtenidas: 1). (cabecera envuelta; 100% de la muestra de lineas envuelta)); se ha aplicado la normalizacion de comillas dobladas en memoria. Columnas antes=1, despues=234. Filas recuperadas=389.
+  [WARNING] BATCH_HETEROGENEITY_ACROSS_CLIENTS (ambito=file): Se han detectado 3 valores distintos de ID_BATCH entre los clientes cargados: [62, 63, 66]. Los clientes no proceden necesariamente de la misma ejecucion/batch.
+  [WARNING] WINNER_FORMULA_NOT_AUDITABLE (ambito=file): El criterio de empate relativo (relativeDiff < 0.0001) usado para generar WINNER_METHOD_* no esta documentado en el repositorio. WINNER_METHOD_* se usa como fuente de verdad sin reconstruccion; solo se audita el caso totalmente especificado de ambos WAPE=0.
+  [WARNING] EXTREME_IMPROVEMENT (ambito=period): 27 filas con mejora relativa |valor| > 300.0%.
+  [WARNING] EXTREME_IMPROVEMENT (ambito=period): 23 filas con mejora relativa |valor| > 300.0%.
+  [WARNING] EXTREME_IMPROVEMENT (ambito=period): 37 filas con mejora relativa |valor| > 300.0%.
+  [WARNING] EXTREME_IMPROVEMENT (ambito=period): 23 filas con mejora relativa |valor| > 300.0%.
+  [WARNING] EXTREME_WAPE (ambito=period): 1 filas con ML_WAPE_M5 > 500% (tipicamente series con historico muy pequeno).
+  [WARNING] EXTREME_IMPROVEMENT (ambito=period): 19 filas con mejora relativa |valor| > 300.0%.
+  [WARNING] EXTREME_IMPROVEMENT (ambito=period): 22 filas con mejora relativa |valor| > 300.0%.
+  [WARNING] EXTREME_IMPROVEMENT (ambito=period): 11 filas con mejora relativa |valor| > 300.0%.
+  [WARNING] EXTREME_WAPE (ambito=period): 1 filas con SCP_WAPE_OLDER_3M > 500% (tipicamente series con historico muy pequeno).
+  [WARNING] EXTREME_WAPE (ambito=period): 1 filas con ML_WAPE_OLDER_3M > 500% (tipicamente series con historico muy pequeno).
+  [WARNING] EXTREME_IMPROVEMENT (ambito=period): 5 filas con mejora relativa |valor| > 300.0%.
+  [WARNING] EXTREME_WAPE (ambito=period): 2 filas con SCP_WAPE_6M > 500% (tipicamente series con historico muy pequeno).
+  [WARNING] EXTREME_WAPE (ambito=period): 1 filas con ML_WAPE_6M > 500% (tipicamente series con historico muy pequeno).
+
+--- Outputs generados (29) ---
+  outputs\10467_Embutidos_Martinez\fov_scp_ml_summary_10467_Embutidos_Martinez.xlsx
+  outputs\10467_Embutidos_Martinez\fov_scp_ml_report_10467_Embutidos_Martinez.md
+  outputs\10467_Embutidos_Martinez\charts\coverage\01_comparison_status_distribution.png
+  outputs\10467_Embutidos_Martinez\charts\coverage\02_coverage_by_period.png
+  outputs\10467_Embutidos_Martinez\charts\coverage\03_ml_exclusion_reasons.png
+  outputs\10467_Embutidos_Martinez\charts\coverage\04_scp_no_output_reasons.png
+  outputs\10467_Embutidos_Martinez\charts\semester\01_wape_scp_vs_ml.png
+  outputs\10467_Embutidos_Martinez\charts\semester\02_winner_distribution.png
+  outputs\10467_Embutidos_Martinez\charts\semester\03_improvement_distribution.png
+  outputs\10467_Embutidos_Martinez\charts\semester\04_abs_error_reduction.png
+  outputs\10467_Embutidos_Martinez\charts\semester\05_models_win_rate.png
+  outputs\10467_Embutidos_Martinez\charts\quarters\01_wape_recent_3m.png
+  outputs\10467_Embutidos_Martinez\charts\quarters\02_wape_older_3m.png
+  outputs\10467_Embutidos_Martinez\charts\quarters\03_improvement_comparative.png
+  outputs\10467_Embutidos_Martinez\charts\quarters\04_winners_comparative.png
+  outputs\10467_Embutidos_Martinez\charts\quarters\05_abs_reduction_comparative.png
+  outputs\10467_Embutidos_Martinez\charts\monthly\01_wape_evolution.png
+  outputs\10467_Embutidos_Martinez\charts\monthly\02_improvement_evolution.png
+  outputs\10467_Embutidos_Martinez\charts\monthly\03_abs_reduction_evolution.png
+  outputs\10467_Embutidos_Martinez\charts\monthly\04_winner_pct_evolution.png
+  outputs\10467_Embutidos_Martinez\charts\monthly\05_coverage_evolution.png
+  outputs\10467_Embutidos_Martinez\charts\models\01_ml_models_win_rate.png
+  outputs\10467_Embutidos_Martinez\charts\models\02_scp_models_frequency.png
+  outputs\10467_Embutidos_Martinez\charts\classifications\01_series_classification_win_rate.png
+  outputs\10467_Embutidos_Martinez\charts\classifications\02_ml_classification_win_rate.png
+  outputs\10467_Embutidos_Martinez\charts\impact_and_risk\01_top_absolute_reductions.png
+  outputs\10467_Embutidos_Martinez\charts\impact_and_risk\02_top_absolute_increases.png
+  outputs\10467_Embutidos_Martinez\charts\impact_and_risk\03_top_percentage_improvements.png
+  outputs\10467_Embutidos_Martinez\charts\impact_and_risk\04_top_percentage_worsenings.png

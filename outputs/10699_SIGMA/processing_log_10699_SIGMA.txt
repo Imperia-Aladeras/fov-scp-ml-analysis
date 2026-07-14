@@ -1,0 +1,38 @@
+timestamp=2026-07-14T15:09:48.888458
+archivo=TA_FOV_SCP_ML_10699_SIGMA.csv
+etiqueta_cliente=10699_SIGMA
+id_client=10699
+id_batch=[63]
+id_run_staging=[58]
+source_run_id=[1]
+fase=Fase 3 - outputs individuales
+fichero_valido=True
+estado_global_cliente=SUCCESS_WITH_WARNINGS
+csv_reparado_comillas_dobladas=True
+filas_totales=1108
+series_candidatas=1108
+duracion_segundos=0.329
+
+--- Periodos ---
+  periodo=M1         estado=OK       candidatas=1108     comparables=0        pct_comparable=0.0%
+  periodo=M2         estado=OK       candidatas=1108     comparables=0        pct_comparable=0.0%
+  periodo=M3         estado=OK       candidatas=1108     comparables=0        pct_comparable=0.0%
+  periodo=M4         estado=OK       candidatas=1108     comparables=0        pct_comparable=0.0%
+  periodo=M5         estado=OK       candidatas=1108     comparables=0        pct_comparable=0.0%
+  periodo=M6         estado=OK       candidatas=1108     comparables=0        pct_comparable=0.0%
+  periodo=RECENT_3M  estado=OK       candidatas=1108     comparables=0        pct_comparable=0.0%
+  periodo=OLDER_3M   estado=OK       candidatas=1108     comparables=0        pct_comparable=0.0%
+  periodo=6M         estado=OK       candidatas=1108     comparables=0        pct_comparable=0.0%
+
+--- Chequeos de calidad: OK=0 WARNING=3 ERROR=0 ---
+  [WARNING] WRAPPED_CSV_NORMALIZED (ambito=file): El CSV no se pudo leer con el parser estandar (La lectura estandar no genero una tokenizacion CSV valida (columnas obtenidas: 1). (cabecera envuelta; 100% de la muestra de lineas envuelta)); se ha aplicado la normalizacion de comillas dobladas en memoria. Columnas antes=1, despues=234. Filas recuperadas=1108.
+  [WARNING] BATCH_HETEROGENEITY_ACROSS_CLIENTS (ambito=file): Se han detectado 3 valores distintos de ID_BATCH entre los clientes cargados: [62, 63, 66]. Los clientes no proceden necesariamente de la misma ejecucion/batch.
+  [WARNING] WINNER_FORMULA_NOT_AUDITABLE (ambito=file): El criterio de empate relativo (relativeDiff < 0.0001) usado para generar WINNER_METHOD_* no esta documentado en el repositorio. WINNER_METHOD_* se usa como fuente de verdad sin reconstruccion; solo se audita el caso totalmente especificado de ambos WAPE=0.
+
+--- Outputs generados (6) ---
+  outputs\10699_SIGMA\fov_scp_ml_summary_10699_SIGMA.xlsx
+  outputs\10699_SIGMA\fov_scp_ml_report_10699_SIGMA.md
+  outputs\10699_SIGMA\charts\coverage\01_comparison_status_distribution.png
+  outputs\10699_SIGMA\charts\coverage\02_coverage_by_period.png
+  outputs\10699_SIGMA\charts\coverage\03_ml_exclusion_reasons.png
+  outputs\10699_SIGMA\charts\coverage\04_scp_no_output_reasons.png
