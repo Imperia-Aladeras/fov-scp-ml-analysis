@@ -1,0 +1,16 @@
+﻿# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Configuración local
+.env
+.claude/settings.local.json
+
+# Archivos temporales
+*.tmp
+*.log
+~$*

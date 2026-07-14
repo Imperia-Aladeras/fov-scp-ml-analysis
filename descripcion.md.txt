@@ -1,0 +1,296 @@
+Sí, lo entiendo: **análisis ad hoc, externo al código de SCP, para generar un reporte puntual para Producto y Operaciones**. No lo automatizaría ni lo metería en la rama.
+
+## Recomendación de entorno
+
+Lo más limpio y con menos riesgo:
+
+```text
+Fuera del repo SCP
+Sin rama nueva
+Sin Codex para tocar código
+Con un script/notebook local de Python
+```
+
+Por ejemplo:
+
+```text
+C:\Projects\AdhocReports\fov_scp_ml_analysis\
+```
+
+Ahí pondría:
+
+```text
+data/
+  TA_FOV_SCP_ML_SERIES_COMPARISON_batch_62.csv
+
+analysis_fov_scp_ml.py
+outputs/
+  fov_scp_ml_summary.xlsx
+  fov_scp_ml_report.md
+  charts/
+```
+
+Así no ensucias SCP, no dependes de la rama, no introduces requirements en backend y no hay riesgo de commitear nada por error.
+
+## Qué analizaría primero
+
+Trabajaría solo con clientes correctos:
+
+```text
+10204
+10467
+10664
+10666
+```
+
+Y separaría el análisis en dos universos:
+
+```text
+1. Cobertura:
+   todas las filas candidatas.
+
+2. Performance:
+   solo COMPARISON_STATUS = 'COMPARABLE'.
+```
+
+## Preguntas principales del reporte
+
+### 1. Cobertura por cliente
+
+Para cada cliente:
+
+```text
+- total de series candidatas
+- series comparables
+- % comparable
+- % excluidas ML
+- % missing SCP
+- % missing ML
+- % missing SCP + ML
+- % sin histórico
+```
+
+Esto sirve para explicar sobre qué parte del universo estamos comparando realmente.
+
+---
+
+### 2. Ganadores SCP vs ML
+
+Sobre `COMPARABLE` y periodo `6M`:
+
+```text
+- % series donde gana ML
+- % series donde gana SCP
+- % empates
+- conteo absoluto por cliente
+- conteo global
+```
+
+Columnas base:
+
+```text
+WINNER_METHOD_6M
+FINALIST_METHOD_6M
+WINNER_IMPROVEMENT_PCT_6M
+```
+
+---
+
+### 3. Mejora agregada ML vs SCP
+
+Además de contar ganadores, calcularía el impacto agregado:
+
+```text
+SCP_WAPE_GLOBAL = SUM(SCP_TOTAL_ABS_ERROR_6M) / SUM(TOTAL_HISTORY_6M)
+ML_WAPE_GLOBAL  = SUM(ML_TOTAL_ABS_ERROR_6M) / SUM(TOTAL_HISTORY_6M)
+
+ML_IMPROVEMENT_VS_SCP =
+(SCP_WAPE_GLOBAL - ML_WAPE_GLOBAL) / SCP_WAPE_GLOBAL
+```
+
+Esto responde mejor a Producto/Operaciones que solo “cuántas series gana ML”.
+
+---
+
+### 4. Distribución de mejora cuando gana ML
+
+Para filas donde:
+
+```text
+WINNER_METHOD_6M = 'ML'
+```
+
+calcular:
+
+```text
+- media
+- mediana
+- p25
+- p75
+- p90
+- mínimo
+- máximo
+- número de series
+```
+
+Usando:
+
+```text
+WINNER_IMPROVEMENT_PCT_6M
+```
+
+---
+
+### 5. Distribución de empeoramiento cuando gana SCP
+
+Para filas donde:
+
+```text
+WINNER_METHOD_6M = 'SCP'
+```
+
+analizar cuánto pierde ML frente a SCP.
+
+Aquí calcularía una métrica explícita:
+
+```text
+ML_IMPROVEMENT_VS_SCP_ROW =
+(SCP_WAPE_6M - ML_WAPE_6M) / SCP_WAPE_6M * 100
+```
+
+Será negativa cuando ML empeora.
+
+---
+
+### 6. Modelos ganadores ML
+
+Dentro de:
+
+```text
+WINNER_METHOD_6M = 'ML'
+```
+
+agrupar por:
+
+```text
+WINNER_MODEL_6M
+ML_BEST_MODEL
+ML_CLASSIFICATION
+ML_TYPE
+SERIES_CLASSIFICATION
+```
+
+Objetivo:
+
+```text
+- qué modelos explican las mejoras de ML
+- qué tipo de series mejora mejor ML
+- qué rutas/modelos aportan más valor
+```
+
+---
+
+### 7. Modelos/rutas cuando gana SCP
+
+Dentro de:
+
+```text
+WINNER_METHOD_6M = 'SCP'
+```
+
+agrupar por:
+
+```text
+SCP_BEST_MODEL
+ML_BEST_MODEL
+ML_CLASSIFICATION
+ML_TYPE
+SERIES_CLASSIFICATION
+```
+
+Objetivo:
+
+```text
+- entender dónde ML no mejora
+- detectar si falla más en ciertos tipos de serie
+- detectar modelos ML con peor comportamiento relativo
+```
+
+---
+
+### 8. Exclusiones y no comparables
+
+Sobre todas las filas:
+
+```text
+- distribución de COMPARISON_STATUS
+- distribución de HAS_ML_EXCLUDED
+- distribución de ML_EXCLUSION_REASON
+- SCP_NO_OUTPUT_REASON
+```
+
+Especialmente:
+
+```text
+MissingHistory
+NewRelease
+ShortSeries
+NoHistory
+Missing SCP/ML
+```
+
+Objetivo: explicar por qué no todas las series llegan a comparación.
+
+---
+
+## Outputs que generaría
+
+Un Excel con pestañas:
+
+```text
+01_global_summary
+02_client_coverage
+03_client_winners
+04_wape_impact
+05_ml_win_stats
+06_scp_win_stats
+07_ml_models
+08_scp_wins_analysis
+09_exclusions
+10_top_ml_improvements
+11_top_ml_underperformance
+```
+
+Y un markdown breve:
+
+```text
+fov_scp_ml_report.md
+```
+
+con conclusiones ejecutivas para Producto/Operaciones.
+
+## Cómo lo haría rápido
+
+No usaría Codex para investigar ahora. Usaría Python/pandas con un script muy directo:
+
+```text
+1. leer CSV
+2. filtrar clientes correctos
+3. crear métricas derivadas
+4. agrupar
+5. exportar Excel
+6. sacar 4-6 conclusiones
+```
+
+Después, si quieres, sí podríamos usar Codex solo para generar un script limpio, pero **fuera del repo SCP**.
+
+## Plan inmediato
+
+1. Crear carpeta externa de análisis.
+2. Copiar el CSV.
+3. Crear script Python ad hoc.
+4. Generar tablas resumen.
+5. Revisar resultados.
+6. Preparar narrativa para Producto/Operaciones.
+
+No probaría más clientes ni tocaría más código hasta ver qué dicen estos datos.
