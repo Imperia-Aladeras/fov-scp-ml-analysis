@@ -222,14 +222,27 @@ def cross_entity_stats(values: pd.Series, tie_epsilon: float = 0.0) -> dict:
     Se usa tanto para "mejora por cliente" (Perspectiva 2 del analisis
     global) como, de forma generica, para cualquier agregacion por entidad
     con el mismo peso.
+
+    `values` debe incluir una entrada POR CADA entidad total (con NaN para
+    las que no tienen mejora calculable, p.ej. un cliente sin series
+    comparables), no solo las evaluables: asi `n_total` y `n_missing`
+    reflejan el universo completo. La media, mediana, percentiles y
+    porcentajes (`pct_improved`, etc.) SIEMPRE usan como denominador
+    unicamente las entidades evaluables (`count` / `n_total - n_missing`),
+    nunca el total.
     """
     stats = descriptive_stats(values)
     clean = values.dropna()
+    n_total = len(values)
     n = len(clean)
+    n_missing = n_total - n
     n_improved = int((clean > tie_epsilon).sum())
     n_worse = int((clean < -tie_epsilon).sum())
     n_tie = n - n_improved - n_worse
     stats.update({
+        "n_total": n_total,
+        "n_evaluable": n,
+        "n_missing": n_missing,
         "n_improved": n_improved,
         "pct_improved": (n_improved / n * 100) if n else np.nan,
         "n_worse": n_worse,

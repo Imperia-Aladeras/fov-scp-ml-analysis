@@ -119,3 +119,96 @@ def build_synthetic_client_result(with_data: bool = True):
         df = build_no_comparable_dataframe()
         source = make_client_source(df, 88888, "NoComparable")
     return analyze_client(source)
+
+
+def build_multi_client_results() -> list:
+    """
+    3 clientes sinteticos para ejercitar la comparativa global:
+      - 99999_Synthetic: mixto (1 fila ML gana, 1 fila SCP gana).
+      - 88888_NoComparable: sin ninguna serie comparable (excluido de las
+        4 perspectivas globales, pero presente en execution_summary).
+      - 77777_AllMlWins: todas las filas gana ML (para ver un cliente
+        homogeneo distinto del mixto).
+    """
+    from src.client_analysis import analyze_client
+
+    mixed = analyze_client(make_client_source(build_synthetic_client_dataframe(), 99999, "Synthetic"))
+    no_comparable = analyze_client(make_client_source(build_no_comparable_dataframe(), 88888, "NoComparable"))
+
+    all_ml_df = pd.DataFrame({
+        "HAS_BASE_CANDIDATE": [1, 1],
+        "ID_CLIENT": [77777, 77777],
+        "ID_CONFIGURATION": [2001, 2002],
+        "VALUE_LEVEL_1": ["Cat A", "Cat B"],
+        "VALUE_LEVEL_2": [None, None], "VALUE_LEVEL_3": [None, None],
+        "VALUE_LEVEL_4": [None, None], "VALUE_LEVEL_5": [None, None],
+        "ML_BEST_MODEL": ["AutoETS", "AutoETS"], "SCP_BEST_MODEL": ["x11 seasonal", "x11 seasonal"],
+        "ML_CLASSIFICATION": ["smooth", "smooth"], "ML_TYPE": ["smooth_ok", "smooth_ok"],
+        "SERIES_CLASSIFICATION": ["smooth", "smooth"], "SCP_CLASSIFICATION": ["smooth", "smooth"],
+        "COMPARISON_STATUS": ["COMPARABLE", "COMPARABLE"],
+    })
+    for period in [f"M{i}" for i in range(1, 7)] + ["RECENT_3M", "OLDER_3M", "6M"]:
+        multiplier = 1.0 if period in ("RECENT_3M", "OLDER_3M") else (2.0 if period == "6M" else 1.0 / 3)
+        set_period(
+            all_ml_df, period,
+            total_history=[300.0 * multiplier, 300.0 * multiplier],
+            scp_forecast=[360.0 * multiplier, 360.0 * multiplier],
+            scp_abs_error=[60.0 * multiplier, 60.0 * multiplier], scp_wape=[0.2, 0.2],
+            ml_forecast=[330.0 * multiplier, 330.0 * multiplier],
+            ml_abs_error=[30.0 * multiplier, 30.0 * multiplier], ml_wape=[0.1, 0.1],
+            winner_method=["ML", "ML"],
+        )
+    all_ml = analyze_client(make_client_source(all_ml_df, 77777, "AllMlWins"))
+
+    return [mixed, no_comparable, all_ml]
+
+
+def build_global_analysis_result():
+    from src.global_analysis import analyze_global
+
+    return analyze_global(build_multi_client_results())
+
+
+def _build_single_row_client_dataframe(history: float, scp_abs_error: float, ml_abs_error: float, winner: str) -> pd.DataFrame:
+    scp_forecast = history + scp_abs_error
+    ml_forecast = history + ml_abs_error
+    scp_wape = scp_abs_error / history
+    ml_wape = ml_abs_error / history
+    df = pd.DataFrame({
+        "HAS_BASE_CANDIDATE": [1], "ID_CLIENT": [0], "ID_CONFIGURATION": [1],
+        "VALUE_LEVEL_1": ["Cat"], "VALUE_LEVEL_2": [None], "VALUE_LEVEL_3": [None],
+        "VALUE_LEVEL_4": [None], "VALUE_LEVEL_5": [None],
+        "ML_BEST_MODEL": ["AutoETS"], "SCP_BEST_MODEL": ["x11 seasonal"],
+        "ML_CLASSIFICATION": ["smooth"], "ML_TYPE": ["smooth_ok"],
+        "SERIES_CLASSIFICATION": ["smooth"], "SCP_CLASSIFICATION": ["smooth"],
+        "COMPARISON_STATUS": ["COMPARABLE"],
+    })
+    for period in [f"M{i}" for i in range(1, 7)] + ["RECENT_3M", "OLDER_3M", "6M"]:
+        set_period(
+            df, period,
+            total_history=[history], scp_forecast=[scp_forecast], scp_abs_error=[scp_abs_error], scp_wape=[scp_wape],
+            ml_forecast=[ml_forecast], ml_abs_error=[ml_abs_error], ml_wape=[ml_wape], winner_method=[winner],
+        )
+    return df
+
+
+def build_negative_net_multi_client_results() -> list:
+    """
+    2 clientes disenados para que la reduccion NETA total sea negativa:
+      - 55501_PositiveClient: reduccion = +10 (ML mejor, historico pequeno).
+      - 55502_NegativeClient: reduccion = -1000 (ML mucho peor, historico grande).
+    Neto = 10 - 1000 = -990. Sirve para verificar que el cliente negativo
+    nunca se describe como el principal contribuidor a la reduccion, que no
+    se usa REDUCCION_NETA como denominador de ningun porcentaje, y que los
+    porcentajes de cada grupo (reduce / aumenta) suman 100% dentro de si
+    mismos.
+    """
+    from src.client_analysis import analyze_client
+
+    positive_df = _build_single_row_client_dataframe(history=100.0, scp_abs_error=20.0, ml_abs_error=10.0, winner="ML")
+    positive = analyze_client(make_client_source(positive_df, 55501, "PositiveClient"))
+
+    negative_df = _build_single_row_client_dataframe(history=2000.0, scp_abs_error=100.0, ml_abs_error=1100.0, winner="SCP")
+    negative = analyze_client(make_client_source(negative_df, 55502, "NegativeClient"))
+
+    return [positive, negative]

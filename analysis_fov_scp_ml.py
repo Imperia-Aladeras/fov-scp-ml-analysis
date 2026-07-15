@@ -1,7 +1,7 @@
 """
 Punto de entrada del pipeline FOV SCP vs ML.
 
-Estado actual (Fase 3 - resultados individuales por cliente):
+Estado actual (Fase 4 - comparativa global y acabado final):
     1. Descubre automaticamente todos los CSV de data/.
     2. Valida cada CSV (legibilidad, columnas obligatorias, cliente unico,
        nombre vs ID_CLIENT, duplicados, cliente duplicado entre ficheros).
@@ -17,12 +17,15 @@ Estado actual (Fase 3 - resultados individuales por cliente):
        NOT_COMPARABLE_MISSING_VALIDATION) generan igualmente sus outputs:
        las secciones de performance quedan vacias por diseno, nunca con
        metricas inventadas.
-    6. Imprime un resumen de consola por cliente y un resumen global.
-
-Pendiente (Fase 4, no implementado todavia):
-    - Comparativa global entre clientes en outputs/global/.
-    - execution_summary.md / execution_summary.xlsx en la raiz de outputs/.
-    - README.md y requirements.txt actualizados.
+    6. Calcula la comparativa global entre todos los clientes con fichero
+       valido (4 perspectivas: impacto ponderado, mejora por cliente, mejora
+       por serie, impacto absoluto) y genera en outputs/global/:
+       - fov_scp_ml_global_summary.xlsx (16 pestanas)
+       - fov_scp_ml_global_report.md (21 secciones)
+       - charts/{coverage,semester,quarters,monthly,clients,models,classifications,impact_and_risk}/*.png
+    7. Genera outputs/execution_summary.md y outputs/execution_summary.xlsx
+       (una fila por CSV descubierto, valido o no).
+    8. Imprime un resumen de consola por cliente y un resumen global.
 
 Ejecucion:
     python analysis_fov_scp_ml.py
@@ -38,6 +41,15 @@ from pathlib import Path
 from src.charts import generate_client_charts
 from src.client_analysis import ClientAnalysisResult, analyze_client
 from src.excel_writer import build_client_workbook
+from src.execution_summary import (
+    build_execution_records,
+    build_execution_summary_markdown,
+    build_execution_summary_workbook,
+)
+from src.global_analysis import analyze_global
+from src.global_charts import generate_global_charts
+from src.global_excel_writer import build_global_workbook
+from src.global_report_writer import build_global_report
 from src.input_loader import ClientSource, load_client_sources
 from src.logging_utils import build_processing_log
 from src.quality_checks import Severity
@@ -46,16 +58,17 @@ from src.report_writer import build_client_report
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 OUTPUT_DIR = BASE_DIR / "outputs"
+GLOBAL_DIR = OUTPUT_DIR / "global"
 
 SUMMARY_PERIODS = ["6M", "RECENT_3M", "OLDER_3M", "M1", "M6"]
 MAX_ISSUES_SHOWN = 6
 
 
-def _generate_client_outputs(result: ClientAnalysisResult) -> list[str]:
+def _generate_client_outputs(result: ClientAnalysisResult) -> tuple[list[str], float]:
     """
     Genera Excel, Markdown, graficos y log de un cliente en outputs/<CLIENTE>/.
     Si el fichero no es valido, solo se escribe el log (sin inventar datos).
-    Devuelve la lista de rutas generadas (relativas al repo), incluido el log.
+    Devuelve (rutas generadas relativas al repo, duracion en segundos).
     """
     source = result.source
     client_dir = OUTPUT_DIR / source.folder_name
@@ -82,6 +95,23 @@ def _generate_client_outputs(result: ClientAnalysisResult) -> list[str]:
     log_path = client_dir / f"processing_log_{source.folder_name}.txt"
     log_path.write_text(build_processing_log(result, outputs_generated, duration), encoding="utf-8")
     outputs_generated.append(str(log_path.relative_to(BASE_DIR)))
+
+    return outputs_generated, duration
+
+
+def _generate_global_outputs(global_result) -> list[str]:
+    outputs_generated: list[str] = []
+
+    excel_path = GLOBAL_DIR / "fov_scp_ml_global_summary.xlsx"
+    build_global_workbook(global_result, excel_path)
+    outputs_generated.append(str(excel_path.relative_to(BASE_DIR)))
+
+    report_path = GLOBAL_DIR / "fov_scp_ml_global_report.md"
+    report_path.write_text(build_global_report(global_result), encoding="utf-8")
+    outputs_generated.append(str(report_path.relative_to(BASE_DIR)))
+
+    chart_paths = generate_global_charts(global_result, GLOBAL_DIR / "charts")
+    outputs_generated += [str(Path(p).relative_to(BASE_DIR)) for p in chart_paths]
 
     return outputs_generated
 
@@ -164,9 +194,12 @@ def _print_client_summary(result: ClientAnalysisResult, outputs_generated: list[
         print(f"    + {n_charts} grafico(s) PNG en charts/")
 
 
-def _print_global_summary(results: list[ClientAnalysisResult], all_outputs: dict[str, list[str]]) -> None:
+def _print_global_summary(
+    results: list[ClientAnalysisResult], all_outputs: dict[str, list[str]],
+    global_result, global_outputs: list[str],
+) -> None:
     print("\n" + "=" * 78)
-    print("RESUMEN GLOBAL DE EJECUCION (Fase 3 - outputs individuales por cliente)")
+    print("RESUMEN GLOBAL DE EJECUCION (Fase 4 - comparativa global y acabado final)")
     print("=" * 78)
 
     status_counts: dict[str, int] = {}
@@ -180,8 +213,9 @@ def _print_global_summary(results: list[ClientAnalysisResult], all_outputs: dict
     total_rows = sum(r.source.n_rows for r in results)
     total_candidates = sum(r.n_candidates for r in results)
     total_comparable_6m = sum(r.periods["6M"].n_comparable for r in results if "6M" in r.periods)
-    total_files_written = sum(len(v) for v in all_outputs.values())
+    total_files_written = sum(len(v) for v in all_outputs.values()) + len(global_outputs)
     total_charts = sum(1 for v in all_outputs.values() for p in v if p.endswith(".png"))
+    total_charts += sum(1 for p in global_outputs if p.endswith(".png"))
 
     print(f"Filas totales procesadas: {total_rows}")
     print(f"Series candidatas totales: {total_candidates}")
@@ -204,8 +238,30 @@ def _print_global_summary(results: list[ClientAnalysisResult], all_outputs: dict
             f"periodos_con_ERROR={n_error_periods}/{n_periods}{coverage_note}"
         )
 
+    m6 = global_result.periods["6M"]
+    print("\nComparativa global (semestre completo, 6M):")
+    print(f"  Clientes incluidos: {len(global_result.client_results)} | excluidos (fichero invalido): {len(global_result.invalid_results)}")
+    print(f"  WAPE_SCP_GLOBAL={m6.scp_wape_global:.4f}  WAPE_ML_GLOBAL={m6.ml_wape_global:.4f}  "
+          f"MEJORA_GLOBAL_PONDERADA={m6.global_improvement_pct:+.1f}%")
+    n_improved = m6.client_improvement_stats.get('n_improved')
+    n_evaluable = m6.client_improvement_stats.get('n_evaluable')
+    n_missing = m6.client_improvement_stats.get('n_missing')
+    print(f"  Mejora por cliente (peso igual): media={m6.client_improvement_stats.get('mean'):+.1f}%  "
+          f"mediana={m6.client_improvement_stats.get('median'):+.1f}%  "
+          f"% clientes que mejoran={m6.client_improvement_stats.get('pct_improved'):.1f}% "
+          f"({n_improved}/{n_evaluable} evaluables; {n_missing} sin performance)")
+    print(f"  Mejora por serie: media={m6.series_improvement_stats.get('mean'):+.1f}%  "
+          f"mediana={m6.series_improvement_stats.get('median'):+.1f}%")
+    print(f"  % series donde gana ML: {m6.winner_counts.get('ML', {}).get('pct'):.1f}%")
+
+    print("\nOutputs globales generados:")
+    for path in global_outputs:
+        if path.endswith((".xlsx", ".md")):
+            print(f"  {path}")
+    print(f"  + {sum(1 for p in global_outputs if p.endswith('.png'))} grafico(s) PNG en outputs/global/charts/")
+
     print(
-        "\nPendiente: Fase 4 (comparativa global en outputs/global/, execution_summary, README)."
+        "\nPendiente (fuera de alcance de este pipeline): commits (se proponen, no se ejecutan)."
     )
 
 
@@ -219,20 +275,37 @@ def main() -> int:
 
     results: list[ClientAnalysisResult] = []
     all_outputs: dict[str, list[str]] = {}
+    durations: dict[str, float] = {}
     for source in sources:
         try:
             result = analyze_client(source)
-            outputs_generated = _generate_client_outputs(result)
+            outputs_generated, duration = _generate_client_outputs(result)
         except Exception as exc:  # noqa: BLE001 - aislar errores por cliente
             print(f"\nERROR INESPERADO procesando {source.file_name}: {exc}", file=sys.stderr)
             traceback.print_exc()
             result = ClientAnalysisResult(source=source, file_valid=False, status="ERROR")
-            outputs_generated = []
+            outputs_generated, duration = [], 0.0
         results.append(result)
         all_outputs[source.file_name] = outputs_generated
+        durations[source.file_name] = duration
         _print_client_summary(result, outputs_generated)
 
-    _print_global_summary(results, all_outputs)
+    try:
+        global_result = analyze_global(results)
+        global_outputs = _generate_global_outputs(global_result)
+    except Exception as exc:  # noqa: BLE001 - la comparativa global no debe tumbar el proceso
+        print(f"\nERROR INESPERADO en la comparativa global: {exc}", file=sys.stderr)
+        traceback.print_exc()
+        return 1
+
+    records = build_execution_records(results, all_outputs, durations)
+    exec_summary_md_path = OUTPUT_DIR / "execution_summary.md"
+    exec_summary_xlsx_path = OUTPUT_DIR / "execution_summary.xlsx"
+    exec_summary_md_path.write_text(build_execution_summary_markdown(records), encoding="utf-8")
+    build_execution_summary_workbook(records, exec_summary_xlsx_path)
+
+    _print_global_summary(results, all_outputs, global_result, global_outputs)
+    print(f"\nResumen de ejecucion: {exec_summary_md_path.relative_to(BASE_DIR)}, {exec_summary_xlsx_path.relative_to(BASE_DIR)}")
     return 0
 
 

@@ -1,0 +1,9 @@
+# Dependencias del pipeline FOV SCP vs ML.
+# Version de Python usada en desarrollo: 3.13.
+# Instalacion: python -m pip install -r requirements.txt
+
+pandas>=2.2
+numpy>=1.26
+openpyxl>=3.1
+matplotlib>=3.8
+pytest>=8.0
