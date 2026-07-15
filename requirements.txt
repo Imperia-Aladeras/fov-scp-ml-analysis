@@ -7,3 +7,9 @@ numpy>=1.26
 openpyxl>=3.1
 matplotlib>=3.8
 pytest>=8.0
+
+# Fase 5B: motor de plantillas para el informe HTML por ejecucion. Se usa con
+# autoescape activado (ver src/html_report.py) precisamente porque el
+# contenido de los CSV (etiquetas, VALUE_LEVEL_*, mensajes de warning/error)
+# se inserta en el HTML y debe escaparse siempre. Sin extensiones ni plugins.
+jinja2>=3.1

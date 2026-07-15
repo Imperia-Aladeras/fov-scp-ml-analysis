@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+{% import "components/chart_gallery.html" as gallery %}
+{% block title %}Resumen global — {{ run_name }}{% endblock %}
+{% block content %}
+
+<h1 id="resumen">Comparativa global SCP vs ML — {{ run_name }}</h1>
+
+<section id="cabecera" aria-labelledby="cabecera-h">
+  <h2 id="cabecera-h">Cabecera de ejecución</h2>
+  <table class="kv-table">
+    <tbody>
+      <tr><th scope="row">Nombre de ejecución</th><td>{{ header.run_name }}</td></tr>
+      <tr><th scope="row">Inicio</th><td>{{ header.started_at }}</td></tr>
+      <tr><th scope="row">Fin</th><td>{{ header.finished_at }}</td></tr>
+      <tr><th scope="row">Duración</th><td>{{ header.duration }}</td></tr>
+      <tr><th scope="row">Versión del pipeline</th><td>{{ header.pipeline_version }}</td></tr>
+      <tr><th scope="row">Commit Git</th><td><code>{{ header.git_commit_short }}</code></td></tr>
+      <tr><th scope="row">Estado del working tree</th><td>{{ header.git_worktree_label }}</td></tr>
+      <tr><th scope="row">Estado de la ejecución</th><td><span class="badge badge--{{ header.status | lower }}">{{ header.status }}</span></td></tr>
+      <tr><th scope="row">CSV descubiertos</th><td>{{ header.n_csv_discovered }}</td></tr>
+      <tr><th scope="row">Clientes con fichero válido</th><td>{{ header.n_clients_valid }}</td></tr>
+      <tr><th scope="row">Batches detectados</th><td>{{ header.batches_detected }}</td></tr>
+      <tr><th scope="row">Copia de inputs (--copy-inputs)</th><td>{{ header.copy_inputs }}</td></tr>
+    </tbody>
+  </table>
+  <details>
+    <summary>Detalle técnico (commit completo)</summary>
+    <p><code>{{ header.git_commit_full }}</code></p>
+  </details>
+</section>
+
+<nav id="navegacion" aria-labelledby="navegacion-h" class="toc">
+  <h2 id="navegacion-h">Navegación</h2>
+  <ul>
+    <li><a href="#resumen-ejecutivo">Resumen ejecutivo</a></li>
+    <li><a href="#perspectivas">Perspectivas diferenciadas</a></li>
+    <li><a href="#cobertura">Cobertura y calidad</a></li>
+    <li><a href="#semestre">Semestre completo</a></li>
+    <li><a href="#trimestres">Trimestres</a></li>
+    <li><a href="#evolucion-mensual">Evolución mensual</a></li>
+    <li><a href="#graficos">Modelos, clasificaciones e impacto/riesgos (gráficos)</a></li>
+    <li><a href="#clientes">Clientes</a></li>
+    <li><a href="#metodologia">Metodología y limitaciones</a></li>
+    <li><a href="#ficheros">Ficheros de la ejecución</a></li>
+  </ul>
+</nav>
+
+<section id="resumen-ejecutivo" aria-labelledby="resumen-ejecutivo-h">
+  <h2 id="resumen-ejecutivo-h">Resumen ejecutivo</h2>
+  <table class="kv-table">
+    <tbody>
+      <tr><th scope="row">Clientes totales</th><td>{{ resumen.n_clients_total }}</td></tr>
+      <tr><th scope="row">Clientes evaluables (con performance)</th><td>{{ resumen.n_clients_evaluable }}</td></tr>
+      <tr><th scope="row">Clientes sin performance calculable</th><td>{{ resumen.n_clients_missing_performance }}</td></tr>
+      <tr><th scope="row">Series candidatas (6M)</th><td>{{ resumen.series_candidatas }}</td></tr>
+      <tr><th scope="row">Series comparables (6M)</th><td>{{ resumen.series_comparables_6m }}</td></tr>
+      <tr><th scope="row">Cobertura global (6M)</th><td>{{ resumen.cobertura_global }}</td></tr>
+      <tr><th scope="row">WAPE SCP (6M)</th><td>{{ resumen.wape_scp }}</td></tr>
+      <tr><th scope="row">WAPE ML (6M)</th><td>{{ resumen.wape_ml }}</td></tr>
+      <tr><th scope="row">Mejora global ponderada (6M)</th><td>{{ resumen.mejora_global_ponderada }} ({{ resumen.mejora_global_verdict }})</td></tr>
+      <tr><th scope="row">Clientes donde ML mejora</th><td>{{ resumen.clientes_mejoran_fraction }}{% if resumen.clientes_sin_performance_note %} — {{ resumen.clientes_sin_performance_note }}{% endif %}</td></tr>
+      <tr><th scope="row">Series donde gana ML</th><td>{{ resumen.pct_series_gana_ml }}</td></tr>
+      <tr><th scope="row">Reducción positiva total</th><td>{{ resumen.reduccion_positiva_total }}</td></tr>
+      <tr><th scope="row">Deterioro total absoluto</th><td>{{ resumen.deterioro_total_absoluto }}</td></tr>
+      <tr><th scope="row">Reducción neta</th><td>{{ resumen.reduccion_neta }}</td></tr>
+    </tbody>
+  </table>
+  <p class="conclusion">{{ resumen.conclusion }}</p>
+</section>
+
+<section id="perspectivas" aria-labelledby="perspectivas-h">
+  <h2 id="perspectivas-h">Perspectivas diferenciadas (semestre completo, 6M)</h2>
+  <p class="note">Estas seis perspectivas responden preguntas distintas y no deben combinarse en una única conclusión.</p>
+
+  <article>
+    <h3>Impacto ponderado global</h3>
+    <p>{{ perspectives.impacto_ponderado.pregunta }}</p>
+    <ul>
+      <li>WAPE SCP: {{ perspectives.impacto_ponderado.wape_scp }}</li>
+      <li>WAPE ML: {{ perspectives.impacto_ponderado.wape_ml }}</li>
+      <li>Mejora: {{ perspectives.impacto_ponderado.mejora }}</li>
+      <li>Histórico total (unidades): {{ perspectives.impacto_ponderado.historico_total }}</li>
+    </ul>
+  </article>
+
+  <article>
+    <h3>Mejora por cliente (cada cliente pesa igual)</h3>
+    <p>{{ perspectives.mejora_por_cliente.pregunta }}</p>
+    <ul>
+      <li>Clientes evaluables: {{ perspectives.mejora_por_cliente.n_evaluable }} de {{ perspectives.mejora_por_cliente.n_total }} ({{ perspectives.mejora_por_cliente.n_missing }} sin performance)</li>
+      <li>Media: {{ perspectives.mejora_por_cliente.media }} — Mediana: {{ perspectives.mejora_por_cliente.mediana }}</li>
+      <li>P25 / P75: {{ perspectives.mejora_por_cliente.p25 }} / {{ perspectives.mejora_por_cliente.p75 }}</li>
+      <li>Clientes que mejoran: {{ perspectives.mejora_por_cliente.fraction_mejoran }} ({{ perspectives.mejora_por_cliente.pct_mejoran }})</li>
+    </ul>
+  </article>
+
+  <article>
+    <h3>Mejora por serie</h3>
+    <p>{{ perspectives.mejora_por_serie.pregunta }}</p>
+    <ul>
+      <li>Series evaluadas: {{ perspectives.mejora_por_serie.n_series }}</li>
+      <li>Media: {{ perspectives.mejora_por_serie.media }} — Mediana: {{ perspectives.mejora_por_serie.mediana }}</li>
+      <li>P25 / P75: {{ perspectives.mejora_por_serie.p25 }} / {{ perspectives.mejora_por_serie.p75 }}</li>
+    </ul>
+  </article>
+
+  <article>
+    <h3>Frecuencia de victoria (serie a serie)</h3>
+    <p>{{ perspectives.frecuencia_victoria.pregunta }}</p>
+    <ul>
+      <li>ML: {{ perspectives.frecuencia_victoria.pct_ml }} ({{ perspectives.frecuencia_victoria.n_ml }} series)</li>
+      <li>SCP: {{ perspectives.frecuencia_victoria.pct_scp }} ({{ perspectives.frecuencia_victoria.n_scp }} series)</li>
+      <li>Empate: {{ perspectives.frecuencia_victoria.pct_tie }} ({{ perspectives.frecuencia_victoria.n_tie }} series)</li>
+    </ul>
+  </article>
+
+  <article>
+    <h3>Impacto absoluto</h3>
+    <p>{{ perspectives.impacto_absoluto.pregunta }}</p>
+    <ul>
+      <li>Reducción positiva total: {{ perspectives.impacto_absoluto.reduccion_positiva_total }}</li>
+      <li>Deterioro total absoluto: {{ perspectives.impacto_absoluto.deterioro_total_absoluto }}</li>
+      <li>Reducción neta: {{ perspectives.impacto_absoluto.reduccion_neta }}</li>
+    </ul>
+    <p class="note">Ver el ranking de clientes por contribución en el Excel y Markdown globales (enlazados en <a href="#ficheros">Ficheros de la ejecución</a>).</p>
+  </article>
+
+  <article id="cobertura">
+    <h3>Cobertura</h3>
+    <p>{{ perspectives.cobertura.pregunta }}</p>
+    <ul>
+      <li>Series candidatas: {{ perspectives.cobertura.series_candidatas }}</li>
+      <li>Series comparables: {{ perspectives.cobertura.series_comparables }}</li>
+      <li>Cobertura: {{ perspectives.cobertura.pct_comparable }}</li>
+    </ul>
+  </article>
+</section>
+
+<section id="semestre" aria-labelledby="semestre-h">
+  <h2 id="semestre-h">Semestre completo (M1–M6)</h2>
+  <p>Ver <a href="#resumen-ejecutivo">Resumen ejecutivo</a> y <a href="#perspectivas">Perspectivas diferenciadas</a>: ambas secciones se calculan sobre 6M.</p>
+</section>
+
+<section id="trimestres" aria-labelledby="trimestres-h">
+  <h2 id="trimestres-h">Trimestres del semestre</h2>
+  <p class="note">Primer trimestre del semestre (M1–M3) y Segundo trimestre del semestre (M4–M6). Ver el detalle por cliente en cada página individual, y el detalle agregado en el Excel/Markdown globales.</p>
+</section>
+
+<section id="evolucion-mensual" aria-labelledby="evolucion-mensual-h">
+  <h2 id="evolucion-mensual-h">Evolución mensual</h2>
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr><th scope="col">Periodo</th><th scope="col">Comparables</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora</th><th scope="col">% clientes mejoran</th><th scope="col">% series gana ML</th></tr>
+    </thead>
+    <tbody>
+      {% for row in monthly %}
+      <tr>
+        <td>{{ row.periodo }}</td><td>{{ row.comparables }}</td><td>{{ row.wape_scp }}</td>
+        <td>{{ row.wape_ml }}</td><td>{{ row.mejora }}</td><td>{{ row.pct_clientes_mejoran }}</td>
+        <td>{{ row.pct_series_gana_ml }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="graficos" aria-labelledby="graficos-h">
+  <h2 id="graficos-h">Modelos, clasificaciones e impacto/riesgos</h2>
+  {{ gallery.render(chart_groups) }}
+</section>
+
+<section id="clientes" aria-labelledby="clientes-h">
+  <h2 id="clientes-h">Clientes</h2>
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">ID</th><th scope="col">Etiqueta</th><th scope="col">Estado</th><th scope="col">Batches</th>
+        <th scope="col">Candidatas</th><th scope="col">Comparables 6M</th><th scope="col">Cobertura</th>
+        <th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora</th>
+        <th scope="col">Warnings</th><th scope="col">Errors</th><th scope="col">Página</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in clients %}
+      <tr class="client-row client-row--{{ row.status_flag }}">
+        <td>{{ row.id_client }}</td>
+        <td>{{ row.etiqueta }}</td>
+        <td><span class="badge badge--{{ row.status_flag }}">{{ row.status_label }}</span></td>
+        <td>{{ row.batches }}</td>
+        <td>{{ row.candidatas }}</td>
+        <td>{{ row.comparables_6m }}</td>
+        <td>{{ row.cobertura }}</td>
+        <td>{{ row.wape_scp }}</td>
+        <td>{{ row.wape_ml }}</td>
+        <td>{{ row.mejora }}</td>
+        <td>{{ row.warnings }}</td>
+        <td>{{ row.errors }}</td>
+        <td>{% if row.url %}<a href="{{ row.url | encode_url_path }}">Ver ficha</a>{% else %}N/D{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="note">El estado de cada cliente se indica con texto además de color: Evaluable, Sin performance, Con warnings, Con errores o Inválido.</p>
+</section>
+
+<section id="inventario" aria-labelledby="inventario-h">
+  <h2 id="inventario-h">Inventario de archivos de entrada</h2>
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr><th scope="col">Archivo</th><th scope="col">ID_CLIENT</th><th scope="col">Etiqueta</th><th scope="col">Estado</th><th scope="col">Tamaño (bytes)</th><th scope="col">SHA-256</th><th scope="col">Error</th><th scope="col">Ficha</th><th scope="col">Log</th></tr>
+    </thead>
+    <tbody>
+      {% for row in inventory %}
+      <tr>
+        <td>{{ row.archivo }}</td>
+        <td>{{ row.id_client }}</td>
+        <td>{{ row.etiqueta }}</td>
+        <td>{{ row.estado }}</td>
+        <td>{{ row.size_bytes }}</td>
+        <td><code title="{{ row.sha256_full }}">{{ row.sha256_short }}</code></td>
+        <td>{{ row.analysis_error or "N/D" }}</td>
+        <td>{% if row.client_url %}<a href="{{ row.client_url | encode_url_path }}">Ver ficha</a>{% else %}—{% endif %}</td>
+        <td>{% if row.log_url %}<a href="{{ row.log_url | encode_url_path }}">Ver log</a>{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="note">Los CSV sin resultado correlacionado no tienen ficha de cliente ni métricas: solo se muestra su estado y el error, sin inventar datos.</p>
+</section>
+
+<section id="metodologia" aria-labelledby="metodologia-h">
+  <h2 id="metodologia-h">Metodología y limitaciones</h2>
+  <ul>
+    {% for note in methodology %}
+    <li>{{ note }}</li>
+    {% endfor %}
+  </ul>
+</section>
+
+<section id="ficheros" aria-labelledby="ficheros-h">
+  <h2 id="ficheros-h">Ficheros de la ejecución</h2>
+  <ul>
+    {% if global_excel_url %}<li><a href="{{ global_excel_url | encode_url_path }}">Excel global</a></li>{% endif %}
+    {% if global_md_url %}<li><a href="{{ global_md_url | encode_url_path }}">Informe global en Markdown</a></li>{% endif %}
+    {% for f in exec_files %}
+    <li><a href="{{ f.url | encode_url_path }}">{{ f.label }}</a></li>
+    {% endfor %}
+  </ul>
+</section>
+
+{% endblock %}

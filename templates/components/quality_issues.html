@@ -1,0 +1,14 @@
+{% macro render(issues) %}
+{% if issues %}
+<ul class="quality-issues">
+  {% for issue in issues %}
+  <li class="quality-issue quality-issue--{{ issue.severity | lower }}">
+    <span class="badge badge--{{ issue.severity | lower }}">{{ issue.severity }}</span>
+    <code>{{ issue.code }}</code> — {{ issue.message }}
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="note">Sin incidencias de calidad registradas.</p>
+{% endif %}
+{% endmacro %}

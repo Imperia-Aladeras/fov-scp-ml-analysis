@@ -59,6 +59,7 @@ python analysis_fov_scp_ml.py `
 | `--run-name` | timestamp `YYYYMMDD_HHMMSS` | Nombre de la ejecucion. Se sanea (ver mas abajo). |
 | `--overwrite` | desactivado | Permite sustituir una ejecucion existente con el mismo nombre. |
 | `--copy-inputs` | desactivado | Copia los CSV originales dentro de la ejecucion (`inputs/`). |
+| `--open-report` | desactivado | Abre `index.html` en el navegador por defecto tras publicar la ejecucion. Ver [Informe HTML](#informe-html-fase-5b). |
 
 ### Saneamiento de `--run-name`
 
@@ -87,6 +88,10 @@ python analysis_fov_scp_ml.py `
     execution_summary.md
     execution_summary.xlsx
 
+    index.html                  # informe HTML global (Fase 5B): ver seccion dedicada mas abajo
+    assets/
+      styles.css                 # unico CSS local, offline, compartido por todas las paginas
+
     global/
       fov_scp_ml_global_summary.xlsx   # 16 pestanas
       fov_scp_ml_global_report.md      # 21 secciones
@@ -94,6 +99,7 @@ python analysis_fov_scp_ml.py `
 
     clients/
       <CLIENTE>/
+        index.html                          # ficha HTML del cliente (Fase 5B)
         fov_scp_ml_summary_<CLIENTE>.xlsx   # 14 pestanas
         fov_scp_ml_report_<CLIENTE>.md      # 18 secciones
         processing_log_<CLIENTE>.txt
@@ -166,10 +172,121 @@ pudo convertirse en un cliente valido): nombre, ruta relativa, tamano en
 bytes, fecha de modificacion, SHA-256 (todo calculado sobre los bytes
 originales **antes** de cualquier intento de parseo), `analyzed_source`
 (`"original"` o `"copy"`), mas `id_client`/etiqueta/filas/estado/
-warnings/errores cuando el CSV pudo procesarse. Si la ejecucion falla,
+warnings/errores cuando el CSV pudo procesarse. `outputs_generated` incluye
+tambien `index.html`, cada `clients/<CLIENTE>/index.html` y `assets/styles.css`
+(ver [Informe HTML](#informe-html-fase-5b)). Si la ejecucion falla,
 incluye un bloque `failure` con `phase`, `error_type` y `error_message`; el
 manifest se actualiza inmediatamente antes o despues de la publicacion para
 que `published`/`output_dir_working` reflejen el estado real final.
+
+## Informe HTML (Fase 5B)
+
+Cada ejecucion publica, ademas del Excel/Markdown/graficos/logs de Fase 5A,
+un informe HTML estatico, navegable y **completamente offline**:
+`<run>/index.html` (global) y una ficha `<run>/clients/<CLIENTE>/index.html`
+por cada CSV que llego a producir un resultado de analisis (valido o
+invalido). El HTML es una capa de presentacion sobre los resultados ya
+calculados en memoria: nunca relee Excel, Markdown, logs ni `manifest.json`
+de disco, y nunca recalcula WAPE, MAE, RMSE, Bias, ganadores, mejoras,
+cobertura ni impactos absolutos.
+
+### Funcionamiento offline
+
+- No requiere conexion a internet, servidor local ni Python en ejecucion:
+  se abre haciendo doble clic en `index.html`.
+- Un unico CSS local (`assets/styles.css`), sin CDN, sin fuentes remotas, sin
+  JavaScript de terceros. La navegacion principal y todas las secciones son
+  utilizables con JavaScript desactivado (solo se usan elementos nativos:
+  `<details>`, anclas, tablas).
+- Los graficos referencian los PNG ya generados por `src/charts.py` /
+  `src/global_charts.py` mediante rutas relativas; nunca se referencia un PNG
+  que no exista, y nunca se convierten los graficos a base64 en bloque.
+- Todos los `href`/`src` son rutas relativas con `/` (nunca rutas absolutas
+  de Windows, `file:///...`, URLs `http(s)://`, ni esquemas `javascript:` o
+  `data:`). Los segmentos con espacios o acentos se codifican con
+  porcentaje (`%20`, `%C3%B1`...) sin romper el enlace.
+
+### Portabilidad
+
+La carpeta completa de una ejecucion publicada (`<run>/`, con `index.html`,
+`assets/`, `global/`, `clients/`) se puede copiar, comprimir, descomprimir o
+mover a otra ubicacion (otro equipo, otra unidad) sin que se rompa ningun
+enlace interno: todas las rutas son relativas entre si, nunca absolutas ni
+dependientes del equipo donde se genero. `src/html_report.py` incluye un
+validador de enlaces (`validate_run_links`) que se ejecuta automaticamente
+durante la generacion y que los tests reutilizan para comprobar los enlaces
+tambien despues de mover una copia de una ejecucion.
+
+### Pagina global (`index.html`)
+
+Cabecera de ejecucion, resumen ejecutivo (con numerador y denominador
+explicitos, p.ej. "6 de 7 clientes evaluables mejoran; 2 sin performance"),
+perspectivas diferenciadas (impacto ponderado, mejora por cliente, mejora
+por serie, frecuencia de victoria, impacto absoluto, cobertura — nunca
+mezcladas en una unica conclusion), evolucion mensual, graficos globales,
+tabla de clientes (con enlace a su ficha cuando existe) e inventario de
+archivos de entrada (incluye los CSV que no llegaron a producir un cliente,
+sin inventar metricas ni carpeta para ellos), metodologia y limitaciones, y
+enlaces a los ficheros de la ejecucion (Excel/Markdown globales,
+`execution_summary`, `manifest.json`, `execution.log`).
+
+### Ficha de cliente (`clients/<CLIENTE>/index.html`)
+
+Identificacion, conclusion, cobertura por periodo, semestre completo y los
+dos trimestres usando siempre las etiquetas "Semestre completo (M1-M6)",
+"Primer trimestre del semestre (M1-M3)" y "Segundo trimestre del semestre
+(M4-M6)", evolucion mensual, modelos, clasificaciones, impacto absoluto y
+casos destacados, exclusiones, limitaciones, graficos y enlaces al Excel,
+Markdown y log de ese cliente. Navegacion cliente anterior/siguiente en
+orden deterministico (por nombre de fichero).
+
+- Un cliente **sin performance calculable** (cobertura sin ninguna serie
+  comparable) muestra una explicacion textual, nunca WAPE o mejora en cero.
+- Un cliente **invalido** (fichero no valido) muestra una pagina de
+  diagnostico con sus errores de calidad, sin secciones estadisticas
+  ficticias.
+
+### `--open-report`
+
+```powershell
+python analysis_fov_scp_ml.py `
+  --input-dir "C:\Datos\Validacion" `
+  --output-root "C:\Informes\FOV\runs" `
+  --run-name "validacion_septiembre_2026" `
+  --open-report
+```
+
+Abre `<run_dir_final>/index.html` en el navegador por defecto (via
+`webbrowser`), y **solo** despues de que la publicacion transaccional haya
+terminado con exito (`.publish_complete` ya existe): nunca abre el HTML del
+directorio temporal. Es una accion de conveniencia estrictamente posterior
+a la publicacion: si el navegador no puede abrirse (excepcion o `False`),
+se muestra un aviso por consola y, si es posible, se anade una linea al
+`execution.log` ya publicado, pero la ejecucion sigue devolviendo el codigo
+de salida `0`, `.publish_complete` no se borra y el manifiesto no cambia a
+`FAILED`. El valor de `--open-report` queda registrado en `run_config.json`.
+
+### Integracion con la publicacion transaccional
+
+El HTML y sus assets se generan **dentro del directorio temporal**
+(`<run_dir_temp>/`), como una fase mas del pipeline (`HTML_REPORT`, entre
+`EXECUTION_SUMMARY` y `MANIFEST`), y se incluyen en `outputs_generated` /
+`manifest.json` igual que el resto de ficheros. Si la generacion del HTML
+falla (incluida la validacion de enlaces), es un fallo global: la ejecucion
+no se publica, el directorio temporal se conserva integro para diagnostico
+y nunca se entrega un `index.html` a medias.
+
+### Jerarquia de consulta de los outputs
+
+- **HTML** (`index.html`, `clients/<CLIENTE>/index.html`): consulta
+  rutinaria y navegable, punto de entrada recomendado.
+- **Excel** (`fov_scp_ml_*_summary*.xlsx`): analisis detallado, filtros y
+  tablas dinamicas.
+- **Markdown** (`fov_scp_ml_*_report*.md`): auditoria y versionado legible
+  en diffs de texto.
+- **Logs** (`processing_log_*.txt`, `execution.log`): diagnostico tecnico.
+- **`manifest.json`**: trazabilidad y reproducibilidad (hashes, procedencia
+  Git, estado de publicacion).
 
 ### Codigos de salida
 
@@ -206,7 +323,10 @@ El pipeline:
    `<run>/global/`.
 6. Genera `<run>/execution_summary.md`, `<run>/execution_summary.xlsx`,
    `<run>/manifest.json`, `<run>/run_config.json` y `<run>/execution.log`.
-7. Publica la ejecucion de forma atomica (ver arriba).
+7. Genera el informe HTML estatico y offline (`<run>/index.html` y
+   `<run>/clients/<CLIENTE>/index.html`, ver
+   [Informe HTML](#informe-html-fase-5b)).
+8. Publica la ejecucion de forma atomica (ver arriba).
 
 No modifica nunca los CSV originales de `--input-dir`.
 
@@ -404,6 +524,17 @@ src/
   global_report_writer.py    # Markdown global (21 secciones)
   global_charts.py           # graficos globales (8 subcarpetas)
   execution_summary.py       # execution_summary.md / .xlsx
+  input_inventory.py         # inventario inmutable de CSV (tamano, mtime, SHA-256)
+  manifest.py                 # manifest.json + procedencia Git
+  run_config.py               # RunConfig, CLI y saneamiento de --run-name
+  run_publish.py              # publicacion atomica y reconciliacion tras interrupcion
+  html_formatters.py          # formatters centralizados para el informe HTML (N/D, %, es-ES)
+  html_view_models.py         # traduce ClientAnalysisResult/GlobalAnalysisResult/ExecutionRecord a datos para las plantillas
+  html_report.py              # orquestacion del HTML (Fase 5B): paginas, assets, validacion de enlaces
+templates/                    # plantillas Jinja2 (autoescape) del informe HTML
+  base.html  global_report.html  client_report.html  components/
+report_assets/
+  styles.css                  # CSS local unico del informe HTML
 tests/                        # tests unitarios con datos sinteticos
 ```
 

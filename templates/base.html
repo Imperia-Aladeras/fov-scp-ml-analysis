@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{{ run_name }}{% endblock %}</title>
+<link rel="stylesheet" href="{{ css_url | encode_url_path }}">
+</head>
+<body>
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+<header class="site-header">
+  <div class="site-header__inner">
+    <p class="site-header__run">Ejecución: <strong>{{ run_name }}</strong></p>
+    <nav class="site-header__nav" aria-label="Navegación principal">
+      {% if global_url %}<a href="{{ global_url | encode_url_path }}">Resumen global</a>{% else %}<span aria-current="page">Resumen global</span>{% endif %}
+    </nav>
+  </div>
+</header>
+<main id="contenido">
+{% block content %}{% endblock %}
+</main>
+<footer class="site-footer">
+  <p>Informe generado de forma offline por el pipeline FOV SCP vs ML. No requiere conexión a internet, servidor local ni Python en ejecución para consultarse.</p>
+</footer>
+</body>
+</html>

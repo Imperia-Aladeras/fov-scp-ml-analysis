@@ -91,7 +91,10 @@ def sanitize_run_name(raw: str) -> str:
 def build_arg_parser(base_dir: Path) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="analysis_fov_scp_ml.py",
-        description="Pipeline reproducible de comparativa SCP vs ML (Fase 5A: ejecuciones aisladas y trazables).",
+        description=(
+            "Pipeline reproducible de comparativa SCP vs ML: ejecuciones aisladas y trazables, "
+            "con informe HTML, Excel y Markdown por ejecucion."
+        ),
     )
     parser.add_argument(
         "--input-dir", type=Path, default=base_dir / "data",
@@ -113,6 +116,14 @@ def build_arg_parser(base_dir: Path) -> argparse.ArgumentParser:
         "--copy-inputs", action="store_true", default=False,
         help="Copia los CSV originales dentro de la ejecucion (inputs/).",
     )
+    parser.add_argument(
+        "--open-report", action="store_true", default=False,
+        help=(
+            "Abre index.html en el navegador por defecto tras publicar la ejecucion. "
+            "Accion de conveniencia posterior a la publicacion: nunca afecta al resultado "
+            "del analisis ni al codigo de salida."
+        ),
+    )
     return parser
 
 
@@ -130,6 +141,7 @@ class RunConfig:
     copy_inputs: bool
     overwrite: bool
     started_at: datetime
+    open_report: bool = False
     pipeline_version: str = PIPELINE_VERSION
 
     @property
@@ -198,6 +210,7 @@ class RunConfig:
             "run_name_effective": self.run_name_effective,
             "copy_inputs": self.copy_inputs,
             "overwrite": self.overwrite,
+            "open_report": self.open_report,
             "pipeline_version": self.pipeline_version,
             "started_at": self.started_at.isoformat(),
         }
@@ -219,7 +232,8 @@ def build_run_config(args: argparse.Namespace, base_dir: Path, started_at: datet
         input_dir=input_dir, output_root=output_root,
         run_name_requested=run_name_requested, run_name_effective=run_name_effective,
         copy_inputs=bool(args.copy_inputs), overwrite=bool(args.overwrite),
-        started_at=started_at or now_local(), pipeline_version=PIPELINE_VERSION,
+        started_at=started_at or now_local(), open_report=bool(args.open_report),
+        pipeline_version=PIPELINE_VERSION,
     )
     _ensure_direct_child(cfg.run_dir_temp, cfg.output_root)
     _ensure_direct_child(cfg.run_dir_final, cfg.output_root)

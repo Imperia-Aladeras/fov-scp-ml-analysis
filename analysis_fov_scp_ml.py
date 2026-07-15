@@ -63,6 +63,7 @@ import shutil
 import sys
 import time
 import traceback
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 
@@ -79,6 +80,7 @@ from src.global_analysis import analyze_global
 from src.global_charts import generate_global_charts
 from src.global_excel_writer import build_global_workbook
 from src.global_report_writer import build_global_report
+from src.html_report import generate_html_report, validate_run_links
 from src.input_inventory import (
     InputFileRecord,
     InputIntegrityError,
@@ -528,9 +530,19 @@ def run_pipeline(run_config: RunConfig) -> int:
         outputs_generated.append(run_config.execution_summary_xlsx_path.name)
         log("execution_summary generado")
 
-        phase = "MANIFEST"
+        phase = "HTML_REPORT"
         finished_at = now_local()
         status = _apply_metadata_changed_status(_overall_status(results), metadata_changed)
+        html_generated = generate_html_report(
+            run_config=run_config, results=results, global_result=global_result,
+            all_outputs=all_outputs, global_outputs=global_outputs, execution_records=records,
+            started_at=started_at, finished_at=finished_at, status=status,
+            git_commit=git_commit, git_worktree_dirty=git_worktree_dirty,
+        )
+        outputs_generated.extend(html_generated)
+        log(f"informe_html generado: {len(html_generated)} fichero(s) (index.html, paginas de cliente, assets)")
+
+        phase = "MANIFEST"
         outputs_generated.append("run_config.json")
         outputs_generated.append("manifest.json")
         outputs_generated.append("execution.log")
@@ -543,6 +555,16 @@ def run_pipeline(run_config: RunConfig) -> int:
         log("manifest generado")
 
         _write_execution_log(log_lines, run_config.execution_log_path)
+
+        phase = "HTML_LINK_VALIDATION"
+        link_problems = validate_run_links(run_config.run_dir_temp)
+        if link_problems:
+            raise RuntimeError(
+                f"Validacion de enlaces del informe HTML fallida ({len(link_problems)} problema(s)):\n"
+                + "\n".join(link_problems[:20])
+            )
+        print(f"Validacion de enlaces del informe HTML: {len(html_generated)} fichero(s), sin problemas.")
+
         _print_global_summary(results, all_outputs, global_result, global_outputs)
         print(
             f"\nResumen de ejecucion: execution_summary.md, execution_summary.xlsx "
@@ -641,7 +663,50 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"\nEjecucion publicada en: {run_config.run_dir_final}")
+
+    if run_config.open_report:
+        _try_open_report(run_config)
+
     return 0
+
+
+def _append_best_effort_log(run_config: RunConfig, message: str) -> None:
+    try:
+        with (run_config.run_dir_final / "execution.log").open("a", encoding="utf-8") as f:
+            f.write(format_log_line("OPEN_REPORT", message) + "\n")
+    except OSError:
+        pass
+
+
+def _try_open_report(run_config: RunConfig) -> None:
+    """
+    Accion de conveniencia POSTERIOR a la publicacion (Fase 5B, --open-report):
+    solo se invoca aqui, cuando publish_run() ya ha terminado con exito y
+    run_dir_final/index.html + .publish_complete existen. Un fallo al abrir
+    el navegador (excepcion o False) nunca revierte la publicacion, nunca
+    borra .publish_complete, nunca cambia el manifest ni el codigo de
+    salida: la ejecucion ya quedo publicada correctamente antes de llegar
+    aqui, esto es solo una comodidad posterior.
+    """
+    report_path = run_config.run_dir_final / "index.html"
+    if not report_path.exists() or not run_config.publish_marker_path.exists():
+        print(
+            f"AVISO: --open-report solicitado pero el informe publicado no esta completo "
+            f"todavia en {report_path}; no se abre el navegador.", file=sys.stderr,
+        )
+        return
+    try:
+        opened = webbrowser.open(report_path.resolve().as_uri())
+    except Exception as exc:  # noqa: BLE001 - no debe invalidar una publicacion ya completa
+        print(f"AVISO: no se ha podido abrir el navegador para --open-report: {exc}", file=sys.stderr)
+        _append_best_effort_log(run_config, f"AVISO: excepcion al abrir el navegador: {exc}")
+        return
+    if not opened:
+        print(
+            f"AVISO: el navegador no se ha podido abrir automaticamente. Puedes abrir manualmente: {report_path}",
+            file=sys.stderr,
+        )
+        _append_best_effort_log(run_config, "AVISO: webbrowser.open() devolvio False.")
 
 
 if __name__ == "__main__":

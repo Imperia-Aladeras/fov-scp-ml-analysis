@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% import "components/chart_gallery.html" as gallery %}
+{% import "components/quality_issues.html" as qi %}
+{% block title %}{{ page.etiqueta }} — {{ run_name }}{% endblock %}
+{% block content %}
+
+<h1>{{ page.etiqueta }}</h1>
+<p class="note">ID_CLIENT: {{ page.id_client }} · Fichero: {{ page.file_name }} · Estado: <span class="badge badge--{{ page.estado | lower }}">{{ page.estado }}</span></p>
+
+<nav class="client-prevnext" aria-label="Navegación entre clientes">
+  {% if page.prev_client %}<a href="{{ page.prev_client.url | encode_url_path }}">&larr; {{ page.prev_client.etiqueta }}</a>{% else %}<span></span>{% endif %}
+  <a href="{{ global_url | encode_url_path }}">Resumen global</a>
+  {% if page.next_client %}<a href="{{ page.next_client.url | encode_url_path }}">{{ page.next_client.etiqueta }} &rarr;</a>{% else %}<span></span>{% endif %}
+</nav>
+
+<section id="identificacion" aria-labelledby="identificacion-h">
+  <h2 id="identificacion-h">Identificación</h2>
+  <table class="kv-table">
+    <tbody>
+      <tr><th scope="row">ID_CLIENT</th><td>{{ page.id_client }}</td></tr>
+      <tr><th scope="row">Etiqueta</th><td>{{ page.etiqueta }}</td></tr>
+      <tr><th scope="row">ID_BATCH</th><td>{{ page.id_batch }}</td></tr>
+      <tr><th scope="row">ID_RUN_STAGING</th><td>{{ page.id_run_staging }}</td></tr>
+      <tr><th scope="row">SOURCE_RUN_ID</th><td>{{ page.source_run_id }}</td></tr>
+      <tr><th scope="row">Estado del cliente</th><td>{{ page.estado }}</td></tr>
+      <tr><th scope="row">Fichero válido</th><td>{{ "Sí" if page.file_valid else "No" }}</td></tr>
+      <tr><th scope="row">Series candidatas</th><td>{{ page.n_candidates }}</td></tr>
+      <tr><th scope="row">Warnings / Errors</th><td>{{ page.warnings_count }} / {{ page.errors_count }}</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="conclusion" aria-labelledby="conclusion-h">
+  <h2 id="conclusion-h">Conclusión</h2>
+  <p class="conclusion">{{ page.conclusion }}</p>
+</section>
+
+<section id="calidad" aria-labelledby="calidad-h">
+  <h2 id="calidad-h">Warnings y errores</h2>
+  {{ qi.render(page.quality_issues) }}
+</section>
+
+{% if page.kind == "invalid" %}
+  <section id="diagnostico" aria-labelledby="diagnostico-h">
+    <h2 id="diagnostico-h">Diagnóstico</h2>
+    <p class="note">Este fichero no superó la validación: no se calculó ningún periodo ni métrica. No se muestran secciones estadísticas porque no existen datos válidos sobre los que calcularlas.</p>
+  </section>
+
+{% else %}
+
+<section id="cobertura" aria-labelledby="cobertura-h">
+  <h2 id="cobertura-h">Cobertura por periodo</h2>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th scope="col">Periodo</th><th scope="col">Candidatas</th><th scope="col">Comparables</th><th scope="col">% comparable</th></tr></thead>
+    <tbody>
+      {% for row in page.coverage_by_period %}
+      <tr><td>{{ row.periodo }}</td><td>{{ row.candidatas }}</td><td>{{ row.comparables }}</td><td>{{ row.pct_comparable }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+{% if page.kind == "no_performance" %}
+  <section id="sin-performance" aria-labelledby="sin-performance-h">
+    <h2 id="sin-performance-h">Sin performance calculable</h2>
+    <p class="note">Este cliente tiene cobertura (fichero válido, series candidatas), pero ninguna serie es comparable en ningún periodo: no hay universo evaluable suficiente para calcular WAPE, mejora ni winner. Estos valores se muestran como N/D, nunca como cero.</p>
+  </section>
+{% else %}
+
+{% macro period_block(block, anchor) %}
+<section id="{{ anchor }}" aria-labelledby="{{ anchor }}-h">
+  <h2 id="{{ anchor }}-h">{{ block.label }}</h2>
+  {% if block.has_data %}
+  <table class="kv-table">
+    <tbody>
+      <tr><th scope="row">Candidatas / Comparables</th><td>{{ block.n_candidates }} / {{ block.n_comparable }} ({{ block.pct_comparable }})</td></tr>
+      <tr><th scope="row">WAPE SCP</th><td>{{ block.wape_scp }}</td></tr>
+      <tr><th scope="row">WAPE ML</th><td>{{ block.wape_ml }}</td></tr>
+      <tr><th scope="row">Mejora</th><td>{{ block.mejora }}</td></tr>
+      <tr><th scope="row">Reducción absoluta de error</th><td>{{ block.reduccion_absoluta }}</td></tr>
+      <tr><th scope="row">Victorias ML / SCP / Empate</th><td>{{ block.n_ml }} ({{ block.pct_ml }}) / {{ block.n_scp }} ({{ block.pct_scp }}) / {{ block.n_tie }} ({{ block.pct_tie }})</td></tr>
+      <tr><th scope="row">Mejora por serie: media / mediana</th><td>{{ block.media_mejora_serie }} / {{ block.mediana_mejora_serie }}</td></tr>
+    </tbody>
+  </table>
+  {% else %}
+  <p class="note">{{ block.explanation or "Sin datos para este periodo." }}</p>
+  {% endif %}
+</section>
+{% endmacro %}
+
+{{ period_block(page.semestre, "semestre") }}
+{{ period_block(page.primer_trimestre, "primer-trimestre") }}
+{{ period_block(page.segundo_trimestre, "segundo-trimestre") }}
+
+<section id="evolucion-mensual" aria-labelledby="evolucion-mensual-h">
+  <h2 id="evolucion-mensual-h">Evolución mensual</h2>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th scope="col">Mes</th><th scope="col">Comparables</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora</th></tr></thead>
+    <tbody>
+      {% for m in page.monthly %}
+      <tr>
+        <td>{{ m.label }}</td>
+        <td>{{ m.n_comparable if m.has_data else "N/D" }}</td>
+        <td>{{ m.wape_scp if m.has_data else "N/D" }}</td>
+        <td>{{ m.wape_ml if m.has_data else "N/D" }}</td>
+        <td>{{ m.mejora if m.has_data else "N/D" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="modelos" aria-labelledby="modelos-h">
+  <h2 id="modelos-h">Modelos (semestre completo)</h2>
+  <h3>Modelo ML seleccionado</h3>
+  {% if page.ml_models %}
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th scope="col">Modelo</th><th scope="col">N</th><th scope="col">% victoria ML</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora agregada</th><th scope="col">Muestra pequeña</th></tr></thead>
+    <tbody>
+      {% for r in page.ml_models %}
+      <tr><td>{{ r.categoria }}</td><td>{{ r.n }}</td><td>{{ r.tasa_victoria_ml }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td><td>{{ r.mejora_agregada }}</td><td>{{ "Sí" if r.muestra_pequena else "No" }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="note">Sin datos de modelo ML para el universo comparable.</p>{% endif %}
+
+  <h3>Modelo SCP seleccionado</h3>
+  {% if page.scp_models %}
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th scope="col">Modelo</th><th scope="col">N</th><th scope="col">% victoria ML</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora agregada</th><th scope="col">Muestra pequeña</th></tr></thead>
+    <tbody>
+      {% for r in page.scp_models %}
+      <tr><td>{{ r.categoria }}</td><td>{{ r.n }}</td><td>{{ r.tasa_victoria_ml }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td><td>{{ r.mejora_agregada }}</td><td>{{ "Sí" if r.muestra_pequena else "No" }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="note">Sin datos de modelo SCP para el universo comparable.</p>{% endif %}
+</section>
+
+<section id="clasificaciones" aria-labelledby="clasificaciones-h">
+  <h2 id="clasificaciones-h">Clasificaciones (semestre completo)</h2>
+  {% if page.classifications %}
+  {% for col, rows in page.classifications.items() %}
+  <details class="chart-group">
+    <summary>{{ col }} ({{ rows | length }})</summary>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th scope="col">Categoría</th><th scope="col">N</th><th scope="col">% victoria ML</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora agregada</th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr><td>{{ r.categoria }}</td><td>{{ r.n }}</td><td>{{ r.tasa_victoria_ml }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td><td>{{ r.mejora_agregada }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </details>
+  {% endfor %}
+  {% else %}<p class="note">Sin datos de clasificación para el universo comparable.</p>{% endif %}
+</section>
+
+<section id="impacto" aria-labelledby="impacto-h">
+  <h2 id="impacto-h">Impacto absoluto y casos destacados (semestre completo)</h2>
+  <table class="kv-table">
+    <tbody>
+      <tr><th scope="row">Excluidas por ML (estado)</th><td>{{ page.exclusions.n_status_excluded }}</td></tr>
+      <tr><th scope="row">Excluidas por ML (indicador)</th><td>{{ page.exclusions.n_flag_excluded }}</td></tr>
+    </tbody>
+  </table>
+
+  {% macro ranking_table(rows, value_label) %}
+  {% if rows %}
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th scope="col">ID_CONFIGURATION</th><th scope="col">{{ value_label }}</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Winner</th><th scope="col">Modelo SCP</th><th scope="col">Modelo ML</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr><td>{{ r.id_configuration }}</td><td>{{ r.valor }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td><td>{{ r.winner }}</td><td>{{ r.modelo_scp }}</td><td>{{ r.modelo_ml }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="note">Sin casos para mostrar.</p>{% endif %}
+  {% endmacro %}
+
+  <h3>Top mejoras (%)</h3>
+  {{ ranking_table(page.top_improvements, "Mejora %") }}
+  <h3>Top deterioros (%)</h3>
+  {{ ranking_table(page.top_deteriorations, "Mejora %") }}
+  <h3>Top reducción absoluta de error</h3>
+  {{ ranking_table(page.top_abs_reductions, "Reducción absoluta") }}
+  <h3>Top aumento absoluto de error</h3>
+  {{ ranking_table(page.top_abs_increases, "Reducción absoluta") }}
+</section>
+
+<section id="limitaciones" aria-labelledby="limitaciones-h">
+  <h2 id="limitaciones-h">Limitaciones</h2>
+  <ul>
+    {% for l in page.limitations %}<li>{{ l }}</li>{% endfor %}
+  </ul>
+</section>
+
+{% endif %}
+{% endif %}
+
+<section id="graficos" aria-labelledby="graficos-h">
+  <h2 id="graficos-h">Gráficos</h2>
+  {{ gallery.render(page.chart_groups, open_first=true) }}
+</section>
+
+<section id="ficheros" aria-labelledby="ficheros-h">
+  <h2 id="ficheros-h">Ficheros de este cliente</h2>
+  <ul>
+    {% if page.own_excel_url %}<li><a href="{{ page.own_excel_url | encode_url_path }}">Excel individual</a></li>{% endif %}
+    {% if page.own_md_url %}<li><a href="{{ page.own_md_url | encode_url_path }}">Informe en Markdown</a></li>{% endif %}
+    {% if page.own_log_url %}<li><a href="{{ page.own_log_url | encode_url_path }}">Log de procesamiento</a></li>{% endif %}
+  </ul>
+</section>
+
+{% endblock %}

@@ -1,0 +1,21 @@
+{% macro render(chart_groups, open_first=false) %}
+{% if chart_groups %}
+{% for group in chart_groups %}
+  <details class="chart-group"{% if open_first and loop.first %} open{% endif %}>
+    <summary>{{ group.label }} ({{ group.charts | length }})</summary>
+    <div class="chart-grid">
+      {% for chart in group.charts %}
+      <figure class="chart-item">
+        <a href="{{ chart.url | encode_url_path }}">
+          <img src="{{ chart.url | encode_url_path }}" alt="{{ chart.alt }}" loading="lazy">
+        </a>
+        <figcaption>{{ chart.alt }}</figcaption>
+      </figure>
+      {% endfor %}
+    </div>
+  </details>
+{% endfor %}
+{% else %}
+  <p class="note">No hay gráficos generados para esta sección.</p>
+{% endif %}
+{% endmacro %}
