@@ -1,46 +1,75 @@
 """
 Punto de entrada del pipeline FOV SCP vs ML.
 
-Estado actual (Fase 4 - comparativa global y acabado final):
-    1. Descubre automaticamente todos los CSV de data/.
-    2. Valida cada CSV (legibilidad, columnas obligatorias, cliente unico,
-       nombre vs ID_CLIENT, duplicados, cliente duplicado entre ficheros).
-    3. Ejecuta el nucleo de analisis (Fase 2): cobertura, comparabilidad
-       especifica por periodo, WAPE global ponderado, reduccion absoluta de
-       error, mejora relativa, distribucion de ganadores.
-    4. Genera, para cada cliente con fichero valido, en outputs/<CLIENTE>/:
+Estado actual (Fase 5A - pipeline reutilizable con ejecuciones aisladas y trazables):
+    1. Parsea argumentos de linea de comandos (--input-dir, --output-root,
+       --run-name, --overwrite, --copy-inputs), con valores por defecto que
+       reproducen el comportamiento historico (data/ -> outputs/runs/<timestamp>/).
+    2. Construye un RunConfig tipado: unica fuente de las rutas de la
+       ejecucion, inyectada explicitamente a cada writer/generador.
+    3. Construye un inventario inmutable de los CSV de entrada (nombre, ruta
+       relativa, tamano, fecha de modificacion, SHA-256 de los bytes
+       originales) ANTES de llamar a load_client_sources, para que el hash
+       registrado corresponda exactamente a los bytes analizados.
+    4. Con --copy-inputs: copia los CSV a <run>/inputs/, verifica que el
+       SHA-256 de cada copia coincide con el original, y analiza desde la
+       copia archivada. Sin --copy-inputs: analiza los originales y, al
+       terminar, vuelve a comprobarlos; si alguno cambio durante la
+       ejecucion, la ejecucion falla (INPUT_CHANGED_DURING_RUN) y no se
+       publica.
+    5. Descubre automaticamente todos los CSV de entrada, valida cada uno de
+       forma aislada (un fichero invalido no bloquea a los demas) y ejecuta
+       el nucleo de analisis por cliente y periodo.
+    6. Genera, para cada cliente con fichero valido, en <run>/clients/<CLIENTE>/:
        - fov_scp_ml_summary_<CLIENTE>.xlsx (14 pestanas)
        - fov_scp_ml_report_<CLIENTE>.md (18 secciones)
        - charts/{coverage,semester,quarters,monthly,models,classifications,impact_and_risk}/*.png
        - processing_log_<CLIENTE>.txt
-    5. Los clientes sin ninguna serie comparable (p.ej. por
-       NOT_COMPARABLE_MISSING_VALIDATION) generan igualmente sus outputs:
-       las secciones de performance quedan vacias por diseno, nunca con
-       metricas inventadas.
-    6. Calcula la comparativa global entre todos los clientes con fichero
-       valido (4 perspectivas: impacto ponderado, mejora por cliente, mejora
-       por serie, impacto absoluto) y genera en outputs/global/:
-       - fov_scp_ml_global_summary.xlsx (16 pestanas)
-       - fov_scp_ml_global_report.md (21 secciones)
-       - charts/{coverage,semester,quarters,monthly,clients,models,classifications,impact_and_risk}/*.png
-    7. Genera outputs/execution_summary.md y outputs/execution_summary.xlsx
-       (una fila por CSV descubierto, valido o no).
-    8. Imprime un resumen de consola por cliente y un resumen global.
+    7. Calcula la comparativa global (4 perspectivas) y la escribe en
+       <run>/global/: fov_scp_ml_global_summary.xlsx (16 pestanas),
+       fov_scp_ml_global_report.md (21 secciones) y sus graficos.
+    8. Genera <run>/execution_summary.md, <run>/execution_summary.xlsx,
+       <run>/manifest.json (metadata completa: inventario de inputs con
+       SHA-256, procedencia Git incluyendo git_worktree_dirty, cifras
+       agregadas, estado de publicacion) y <run>/execution.log.
+    9. Publica la ejecucion de forma transaccional: se escribe primero en un
+       directorio temporal oculto; solo se renombra al nombre final cuando
+       el procesamiento termina correctamente, y solo se considera
+       publicada de verdad cuando manifest.json, execution.log Y la marca
+       durable `.publish_complete` se han escrito con exito (esa marca, no
+       el contenido de manifest.json, es la unica senal fiable de
+       publicacion completa). Si el proceso se interrumpe abruptamente en
+       cualquier punto de esa transaccion, la siguiente ejecucion repara el
+       estado (reconcile_interrupted_publication) sin perder nunca una
+       ejecucion anterior valida. Cualquier fallo (de configuracion, de
+       procesamiento, de preparacion del directorio o de publicacion) deja
+       el manifest con status FAILED y el temporal intacto para
+       diagnostico; nunca se publica un resultado a medias.
+   10. Codigos de salida: 0 = completado (aunque existan warnings o clientes
+       aislados); 1 = fallo durante el procesamiento, la preparacion del
+       directorio o la publicacion; 2 = error de configuracion o argumentos
+       detectable antes de tocar disco (incluye colision de ejecucion sin
+       --overwrite).
 
 Ejecucion:
     python analysis_fov_scp_ml.py
+    python analysis_fov_scp_ml.py --input-dir <carpeta> --output-root <carpeta> --run-name <nombre> [--overwrite] [--copy-inputs]
 """
 
 from __future__ import annotations
 
+import json
+import shutil
 import sys
 import time
 import traceback
+from datetime import datetime
 from pathlib import Path
 
 from src.charts import generate_client_charts
 from src.client_analysis import ClientAnalysisResult, analyze_client
 from src.excel_writer import build_client_workbook
+from src.execution_log import format_log_line
 from src.execution_summary import (
     build_execution_records,
     build_execution_summary_markdown,
@@ -50,28 +79,35 @@ from src.global_analysis import analyze_global
 from src.global_charts import generate_global_charts
 from src.global_excel_writer import build_global_workbook
 from src.global_report_writer import build_global_report
+from src.input_inventory import (
+    InputFileRecord,
+    InputIntegrityError,
+    build_input_inventory,
+    verify_copies_match_originals,
+    verify_originals_unchanged,
+)
 from src.input_loader import ClientSource, load_client_sources
 from src.logging_utils import build_processing_log
+from src.manifest import build_manifest, detect_git_commit, detect_git_worktree_dirty, write_manifest
 from src.quality_checks import Severity
 from src.report_writer import build_client_report
+from src.run_config import RunConfig, RunNameError, build_arg_parser, build_run_config, now_local
+from src.run_publish import publish_run, reconcile_interrupted_publication
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-OUTPUT_DIR = BASE_DIR / "outputs"
-GLOBAL_DIR = OUTPUT_DIR / "global"
 
 SUMMARY_PERIODS = ["6M", "RECENT_3M", "OLDER_3M", "M1", "M6"]
 MAX_ISSUES_SHOWN = 6
 
 
-def _generate_client_outputs(result: ClientAnalysisResult) -> tuple[list[str], float]:
+def _generate_client_outputs(result: ClientAnalysisResult, clients_dir: Path, relative_to: Path) -> tuple[list[str], float]:
     """
-    Genera Excel, Markdown, graficos y log de un cliente en outputs/<CLIENTE>/.
+    Genera Excel, Markdown, graficos y log de un cliente en clients_dir/<CLIENTE>/.
     Si el fichero no es valido, solo se escribe el log (sin inventar datos).
-    Devuelve (rutas generadas relativas al repo, duracion en segundos).
+    Devuelve (rutas generadas relativas a relative_to, duracion en segundos).
     """
     source = result.source
-    client_dir = OUTPUT_DIR / source.folder_name
+    client_dir = clients_dir / source.folder_name
     outputs_generated: list[str] = []
 
     start = time.perf_counter()
@@ -80,38 +116,38 @@ def _generate_client_outputs(result: ClientAnalysisResult) -> tuple[list[str], f
 
         excel_path = client_dir / f"fov_scp_ml_summary_{source.folder_name}.xlsx"
         build_client_workbook(result, excel_path)
-        outputs_generated.append(str(excel_path.relative_to(BASE_DIR)))
+        outputs_generated.append(str(excel_path.relative_to(relative_to)))
 
         report_path = client_dir / f"fov_scp_ml_report_{source.folder_name}.md"
         report_path.write_text(build_client_report(result), encoding="utf-8")
-        outputs_generated.append(str(report_path.relative_to(BASE_DIR)))
+        outputs_generated.append(str(report_path.relative_to(relative_to)))
 
         chart_paths = generate_client_charts(result, client_dir / "charts")
-        outputs_generated += [str(Path(p).relative_to(BASE_DIR)) for p in chart_paths]
+        outputs_generated += [str(Path(p).relative_to(relative_to)) for p in chart_paths]
     else:
         client_dir.mkdir(parents=True, exist_ok=True)
 
     duration = time.perf_counter() - start
     log_path = client_dir / f"processing_log_{source.folder_name}.txt"
     log_path.write_text(build_processing_log(result, outputs_generated, duration), encoding="utf-8")
-    outputs_generated.append(str(log_path.relative_to(BASE_DIR)))
+    outputs_generated.append(str(log_path.relative_to(relative_to)))
 
     return outputs_generated, duration
 
 
-def _generate_global_outputs(global_result) -> list[str]:
+def _generate_global_outputs(global_result, global_dir: Path, relative_to: Path) -> list[str]:
     outputs_generated: list[str] = []
 
-    excel_path = GLOBAL_DIR / "fov_scp_ml_global_summary.xlsx"
+    excel_path = global_dir / "fov_scp_ml_global_summary.xlsx"
     build_global_workbook(global_result, excel_path)
-    outputs_generated.append(str(excel_path.relative_to(BASE_DIR)))
+    outputs_generated.append(str(excel_path.relative_to(relative_to)))
 
-    report_path = GLOBAL_DIR / "fov_scp_ml_global_report.md"
+    report_path = global_dir / "fov_scp_ml_global_report.md"
     report_path.write_text(build_global_report(global_result), encoding="utf-8")
-    outputs_generated.append(str(report_path.relative_to(BASE_DIR)))
+    outputs_generated.append(str(report_path.relative_to(relative_to)))
 
-    chart_paths = generate_global_charts(global_result, GLOBAL_DIR / "charts")
-    outputs_generated += [str(Path(p).relative_to(BASE_DIR)) for p in chart_paths]
+    chart_paths = generate_global_charts(global_result, global_dir / "charts")
+    outputs_generated += [str(Path(p).relative_to(relative_to)) for p in chart_paths]
 
     return outputs_generated
 
@@ -148,7 +184,7 @@ def _print_period_line(result: ClientAnalysisResult, period: str) -> None:
 
 def _print_client_summary(result: ClientAnalysisResult, outputs_generated: list[str]) -> None:
     source: ClientSource = result.source
-    print(f"\n=== {source.file_name} -> outputs/{source.folder_name}/ ===")
+    print(f"\n=== {source.file_name} -> clients/{source.folder_name}/ ===")
     print(f"  Etiqueta: {source.file_label} | ID esperado por nombre: {source.id_from_filename}")
     print(
         f"  Fichero valido: {result.file_valid} | Estado global del cliente: {result.status} | "
@@ -199,7 +235,7 @@ def _print_global_summary(
     global_result, global_outputs: list[str],
 ) -> None:
     print("\n" + "=" * 78)
-    print("RESUMEN GLOBAL DE EJECUCION (Fase 4 - comparativa global y acabado final)")
+    print("RESUMEN GLOBAL DE EJECUCION (Fase 5A - pipeline reutilizable)")
     print("=" * 78)
 
     status_counts: dict[str, int] = {}
@@ -258,54 +294,353 @@ def _print_global_summary(
     for path in global_outputs:
         if path.endswith((".xlsx", ".md")):
             print(f"  {path}")
-    print(f"  + {sum(1 for p in global_outputs if p.endswith('.png'))} grafico(s) PNG en outputs/global/charts/")
+    print(f"  + {sum(1 for p in global_outputs if p.endswith('.png'))} grafico(s) PNG en global/charts/")
 
-    print(
-        "\nPendiente (fuera de alcance de este pipeline): commits (se proponen, no se ejecutan)."
+
+def _overall_status(results: list[ClientAnalysisResult]) -> str:
+    for r in results:
+        counts = r.quality.summary_counts()
+        if not r.file_valid or counts.get("WARNING", 0) or counts.get("ERROR", 0):
+            return "SUCCESS_WITH_WARNINGS"
+    return "SUCCESS"
+
+
+def _apply_metadata_changed_status(status: str, metadata_changed: list[str]) -> str:
+    """
+    Un cambio de SOLO metadata (mtime_ns, mismos bytes) durante la ejecucion
+    no invalida ni bloquea la publicacion, pero el resultado nunca queda
+    como SUCCESS puro: como minimo escala a SUCCESS_WITH_WARNINGS, para que
+    quede una senal auditable (ver input_metadata_changed en manifest.json
+    y el WARNING correspondiente en execution.log).
+    """
+    if metadata_changed and status == "SUCCESS":
+        return "SUCCESS_WITH_WARNINGS"
+    return status
+
+
+def _write_execution_log(log_lines: list[str], path: Path) -> None:
+    path.write_text("\n".join(log_lines) + "\n", encoding="utf-8")
+
+
+def _prepare_run_directories(run_config: RunConfig) -> None:
+    run_config.clients_dir.mkdir(parents=True, exist_ok=True)
+    run_config.global_dir.mkdir(parents=True, exist_ok=True)
+    if run_config.copy_inputs:
+        run_config.inputs_dir.mkdir(parents=True, exist_ok=True)
+    run_config.run_config_path.write_text(
+        json.dumps(run_config.to_run_config_dict(), indent=2, ensure_ascii=False), encoding="utf-8",
     )
 
 
-def main() -> int:
-    print(f"Descubriendo CSV en: {DATA_DIR}")
-    sources = load_client_sources(DATA_DIR)
-    if not sources:
-        print("ERROR: no se ha encontrado ningun CSV en data/.", file=sys.stderr)
-        return 1
-    print(f"CSV encontrados: {len(sources)}")
+def _handle_setup_failure(run_config: RunConfig, started_at: datetime, phase: str, exc: Exception) -> int:
+    """
+    Fallo de sistema de archivos durante la preparacion del directorio de
+    ejecucion (reconcile_interrupted_publication, eliminacion del temporal
+    con --overwrite, creacion de directorios, escritura de run_config.json). No
+    oculta la excepcion original; si el temporal llego a existir, deja un
+    manifest FAILED y un execution.log con traceback en el, de forma best
+    effort. Nunca publica.
+    """
+    finished_at = now_local()
+    tb = traceback.format_exc()
+    print(f"\nERROR DE SISTEMA DE ARCHIVOS en fase {phase}: {exc}", file=sys.stderr)
+    print(tb, file=sys.stderr)
 
-    results: list[ClientAnalysisResult] = []
-    all_outputs: dict[str, list[str]] = {}
-    durations: dict[str, float] = {}
-    for source in sources:
+    if run_config.run_dir_temp.exists():
         try:
-            result = analyze_client(source)
-            outputs_generated, duration = _generate_client_outputs(result)
-        except Exception as exc:  # noqa: BLE001 - aislar errores por cliente
-            print(f"\nERROR INESPERADO procesando {source.file_name}: {exc}", file=sys.stderr)
-            traceback.print_exc()
-            result = ClientAnalysisResult(source=source, file_valid=False, status="ERROR")
-            outputs_generated, duration = [], 0.0
-        results.append(result)
-        all_outputs[source.file_name] = outputs_generated
-        durations[source.file_name] = duration
-        _print_client_summary(result, outputs_generated)
+            manifest = build_manifest(
+                run_config, inventory=[], results=[], global_result=None, outputs_generated=[],
+                started_at=started_at, finished_at=finished_at, status="FAILED",
+                git_commit=detect_git_commit(BASE_DIR), git_worktree_dirty=detect_git_worktree_dirty(BASE_DIR),
+                copy_inputs=run_config.copy_inputs, published=False,
+                failure={"phase": phase, "error_type": type(exc).__name__, "error_message": str(exc)},
+            )
+            write_manifest(manifest, run_config.manifest_path)
+        except OSError:
+            pass
+        try:
+            with run_config.execution_log_path.open("a", encoding="utf-8") as f:
+                f.write(format_log_line(phase, f"FALLO DE SISTEMA DE ARCHIVOS: {exc}") + "\n")
+                f.write(tb + "\n")
+        except OSError:
+            pass
+        print(f"Directorio temporal conservado para diagnostico en: {run_config.run_dir_temp}", file=sys.stderr)
+
+    return 1
+
+
+def _mark_publish_failure(run_config: RunConfig, exc: Exception) -> None:
+    """
+    Best-effort: deja constancia del fallo de publicacion sin ocultar la
+    excepcion original. Se invoca SIEMPRE que publish_run() lance una
+    excepcion; a esas alturas run_publish.publish_run ya ha restaurado el
+    directorio temporal (integro, con su manifest posiblemente desactualizado
+    -p.ej. `published=true` si el fallo ocurrio justo despues de patchear el
+    manifest pero antes de escribir el log final-), por lo que aqui se
+    fuerza el estado correcto de forma incondicional: FAILED, no publicado.
+    """
+    try:
+        manifest = json.loads(run_config.manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        manifest = {}
+    manifest["status"] = "FAILED"
+    manifest["published"] = False
+    manifest["output_dir_working"] = str(run_config.run_dir_temp)
+    manifest["output_dir_final"] = str(run_config.run_dir_final)
+    manifest["failure"] = {"phase": "PUBLISH", "error_type": type(exc).__name__, "error_message": str(exc)}
+    try:
+        write_manifest(manifest, run_config.manifest_path)
+    except OSError:
+        pass
+    try:
+        with run_config.execution_log_path.open("a", encoding="utf-8") as f:
+            f.write(format_log_line("PUBLISH", f"FALLO: {exc}") + "\n")
+            f.write(traceback.format_exc() + "\n")
+    except OSError:
+        pass
+
+
+def run_pipeline(run_config: RunConfig) -> int:
+    """
+    Orquesta una ejecucion completa dentro de run_config.run_dir_temp: no
+    publica (eso lo hace el llamador solo si el resultado es 0). Devuelve el
+    codigo de salida (0 completado, 1 fallo global, cero CSV, o inputs
+    modificados durante la ejecucion).
+    """
+    started_at = run_config.started_at
+    log_lines: list[str] = []
+    phase = "SETUP"
+    results: list[ClientAnalysisResult] = []
+    global_result = None
+    all_outputs: dict[str, list[str]] = {}
+    outputs_generated: list[str] = []
+    inventory: list[InputFileRecord] = []
+    git_commit: str | None = None
+    git_worktree_dirty: bool | None = None
+
+    def log(message: str) -> None:
+        log_lines.append(format_log_line(phase, message))
 
     try:
+        log(
+            f"input_dir={run_config.input_dir} output_root={run_config.output_root} "
+            f"run_name={run_config.run_name_effective} copy_inputs={run_config.copy_inputs} "
+            f"overwrite={run_config.overwrite}"
+        )
+
+        phase = "GIT_INFO"
+        git_commit = detect_git_commit(BASE_DIR)
+        git_worktree_dirty = detect_git_worktree_dirty(BASE_DIR)
+        log(f"git_commit={git_commit} git_worktree_dirty={git_worktree_dirty}")
+        if git_worktree_dirty:
+            log(
+                "WARNING: el working tree del repositorio tiene cambios sin commit "
+                "(git_worktree_dirty=true); la ejecucion continua con normalidad."
+            )
+
+        phase = "INVENTORY"
+        print(f"Descubriendo CSV en: {run_config.input_dir}")
+        inventory = build_input_inventory(run_config.input_dir)
+        log(f"csv_encontrados={len(inventory)}")
+        print(f"CSV encontrados: {len(inventory)}")
+
+        if run_config.copy_inputs:
+            phase = "COPY_INPUTS"
+            run_config.inputs_dir.mkdir(parents=True, exist_ok=True)
+            n_copied = 0
+            for record in inventory:
+                if record.read_error is not None:
+                    continue
+                shutil.copy2(record.path, run_config.inputs_dir / record.name)
+                n_copied += 1
+            verify_copies_match_originals(inventory, run_config.inputs_dir)
+            log(f"csv_copiados={n_copied} en {run_config.inputs_dir}; SHA-256 de cada copia verificado contra el original")
+            source_dir_for_parsing = run_config.inputs_dir
+        else:
+            source_dir_for_parsing = run_config.input_dir
+
+        if not inventory:
+            phase = "INVENTORY"
+            log("ERROR: no se ha encontrado ningun CSV en input_dir.")
+            finished_at = now_local()
+            manifest = build_manifest(
+                run_config, inventory, results, None, outputs_generated, started_at, finished_at, "FAILED",
+                git_commit, git_worktree_dirty, run_config.copy_inputs, published=False,
+                failure={
+                    "phase": phase, "error_type": "NoCsvFoundError",
+                    "error_message": "No se ha encontrado ningun CSV en input_dir.",
+                },
+            )
+            write_manifest(manifest, run_config.manifest_path)
+            _write_execution_log(log_lines, run_config.execution_log_path)
+            print(f"ERROR: no se ha encontrado ningun CSV en {run_config.input_dir}.", file=sys.stderr)
+            return 1
+
+        phase = "DISCOVER"
+        sources = load_client_sources(source_dir_for_parsing)
+        log(f"clientes_cargados={len(sources)} desde {source_dir_for_parsing}")
+
+        durations: dict[str, float] = {}
+        phase = "CLIENT_PROCESSING"
+        for source in sources:
+            try:
+                result = analyze_client(source)
+                outputs, duration = _generate_client_outputs(result, run_config.clients_dir, run_config.run_dir_temp)
+            except Exception as exc:  # noqa: BLE001 - aislar errores por cliente
+                print(f"\nERROR INESPERADO procesando {source.file_name}: {exc}", file=sys.stderr)
+                traceback.print_exc()
+                log(f"ERROR AISLADO cliente={source.file_name}: {exc}")
+                result = ClientAnalysisResult(source=source, file_valid=False, status="ERROR")
+                outputs, duration = [], 0.0
+            results.append(result)
+            all_outputs[source.file_name] = outputs
+            durations[source.file_name] = duration
+            counts = result.quality.summary_counts()
+            log(
+                f"cliente={source.file_name} estado={result.status} duracion={duration:.3f}s "
+                f"warnings={counts.get('WARNING', 0)} errors={counts.get('ERROR', 0)}"
+            )
+            outputs_generated.extend(outputs)
+            _print_client_summary(result, outputs)
+
+        metadata_changed: list[str] = []
+        if not run_config.copy_inputs:
+            phase = "VERIFY_INPUTS_UNCHANGED"
+            metadata_changed = verify_originals_unchanged(inventory)
+            log("verificacion post-ejecucion: los CSV originales no han cambiado durante el procesamiento")
+            if metadata_changed:
+                log(
+                    f"WARNING INPUT_METADATA_CHANGED: {len(metadata_changed)} CSV cambiaron su fecha de "
+                    f"modificacion sin cambiar tamano ni SHA-256 (mismos bytes analizados): {metadata_changed}"
+                )
+
+        phase = "GLOBAL_ANALYSIS"
         global_result = analyze_global(results)
-        global_outputs = _generate_global_outputs(global_result)
-    except Exception as exc:  # noqa: BLE001 - la comparativa global no debe tumbar el proceso
-        print(f"\nERROR INESPERADO en la comparativa global: {exc}", file=sys.stderr)
-        traceback.print_exc()
+        global_outputs = _generate_global_outputs(global_result, run_config.global_dir, run_config.run_dir_temp)
+        outputs_generated.extend(global_outputs)
+        log("comparativa_global completada")
+
+        phase = "EXECUTION_SUMMARY"
+        records = build_execution_records(inventory, results, all_outputs, durations, clients_subdir="clients")
+        run_config.execution_summary_md_path.write_text(build_execution_summary_markdown(records), encoding="utf-8")
+        build_execution_summary_workbook(records, run_config.execution_summary_xlsx_path)
+        outputs_generated.append(run_config.execution_summary_md_path.name)
+        outputs_generated.append(run_config.execution_summary_xlsx_path.name)
+        log("execution_summary generado")
+
+        phase = "MANIFEST"
+        finished_at = now_local()
+        status = _apply_metadata_changed_status(_overall_status(results), metadata_changed)
+        outputs_generated.append("run_config.json")
+        outputs_generated.append("manifest.json")
+        outputs_generated.append("execution.log")
+        manifest = build_manifest(
+            run_config, inventory, results, global_result, outputs_generated, started_at, finished_at, status,
+            git_commit, git_worktree_dirty, run_config.copy_inputs, published=False,
+            input_metadata_changed=metadata_changed,
+        )
+        write_manifest(manifest, run_config.manifest_path)
+        log("manifest generado")
+
+        _write_execution_log(log_lines, run_config.execution_log_path)
+        _print_global_summary(results, all_outputs, global_result, global_outputs)
+        print(
+            f"\nResumen de ejecucion: execution_summary.md, execution_summary.xlsx "
+            f"(dentro de {run_config.run_dir_temp})"
+        )
+        return 0
+
+    except Exception as exc:  # noqa: BLE001 - fallo global, no se oculta
+        finished_at = now_local()
+        tb = traceback.format_exc()
+        error_type = getattr(exc, "code", type(exc).__name__)
+        log(f"FALLO GLOBAL ({error_type}): {exc}")
+        log_lines.append(tb)
+        try:
+            _write_execution_log(log_lines, run_config.execution_log_path)
+        except OSError:
+            pass
+        try:
+            manifest = build_manifest(
+                run_config, inventory, results, global_result, outputs_generated, started_at, finished_at, "FAILED",
+                git_commit, git_worktree_dirty, run_config.copy_inputs, published=False,
+                failure={"phase": phase, "error_type": error_type, "error_message": str(exc)},
+            )
+            write_manifest(manifest, run_config.manifest_path)
+        except OSError:
+            pass
+        print(f"\nFALLO GLOBAL en fase {phase}: {exc}", file=sys.stderr)
+        print(tb, file=sys.stderr)
         return 1
 
-    records = build_execution_records(results, all_outputs, durations)
-    exec_summary_md_path = OUTPUT_DIR / "execution_summary.md"
-    exec_summary_xlsx_path = OUTPUT_DIR / "execution_summary.xlsx"
-    exec_summary_md_path.write_text(build_execution_summary_markdown(records), encoding="utf-8")
-    build_execution_summary_workbook(records, exec_summary_xlsx_path)
 
-    _print_global_summary(results, all_outputs, global_result, global_outputs)
-    print(f"\nResumen de ejecucion: {exec_summary_md_path.relative_to(BASE_DIR)}, {exec_summary_xlsx_path.relative_to(BASE_DIR)}")
+def main(argv: list[str] | None = None) -> int:
+    parser = build_arg_parser(BASE_DIR)
+    args = parser.parse_args(argv)
+
+    started_at = now_local()
+    try:
+        run_config = build_run_config(args, BASE_DIR, started_at=started_at)
+    except RunNameError as exc:
+        print(f"ERROR DE CONFIGURACION (run-name): {exc}", file=sys.stderr)
+        return 2
+
+    if not run_config.input_dir.is_dir():
+        print(f"ERROR DE CONFIGURACION: --input-dir no existe o no es una carpeta: {run_config.input_dir}", file=sys.stderr)
+        return 2
+
+    setup_phase = "SETUP"
+    try:
+        setup_phase = "RECONCILE_INTERRUPTED_PUBLICATION"
+        reconcile_interrupted_publication(run_config)
+
+        setup_phase = "CHECK_TEMP_COLLISION"
+        if run_config.run_dir_temp.exists():
+            if not run_config.overwrite:
+                print(
+                    f"ERROR: ya existe un directorio temporal de una ejecucion anterior en "
+                    f"{run_config.run_dir_temp} (probablemente interrumpida). No se elimina "
+                    f"automaticamente. Usa --overwrite para eliminarlo, o elige otro --run-name.",
+                    file=sys.stderr,
+                )
+                return 2
+            setup_phase = "REMOVE_ORPHAN_TEMP"
+            print(f"--overwrite: eliminando directorio temporal preexistente en {run_config.run_dir_temp}")
+            shutil.rmtree(run_config.run_dir_temp)
+
+        setup_phase = "CHECK_FINAL_COLLISION"
+        if run_config.run_dir_final.exists() and not run_config.overwrite:
+            print(
+                f"ERROR: la ejecucion '{run_config.run_name_effective}' ya existe en "
+                f"{run_config.run_dir_final}. Usa --overwrite para sustituirla.", file=sys.stderr,
+            )
+            return 2
+
+        setup_phase = "PREPARE_DIRECTORIES"
+        _prepare_run_directories(run_config)
+    except Exception as exc:  # noqa: BLE001 - fallo de sistema de archivos, no se oculta
+        return _handle_setup_failure(run_config, started_at, setup_phase, exc)
+
+    exit_code = run_pipeline(run_config)
+    if exit_code != 0:
+        print(f"\nLa ejecucion NO se ha publicado. Directorio temporal conservado para diagnostico en: {run_config.run_dir_temp}")
+        return exit_code
+
+    try:
+        publish_run(run_config)
+    except Exception as exc:  # noqa: BLE001 - no se oculta el fallo de publicacion
+        # publish_run() (src/run_publish.py) ya ha deshecho la publicacion y
+        # restaurado el directorio temporal (y la ejecucion anterior, si la
+        # habia) antes de propagar. Aqui solo queda dejar constancia en el
+        # manifest/log del temporal y devolver el codigo de salida correcto:
+        # nunca se devuelve 0 cuando la finalizacion queda incompleta.
+        _mark_publish_failure(run_config, exc)
+        print(f"\nERROR: fallo al publicar la ejecucion: {exc}", file=sys.stderr)
+        traceback.print_exc()
+        print(f"Directorio temporal conservado para diagnostico en: {run_config.run_dir_temp}")
+        return 1
+
+    print(f"\nEjecucion publicada en: {run_config.run_dir_final}")
     return 0
 
 

@@ -1,9 +1,12 @@
 """
-Resumen de ejecucion: outputs/execution_summary.md y .xlsx.
+Resumen de ejecucion: execution_summary.md y .xlsx.
 
-Una fila por CSV descubierto (valido o no), con: archivo, carpeta de salida,
-ID_CLIENT, etiqueta, batch, run, filas, candidatas, comparables 6M, estado,
-warnings, errores, duracion, informe/Excel/graficos generados.
+Una fila por CADA elemento del inventario de CSV de entrada (src.input_inventory),
+no solo por cada ClientAnalysisResult: un CSV con read_error, o que por
+cualquier motivo no llego a producir un resultado (p.ej. un fallo global a
+mitad de procesamiento), debe seguir apareciendo con su nombre, tamano,
+SHA-256 (o el error de lectura) y un estado explicito, sin inventar metricas
+ni carpeta de cliente.
 """
 
 from __future__ import annotations
@@ -17,53 +20,97 @@ from openpyxl.utils import get_column_letter
 from src.client_analysis import ClientAnalysisResult
 from src.excel_writer import HEADER_FILL, HEADER_FONT, autosize_columns
 
+INPUT_NOT_ANALYZED = "INPUT_NOT_ANALYZED"
+
 
 @dataclass
 class ExecutionRecord:
     archivo: str
     carpeta_salida: str
     id_client: object
-    etiqueta: str
+    etiqueta: object
     id_batch: list
     id_run_staging: list
-    filas: int
-    candidatas: int
-    comparables_6m: int
+    filas: object
+    candidatas: object
+    comparables_6m: object
     estado: str
-    warnings: int
-    errors: int
+    warnings: object
+    errors: object
     duracion_segundos: float
     informe_generado: bool
     excel_generado: bool
     graficos_generados: int
+    log_generado: bool
+    size_bytes: object
+    sha256: object
+    analysis_error: object
 
 
 def build_execution_records(
+    inventory: list,
     results: list[ClientAnalysisResult],
     outputs_by_file: dict[str, list[str]],
     durations_by_file: dict[str, float],
+    clients_subdir: str = "outputs",
 ) -> list[ExecutionRecord]:
-    records = []
-    for r in results:
-        source = r.source
-        outputs = outputs_by_file.get(source.file_name, [])
-        duration = durations_by_file.get(source.file_name, 0.0)
-        counts = r.quality.summary_counts()
-        pr_6m = r.periods.get("6M")
-        records.append(ExecutionRecord(
-            archivo=source.file_name,
-            carpeta_salida=f"outputs/{source.folder_name}/" if r.file_valid else "",
-            id_client=source.id_client, etiqueta=source.file_label,
-            id_batch=source.id_batch, id_run_staging=source.id_run_staging,
-            filas=source.n_rows, candidatas=r.n_candidates,
-            comparables_6m=pr_6m.n_comparable if pr_6m else 0,
-            estado=r.status, warnings=counts.get("WARNING", 0), errors=counts.get("ERROR", 0),
-            duracion_segundos=duration,
-            informe_generado=any(p.endswith(".md") for p in outputs),
-            excel_generado=any(p.endswith(".xlsx") for p in outputs),
-            graficos_generados=sum(1 for p in outputs if p.endswith(".png")),
-        ))
+    """
+    Combina el inventario de CSV descubiertos con los resultados de analisis
+    por nombre de fichero. Un CSV sin resultado correlacionado (nunca llego a
+    parsearse: read_error, o no procesado por un fallo global) genera una
+    fila con estado INPUT_NOT_ANALYZED, sin metricas inventadas y sin
+    carpeta de cliente.
+    """
+    by_filename = {r.source.file_name: r for r in results}
+    records: list[ExecutionRecord] = []
+    for record in inventory:
+        r = by_filename.get(record.name)
+        outputs = outputs_by_file.get(record.name, [])
+        duration = durations_by_file.get(record.name, 0.0)
+
+        if r is not None:
+            source = r.source
+            counts = r.quality.summary_counts()
+            pr_6m = r.periods.get("6M")
+            log_generado = any(p.endswith(".txt") for p in outputs)
+            # la carpeta de cliente se informa si se genero ALGUN output real
+            # (como minimo el processing_log, que se escribe siempre que el
+            # cliente se procesa, incluso si el fichero es invalido); nunca
+            # se deriva solo de file_valid, que no dice nada sobre si la
+            # carpeta llego a crearse en disco.
+            carpeta_salida = f"{clients_subdir}/{source.folder_name}/" if outputs else ""
+            records.append(ExecutionRecord(
+                archivo=record.name,
+                carpeta_salida=carpeta_salida,
+                id_client=source.id_client, etiqueta=source.file_label,
+                id_batch=source.id_batch, id_run_staging=source.id_run_staging,
+                filas=source.n_rows, candidatas=r.n_candidates,
+                comparables_6m=pr_6m.n_comparable if pr_6m else 0,
+                estado=r.status, warnings=counts.get("WARNING", 0), errors=counts.get("ERROR", 0),
+                duracion_segundos=duration,
+                informe_generado=any(p.endswith(".md") for p in outputs),
+                excel_generado=any(p.endswith(".xlsx") for p in outputs),
+                graficos_generados=sum(1 for p in outputs if p.endswith(".png")),
+                log_generado=log_generado,
+                size_bytes=record.size_bytes, sha256=record.sha256, analysis_error=None,
+            ))
+        else:
+            records.append(ExecutionRecord(
+                archivo=record.name, carpeta_salida="",
+                id_client=None, etiqueta=None, id_batch=[], id_run_staging=[],
+                filas=None, candidatas=None, comparables_6m=None,
+                estado=INPUT_NOT_ANALYZED, warnings=None, errors=None,
+                duracion_segundos=duration,
+                informe_generado=False, excel_generado=False, graficos_generados=0,
+                log_generado=False,
+                size_bytes=record.size_bytes, sha256=record.sha256,
+                analysis_error=record.read_error,
+            ))
     return records
+
+
+def _fmt_optional(x) -> str:
+    return "n/d" if x is None else str(x)
 
 
 def execution_summary_table(records: list[ExecutionRecord]) -> pd.DataFrame:
@@ -75,7 +122,8 @@ def execution_summary_table(records: list[ExecutionRecord]) -> pd.DataFrame:
         "ESTADO": rec.estado, "WARNINGS": rec.warnings, "ERRORS": rec.errors,
         "DURACION_SEGUNDOS": round(rec.duracion_segundos, 3),
         "INFORME_GENERADO": rec.informe_generado, "EXCEL_GENERADO": rec.excel_generado,
-        "GRAFICOS_GENERADOS": rec.graficos_generados,
+        "GRAFICOS_GENERADOS": rec.graficos_generados, "LOG_GENERADO": rec.log_generado,
+        "TAMANO_BYTES": rec.size_bytes, "SHA256": rec.sha256, "ERROR_LECTURA": rec.analysis_error,
     } for rec in records])
 
 
@@ -116,13 +164,19 @@ def build_execution_summary_markdown(records: list[ExecutionRecord]) -> str:
     for status, n in sorted(status_counts.items()):
         a(f"| {status} | {n} |")
     a("")
-    a("| Archivo | Carpeta salida | ID_CLIENT | Filas | Candidatas | Comparables 6M | Estado | Warnings | Errors | Duracion (s) | Informe | Excel | Graficos |")
-    a("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    a(
+        "| Archivo | Carpeta salida | ID_CLIENT | Filas | Candidatas | Comparables 6M | Estado | "
+        "Warnings | Errors | Duracion (s) | Informe | Excel | Graficos | Log | Tamano (bytes) | SHA256 | Error de lectura |"
+    )
+    a("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for rec in records:
         a(
-            f"| {rec.archivo} | {rec.carpeta_salida} | {rec.id_client} | {rec.filas} | {rec.candidatas} | "
-            f"{rec.comparables_6m} | {rec.estado} | {rec.warnings} | {rec.errors} | {rec.duracion_segundos:.2f} | "
-            f"{'si' if rec.informe_generado else 'no'} | {'si' if rec.excel_generado else 'no'} | {rec.graficos_generados} |"
+            f"| {rec.archivo} | {rec.carpeta_salida} | {_fmt_optional(rec.id_client)} | {_fmt_optional(rec.filas)} | "
+            f"{_fmt_optional(rec.candidatas)} | {_fmt_optional(rec.comparables_6m)} | {rec.estado} | "
+            f"{_fmt_optional(rec.warnings)} | {_fmt_optional(rec.errors)} | {rec.duracion_segundos:.2f} | "
+            f"{'si' if rec.informe_generado else 'no'} | {'si' if rec.excel_generado else 'no'} | "
+            f"{rec.graficos_generados} | {'si' if rec.log_generado else 'no'} | {_fmt_optional(rec.size_bytes)} | "
+            f"{_fmt_optional(rec.sha256)} | {_fmt_optional(rec.analysis_error)} |"
         )
     a("")
     return "\n".join(lines)

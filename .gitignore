@@ -14,3 +14,9 @@ __pycache__/
 *.tmp
 *.log
 ~$*
+
+# Ejecuciones del pipeline (Fase 5A): cada run se aisla en su propia carpeta
+# y se traza via manifest.json, run_config.json, SHA-256 de los CSV de
+# entrada, pipeline_version y commit Git. No se versionan en git para no
+# ensuciar el working tree con outputs regenerables.
+outputs/runs/

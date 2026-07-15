@@ -28,29 +28,187 @@ python -m pip install -r requirements.txt
 
 No requiere conexion a bases de datos ni a servicios externos.
 
-## Ejecucion
+## Ejecucion (Fase 5A: ejecuciones aisladas y reproducibles)
 
 ```powershell
 python analysis_fov_scp_ml.py
 ```
 
-El script:
+Sin argumentos, el comando reproduce el comportamiento historico: lee de
+`data/` y crea una ejecucion nueva con timestamp en
+`outputs/runs/<YYYYMMDD_HHMMSS>/`. **Nunca** reutiliza ni sobrescribe
+automaticamente la antigua carpeta `outputs/` (los resultados legacy en
+`outputs/<CLIENTE>/` y `outputs/global/` no se tocan).
 
-1. Descubre automaticamente todos los `*.csv` de `data/` (nunca hardcodea la
-   lista de clientes).
+El pipeline es reutilizable sobre cualquier carpeta de CSV mediante
+parametros de linea de comandos:
+
+```powershell
+python analysis_fov_scp_ml.py `
+  --input-dir "C:\Datos\ValidacionSeptiembre" `
+  --output-root "C:\Informes\FOV\runs" `
+  --run-name "validacion_septiembre_2026"
+```
+
+### Parametros
+
+| Parametro | Por defecto | Descripcion |
+|-|-|-|
+| `--input-dir` | `<repo>/data` | Carpeta con los CSV de entrada. |
+| `--output-root` | `<repo>/outputs/runs` | Carpeta raiz donde se publican las ejecuciones. |
+| `--run-name` | timestamp `YYYYMMDD_HHMMSS` | Nombre de la ejecucion. Se sanea (ver mas abajo). |
+| `--overwrite` | desactivado | Permite sustituir una ejecucion existente con el mismo nombre. |
+| `--copy-inputs` | desactivado | Copia los CSV originales dentro de la ejecucion (`inputs/`). |
+
+### Saneamiento de `--run-name`
+
+- Caracteres benignos prohibidos en Windows (`<>:"|?*` y caracteres de
+  control) se sustituyen por `_` de forma predecible.
+- Se **rechaza** (codigo de salida `2`, sin procesar ningun CSV) cualquier
+  patron peligroso: separador de directorios (`/` o `\`), drive de Windows
+  (`C:`), o el propio `..` como nombre completo. Estos patrones no se
+  sanean: un nombre de ejecucion nunca puede crear subcarpetas ni escapar de
+  `--output-root`.
+- Se limita la longitud a 100 caracteres y se evitan los nombres reservados
+  de Windows (`CON`, `NUL`, `COM1`...).
+- Si el resultado saneado queda vacio, se usa el timestamp actual.
+- Se verifica ademas que el directorio temporal y el final de la ejecucion
+  son siempre hijos directos de `--output-root` (defensa adicional, no
+  deberia poder violarse por construccion).
+
+### Estructura de una ejecucion
+
+```text
+<output-root>/
+  <run-name>/
+    manifest.json              # metadata completa y trazable de la ejecucion
+    run_config.json            # configuracion efectiva de la ejecucion
+    execution.log               # log global (fase, entrada, salida, duracion, warnings/errores)
+    execution_summary.md
+    execution_summary.xlsx
+
+    global/
+      fov_scp_ml_global_summary.xlsx   # 16 pestanas
+      fov_scp_ml_global_report.md      # 21 secciones
+      charts/
+
+    clients/
+      <CLIENTE>/
+        fov_scp_ml_summary_<CLIENTE>.xlsx   # 14 pestanas
+        fov_scp_ml_report_<CLIENTE>.md      # 18 secciones
+        processing_log_<CLIENTE>.txt
+        charts/
+
+    inputs/
+      ...                       # solo con --copy-inputs: copia exacta de los CSV originales
+```
+
+### Publicacion atomica
+
+La ejecucion se escribe primero en un directorio temporal oculto
+(`<output-root>/.<run-name>.tmp/`). Solo cuando el procesamiento termina
+correctamente se renombra a `<output-root>/<run-name>/`. Una ejecucion
+interrumpida (proceso matado, excepcion no controlada) nunca aparece como
+publicada: el directorio final simplemente no existe, y el temporal se
+conserva intacto para diagnostico (incluye `execution.log` con el
+traceback completo y `manifest.json` con `status: "FAILED"`, la fase donde
+ocurrio el fallo, el tipo y el mensaje de error).
+
+### Comportamiento de `--overwrite`
+
+- Sin `--overwrite`: si ya existe una ejecucion con el mismo nombre (el
+  directorio final) o un directorio temporal de una ejecucion anterior
+  interrumpida con el mismo nombre, el pipeline **falla antes de procesar
+  ningun CSV** con codigo de salida `2`. Nada se elimina automaticamente.
+- Con `--overwrite`: un directorio temporal huerfano se elimina
+  explicitamente (se informa por consola). La ejecucion final anterior
+  **no se borra de inmediato**: se conserva mediante un backup temporal
+  hasta que la nueva ejecucion ha quedado publicada con exito. Si la
+  publicacion final fallara, la ejecucion anterior se restaura
+  automaticamente y no se pierde; la nueva ejecucion (fallida) queda
+  intacta en su directorio temporal para diagnostico.
+
+### `--copy-inputs`
+
+Copia los CSV originales (bytes identicos, `shutil.copy2`) dentro de
+`<run>/inputs/`. Sin este flag, los CSV de entrada no se duplican: la
+trazabilidad se mantiene igualmente via SHA-256 en `manifest.json`.
+
+### `manifest.json`
+
+El inventario de CSV de entrada (nombre, ruta relativa, tamano, fecha de
+modificacion, SHA-256) se construye **antes** de `load_client_sources`, se
+conserva durante toda la ejecucion y es la unica fuente de hashes del
+manifest: nunca se vuelve a descubrir ni a hashear al final. Con
+`--copy-inputs`, la copia archivada se verifica byte a byte contra el
+original inmediatamente despues de copiar, y `analyzed_source` vale `"copy"`
+para cada CSV; sin `--copy-inputs`, se procesan los originales y, al
+terminar, se vuelven a comprobar (tamano y SHA-256); si alguno cambio
+durante la ejecucion, la ejecucion falla (`INPUT_CHANGED_DURING_RUN`), el
+manifest queda `FAILED` y **no** se publica el resultado.
+
+Contiene, entre otros campos: `run_name`, `status`
+(`SUCCESS`/`SUCCESS_WITH_WARNINGS`/`FAILED`), `published` (booleano),
+`started_at`/`finished_at` (ISO 8601 con zona horaria local),
+`duration_seconds`, `pipeline_version`, `git_commit` y `git_worktree_dirty`
+(ambos `null` si Git no esta disponible o el directorio no es un
+repositorio; si el working tree tiene cambios sin commit la ejecucion no
+falla, solo se registra el warning en `execution.log` y el campo queda en
+`true` — nunca se almacena el diff, solo el booleano), `input_dir`,
+`output_dir_final` (ruta final, real o prevista) y `output_dir_working`
+(el directorio temporal mientras la ejecucion no este publicada, `null` en
+cuanto lo esta), cifras agregadas (CSV descubiertos, clientes
+totales/validos/evaluables en 6M/sin performance en 6M, batches detectados,
+filas totales, series candidatas, series comparables en 6M,
+warnings/errores totales), la lista de outputs generados, y una entrada
+`csv_files` con **un elemento por cada CSV descubierto** (incluso si no
+pudo convertirse en un cliente valido): nombre, ruta relativa, tamano en
+bytes, fecha de modificacion, SHA-256 (todo calculado sobre los bytes
+originales **antes** de cualquier intento de parseo), `analyzed_source`
+(`"original"` o `"copy"`), mas `id_client`/etiqueta/filas/estado/
+warnings/errores cuando el CSV pudo procesarse. Si la ejecucion falla,
+incluye un bloque `failure` con `phase`, `error_type` y `error_message`; el
+manifest se actualiza inmediatamente antes o despues de la publicacion para
+que `published`/`output_dir_working` reflejen el estado real final.
+
+### Codigos de salida
+
+- `0`: ejecucion completada, aunque existan warnings o clientes aislados.
+- `1`: fallo global durante el procesamiento (incluye cero CSV
+  descubiertos) o fallo al publicar la ejecucion.
+- `2`: error de configuracion o argumentos (incluye `--run-name` peligroso,
+  `--input-dir` inexistente, y colision de ejecucion sin `--overwrite`).
+
+### Migracion respecto a la estructura legacy
+
+Las carpetas `outputs/<CLIENTE>/`, `outputs/global/` y
+`outputs/execution_summary.*` generadas en fases anteriores (Fase 1-4) se
+mantienen tal cual, versionadas en git, como snapshot historico. El pipeline
+ya no escribe ahi por defecto: toda ejecucion nueva (con o sin argumentos)
+se publica en `outputs/runs/<run-name>/` con la estructura descrita arriba.
+`outputs/runs/` esta excluido de git (`.gitignore`): cada ejecucion se traza
+operativamente mediante su propio `manifest.json`, los SHA-256 de sus CSV de
+entrada, `pipeline_version` y el commit de Git, no mediante el control de
+versiones del working tree.
+
+El pipeline:
+
+1. Descubre automaticamente todos los `*.csv` de `--input-dir` (nunca
+   hardcodea la lista de clientes).
 2. Valida cada CSV de forma aislada: un fichero invalido no bloquea a los
    demas.
 3. Ejecuta el nucleo de analisis (cobertura, comparabilidad especifica por
    periodo, WAPE global ponderado, mejora relativa, ganadores).
 4. Genera el Excel, el informe Markdown, los graficos y el log de cada
-   cliente valido en `outputs/<CLIENTE>/`.
+   cliente valido en `<run>/clients/<CLIENTE>/`.
 5. Calcula la comparativa global entre todos los clientes con fichero valido
    y genera el Excel, el informe Markdown y los graficos globales en
-   `outputs/global/`.
-6. Genera `outputs/execution_summary.md` y `outputs/execution_summary.xlsx`
-   (una fila por CSV descubierto, valido o no).
+   `<run>/global/`.
+6. Genera `<run>/execution_summary.md`, `<run>/execution_summary.xlsx`,
+   `<run>/manifest.json`, `<run>/run_config.json` y `<run>/execution.log`.
+7. Publica la ejecucion de forma atomica (ver arriba).
 
-No modifica nunca los CSV originales de `data/`.
+No modifica nunca los CSV originales de `--input-dir`.
 
 ### Tests
 
