@@ -124,6 +124,38 @@ def build_arg_parser(base_dir: Path) -> argparse.ArgumentParser:
             "del analisis ni al codigo de salida."
         ),
     )
+    parser.add_argument(
+        "--rebuild-run-index", action="store_true", default=False,
+        help=(
+            "Modo separado (Fase 5C): reconstruye unicamente el catalogo historico de "
+            "ejecuciones de --output-root, sin analizar ningun CSV ni crear un run nuevo. "
+            "Incompatible con --input-dir, --run-name, --overwrite, --copy-inputs y "
+            "--open-report; solo admite --output-root."
+        ),
+    )
+    return parser
+
+
+def build_rebuild_index_arg_parser(base_dir: Path) -> argparse.ArgumentParser:
+    """
+    Parser DEDICADO al modo --rebuild-run-index (Fase 5C): reconoce
+    UNICAMENTE --rebuild-run-index y --output-root. Cualquier otro
+    argumento del parser normal (--input-dir, --run-name, --overwrite,
+    --copy-inputs, --open-report) es "unrecognized argument" para este
+    parser (argparse llama a sys.exit(2) automaticamente con un mensaje de
+    error): no hay ninguna ambiguedad posible entre "el usuario no
+    proporciono el argumento" y "el usuario proporciono el valor por
+    defecto", porque esos argumentos ni siquiera existen en este modo.
+    """
+    parser = argparse.ArgumentParser(
+        prog="analysis_fov_scp_ml.py --rebuild-run-index",
+        description="Reconstruye el catalogo historico de ejecuciones de --output-root (Fase 5C). No procesa CSV.",
+    )
+    parser.add_argument("--rebuild-run-index", action="store_true", default=False)
+    parser.add_argument(
+        "--output-root", type=Path, default=base_dir / "outputs" / "runs",
+        help="Carpeta raiz cuyas ejecuciones publicadas se catalogan. Por defecto: <repo>/outputs/runs.",
+    )
     return parser
 
 

@@ -93,7 +93,15 @@ from src.logging_utils import build_processing_log
 from src.manifest import build_manifest, detect_git_commit, detect_git_worktree_dirty, write_manifest
 from src.quality_checks import Severity
 from src.report_writer import build_client_report
-from src.run_config import RunConfig, RunNameError, build_arg_parser, build_run_config, now_local
+from src.run_catalog import rebuild_run_catalog
+from src.run_config import (
+    RunConfig,
+    RunNameError,
+    build_arg_parser,
+    build_rebuild_index_arg_parser,
+    build_run_config,
+    now_local,
+)
 from src.run_publish import publish_run, reconcile_interrupted_publication
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -596,7 +604,46 @@ def run_pipeline(run_config: RunConfig) -> int:
         return 1
 
 
+def _run_rebuild_index_mode(argv: list[str]) -> int:
+    """
+    Modo separado --rebuild-run-index (Fase 5C): NO descubre CSV, NO
+    calcula clientes, NO crea ningun run ni directorio temporal de run, NO
+    modifica ningun manifest.json ni .publish_complete existente. Solo
+    reconstruye <output-root>/index.html y <output-root>/run_index.log a
+    partir de las ejecuciones ya publicadas.
+    """
+    parser = build_rebuild_index_arg_parser(BASE_DIR)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        # argparse ya ha escrito a stderr el motivo (argumento incompatible
+        # como --input-dir, --run-name, --overwrite, --copy-inputs o
+        # --open-report: este parser dedicado ni siquiera los reconoce) y ha
+        # llamado a sys.exit(2); se traduce a un codigo de salida normal en
+        # vez de dejar que la excepcion escape de main().
+        return exc.code if isinstance(exc.code, int) else 2
+
+    output_root = Path(args.output_root).resolve()
+    print(f"Reconstruyendo catalogo de ejecuciones (--rebuild-run-index) en: {output_root}")
+    result = rebuild_run_catalog(output_root)
+    if not result.success:
+        print(f"ERROR: fallo al reconstruir el catalogo de ejecuciones: {result.error}", file=sys.stderr)
+        return 1
+
+    print(
+        f"Catalogo reconstruido: {result.entries_included} ejecucion(es) incluida(s), "
+        f"{result.entries_ignored} directorio(s) ignorado(s), {result.warnings_total} warning(s) de compatibilidad."
+    )
+    print(f"  {output_root / 'index.html'}")
+    print(f"  {output_root / 'run_index.log'}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    if "--rebuild-run-index" in raw_argv:
+        return _run_rebuild_index_mode(raw_argv)
+
     parser = build_arg_parser(BASE_DIR)
     args = parser.parse_args(argv)
 
@@ -664,18 +711,49 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"\nEjecucion publicada en: {run_config.run_dir_final}")
 
+    _try_rebuild_catalog_after_publish(run_config)
+
     if run_config.open_report:
         _try_open_report(run_config)
 
     return 0
 
 
-def _append_best_effort_log(run_config: RunConfig, message: str) -> None:
+def _append_best_effort_log(run_config: RunConfig, message: str, phase: str = "OPEN_REPORT") -> None:
     try:
         with (run_config.run_dir_final / "execution.log").open("a", encoding="utf-8") as f:
-            f.write(format_log_line("OPEN_REPORT", message) + "\n")
+            f.write(format_log_line(phase, message) + "\n")
     except OSError:
         pass
+
+
+def _try_rebuild_catalog_after_publish(run_config: RunConfig) -> None:
+    """
+    Reconstruccion automatica del catalogo historico de ejecuciones (Fase
+    5C), POSTERIOR a la publicacion del run: se invoca aqui, cuando
+    publish_run() ya ha terminado con exito. Es una operacion derivada
+    sobre --output-root, fuera del directorio del run: nunca se anade al
+    manifest del run (el catalogo vive en otro directorio) ni a su
+    outputs_generated. Un fallo aqui NUNCA revierte el run ya publicado,
+    nunca borra .publish_complete, nunca cambia el manifest a FAILED, y
+    nunca afecta al codigo de salida del analisis (0): solo se avisa por
+    consola y, de forma best-effort, en el execution.log ya publicado del
+    run, indicando como reconstruir el catalogo manualmente.
+    """
+    result = rebuild_run_catalog(run_config.output_root)
+    if result.success:
+        print(f"Catalogo de ejecuciones actualizado en: {run_config.output_root / 'index.html'}")
+        return
+    message = (
+        f"no se ha podido actualizar el catalogo de ejecuciones de {run_config.output_root} "
+        f"({result.error}). El run ya publicado sigue siendo valido."
+    )
+    print(
+        f"AVISO: {message} Para reconstruirlo manualmente:\n"
+        f'  python analysis_fov_scp_ml.py --rebuild-run-index --output-root "{run_config.output_root}"',
+        file=sys.stderr,
+    )
+    _append_best_effort_log(run_config, f"AVISO: {message}", phase="CATALOG")
 
 
 def _try_open_report(run_config: RunConfig) -> None:

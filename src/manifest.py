@@ -12,12 +12,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import subprocess
 from datetime import datetime
 from pathlib import Path
 
 from src.client_analysis import ClientAnalysisResult
 from src.run_config import RunConfig
+
+# Version del ESQUEMA de manifest.json (Fase 5C: catalogo historico de
+# ejecuciones), deliberadamente independiente de pipeline_version (que versiona
+# el propio pipeline de analisis, no la forma del manifiesto). Se incrementa
+# solo cuando cambia la forma/semantica de los campos de manifest.json que el
+# catalogo (src/run_catalog.py) necesita interpretar.
+MANIFEST_SCHEMA_VERSION = 2
 
 
 def compute_sha256(path: Path) -> str:
@@ -100,6 +108,18 @@ def _build_csv_entry(record, result: ClientAnalysisResult | None, copy_inputs: b
     return entry
 
 
+def _none_if_nan(x):
+    """
+    Serializa NaN como None (null en JSON): un valor ausente nunca debe
+    llegar al manifest como el NaN interno de pandas/NumPy (json.dumps lo
+    escribiria como el token no estandar `NaN`, y el catalogo debe poder
+    distinguir "ausente" sin depender de esa extension no estandar).
+    """
+    if isinstance(x, float) and math.isnan(x):
+        return None
+    return x
+
+
 def build_manifest(
     run_config: RunConfig,
     inventory: list,
@@ -128,13 +148,36 @@ def build_manifest(
 
     n_evaluable_6m = None
     n_missing_6m = None
+    catalog_summary = None
     if global_result is not None and "6M" in global_result.periods:
-        m6_stats = global_result.periods["6M"].client_improvement_stats
+        m6 = global_result.periods["6M"]
+        m6_stats = m6.client_improvement_stats
         n_evaluable_6m = m6_stats.get("n_evaluable")
         n_missing_6m = m6_stats.get("n_missing")
 
+        # "Resumen estable" para el catalogo historico de ejecuciones (Fase
+        # 5C, src/run_catalog.py): unicamente reempaqueta valores YA
+        # calculados por analyze_global() (src/global_analysis.py) sobre
+        # 6M, mas los totales de warnings/errors ya sumados arriba. No
+        # repite ningun calculo estadistico aqui.
+        catalog_summary = {
+            "clients_total": len(results),
+            "clients_evaluable_6m": _none_if_nan(n_evaluable_6m),
+            "clients_without_performance_6m": _none_if_nan(n_missing_6m),
+            "series_candidates_6m": _none_if_nan(m6.n_candidates_total),
+            "series_comparable_6m": _none_if_nan(m6.n_comparable_total),
+            "coverage_pct_6m": _none_if_nan(m6.pct_comparable_global),
+            "wape_scp_6m": _none_if_nan(m6.scp_wape_global),
+            "wape_ml_6m": _none_if_nan(m6.ml_wape_global),
+            "weighted_improvement_pct_6m": _none_if_nan(m6.global_improvement_pct),
+            "net_error_reduction_6m": _none_if_nan(m6.reduction_totals.get("REDUCCION_NETA")),
+            "warnings_total": total_warnings,
+            "errors_total": total_errors,
+        }
+
     manifest = {
         "run_name": run_config.run_name_effective,
+        "manifest_schema_version": MANIFEST_SCHEMA_VERSION,
         "status": status,
         "published": published,
         "started_at": started_at.isoformat(),
@@ -160,6 +203,7 @@ def build_manifest(
         "input_metadata_changed": list(input_metadata_changed),
         "outputs_generated": outputs_generated,
         "csv_files": csv_entries,
+        "catalog_summary": catalog_summary,
     }
     if failure is not None:
         manifest["failure"] = failure

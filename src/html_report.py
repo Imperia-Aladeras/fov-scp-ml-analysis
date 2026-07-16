@@ -262,18 +262,41 @@ def extract_local_links(html_text: str) -> list[str]:
     return links
 
 
-def validate_run_links(run_dir: Path) -> list[str]:
+def validate_html_links(
+    html_paths: list[Path], root_dir: Path, pending_targets: set[Path] | None = None,
+) -> list[str]:
     """
-    Recorre todos los .html bajo run_dir, extrae href/src, rechaza URLs
-    externas o esquemas peligrosos (http, https, //, javascript:, data:,
-    mailto:, etc.), resuelve cada ruta local relativa al HTML que la
-    contiene, verifica que el destino existe en disco y que no escapa de
-    run_dir. Devuelve la lista de problemas encontrados (vacia si todo
-    valida); no lanza por si misma, para poder reutilizarse en tests.
+    Validador generico: analiza EXACTAMENTE los ficheros HTML de
+    `html_paths` (nunca escanea un directorio por su cuenta), extrae
+    href/src, rechaza URLs externas o esquemas peligrosos (http, https, //,
+    javascript:, data:, mailto:, etc.), resuelve cada ruta local relativa
+    al HTML que la contiene y verifica que el destino existe en disco y que
+    no escapa de `root_dir`. Devuelve la lista de problemas encontrados
+    (vacia si todo valida); no lanza por si mismo.
+
+    `pending_targets`: rutas absolutas de destinos que TODAVIA no existen
+    con su nombre definitivo pero que forman parte de la MISMA transaccion
+    atomica que este HTML (p.ej. un log temporal que se sustituira junto al
+    HTML si la validacion pasa). Un enlace hacia una de estas rutas se
+    considera valido si, en su lugar, existe el fichero temporal
+    correspondiente (`<destino>.tmp`): esto permite validar un HTML que
+    enlaza a un fichero preparado pero aun no publicado, sin invertir el
+    orden de la transaccion (generar -> validar -> publicar) ni relajar la
+    comprobacion de existencia para cualquier otro enlace.
+
+    Reutilizado tanto por la validacion de un run completo (Fase 5B, ver
+    `validate_run_links`) como por el catalogo historico de ejecuciones
+    (Fase 5C, `src/run_catalog.py`): el catalogo pasa aqui UNICAMENTE su
+    propio index.html (nunca los HTML de cada run historico, que ya se
+    validaron cuando ESE run se publico), asi que solo se comprueba que el
+    enlace a `<run>/index.html` resuelva a un fichero existente, sin volver
+    a recorrer ni revalidar el contenido de cada run.
     """
     problems: list[str] = []
-    run_dir = run_dir.resolve()
-    for html_path in sorted(run_dir.rglob("*.html")):
+    root_dir = root_dir.resolve()
+    pending_targets = {p.resolve() for p in (pending_targets or set())}
+    for html_path in sorted(html_paths):
+        html_path = html_path.resolve()
         text = html_path.read_text(encoding="utf-8")
         for raw in extract_local_links(text):
             split = urlsplit(raw)
@@ -285,10 +308,23 @@ def validate_run_links(run_dir: Path) -> list[str]:
                 continue
             target = (html_path.parent / target_rel).resolve()
             try:
-                target.relative_to(run_dir)
+                target.relative_to(root_dir)
             except ValueError:
-                problems.append(f"{html_path}: el enlace escapa del directorio de la ejecucion: {raw!r}")
+                problems.append(f"{html_path}: el enlace escapa del directorio raiz: {raw!r}")
                 continue
-            if not target.exists():
-                problems.append(f"{html_path}: destino inexistente: {raw!r} -> {target}")
+            if target.exists():
+                continue
+            if target in pending_targets and target.with_name(target.name + ".tmp").exists():
+                continue
+            problems.append(f"{html_path}: destino inexistente: {raw!r} -> {target}")
     return problems
+
+
+def validate_run_links(run_dir: Path) -> list[str]:
+    """
+    Valida todos los .html de UN run completo (Fase 5B): rglob acotado a
+    `run_dir` (nunca a un output-root que pueda contener otros runs).
+    Delgado sobre `validate_html_links`.
+    """
+    run_dir = run_dir.resolve()
+    return validate_html_links(sorted(run_dir.rglob("*.html")), run_dir)

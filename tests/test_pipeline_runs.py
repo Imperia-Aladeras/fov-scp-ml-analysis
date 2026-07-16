@@ -307,9 +307,16 @@ def test_default_command_with_no_args_uses_repo_data_and_creates_timestamped_run
 
     exit_code = pipeline.main([])
     assert exit_code == 0
-    runs = list((fake_repo / "outputs" / "runs").iterdir())
-    assert len(runs) == 1
-    assert (runs[0] / "clients" / "10204_SKLUM").exists()
+    output_root = fake_repo / "outputs" / "runs"
+    # output_root tambien contiene, desde la Fase 5C, el catalogo historico
+    # (index.html, run_index.log, catalog_assets/) generado automaticamente
+    # tras la publicacion: se filtran los directorios de run (excluyendo
+    # catalog_assets/, que es propio del catalogo, no un run).
+    run_dirs = [p for p in output_root.iterdir() if p.is_dir() and p.name != "catalog_assets"]
+    assert len(run_dirs) == 1
+    assert (run_dirs[0] / "clients" / "10204_SKLUM").exists()
+    assert (output_root / "index.html").exists()
+    assert (output_root / "run_index.log").exists()
 
 
 # --------------------------------------------------------------------------

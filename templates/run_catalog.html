@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Catálogo de ejecuciones — {{ output_root_name }}</title>
+<link rel="stylesheet" href="{{ 'catalog_assets/styles.css' | encode_url_path }}">
+</head>
+<body>
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+<header class="site-header">
+  <div class="site-header__inner">
+    <p>Catálogo de ejecuciones: <strong>{{ output_root_name }}</strong></p>
+  </div>
+</header>
+<main id="contenido">
+
+<h1>Catálogo de ejecuciones publicadas</h1>
+<p class="note">Índice operativo, estático y offline: se reconstruye únicamente a partir de <code>manifest.json</code>, <code>.publish_complete</code> e <code>index.html</code> de cada ejecución publicada. No vuelve a leer CSV ni recalcula métricas.</p>
+
+<nav aria-label="Navegación del catálogo">
+  <ul>
+    <li><a href="#ultima-ejecucion">Última ejecución completada</a></li>
+    <li><a href="#incidencias">Incidencias del escaneo</a></li>
+    <li><a href="#ejecuciones">Ejecuciones publicadas</a></li>
+  </ul>
+</nav>
+
+<section id="ultima-ejecucion" aria-labelledby="ultima-ejecucion-h">
+  <h2 id="ultima-ejecucion-h">Última ejecución completada</h2>
+  {% if last_run %}
+  <div class="last-run">
+    <table class="kv-table">
+      <tbody>
+        <tr><th scope="row">Nombre</th><td>{{ last_run.run_name }}</td></tr>
+        <tr><th scope="row">Fecha de finalización</th><td>{{ last_run.finished_at }}</td></tr>
+        <tr><th scope="row">Estado</th><td><span class="badge badge--{{ last_run.status | lower }}">{{ last_run.status }}</span></td></tr>
+        <tr><th scope="row">Clientes evaluables (6M)</th><td>{{ last_run.clients_evaluable_fraction }}</td></tr>
+        <tr><th scope="row">WAPE SCP / ML (6M)</th><td>{{ last_run.wape_scp_6m }} / {{ last_run.wape_ml_6m }}</td></tr>
+        <tr><th scope="row">Mejora ponderada (6M)</th><td>{{ last_run.weighted_improvement_pct_6m }}</td></tr>
+        <tr><th scope="row">Reducción neta (6M)</th><td>{{ last_run.net_error_reduction_6m }}</td></tr>
+      </tbody>
+    </table>
+    <p><a href="{{ last_run.url | encode_url_path }}">Abrir informe de esta ejecución</a></p>
+  </div>
+  {% else %}
+  <p class="note">No hay ejecuciones publicadas.</p>
+  {% endif %}
+</section>
+
+<section id="incidencias" aria-labelledby="incidencias-h">
+  <h2 id="incidencias-h">Incidencias del escaneo</h2>
+  <div class="incidents-summary">
+    <div class="stat"><strong>{{ incidents.n_included }}</strong>ejecuciones incluidas</div>
+    <div class="stat"><strong>{{ incidents.n_ignored }}</strong>directorios ignorados</div>
+    <div class="stat"><strong>{{ incidents.n_warnings }}</strong>warnings de compatibilidad</div>
+  </div>
+  <p class="note">El detalle completo (incluidos motivos y timestamps) queda registrado en <a href="{{ 'run_index.log' | encode_url_path }}">run_index.log</a>.</p>
+
+  {% if incidents.ignored %}
+  <details class="details-group">
+    <summary>Directorios ignorados ({{ incidents.ignored | length }})</summary>
+    <ul>
+      {% for item in incidents.ignored %}
+      <li><code>{{ item.folder_name }}</code> — {{ item.reason }}</li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+
+  {% if incidents.warnings %}
+  <details class="details-group">
+    <summary>Warnings de compatibilidad ({{ incidents.warnings | length }})</summary>
+    <ul>
+      {% for w in incidents.warnings %}
+      <li>{{ w }}</li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</section>
+
+<section id="ejecuciones" aria-labelledby="ejecuciones-h">
+  <h2 id="ejecuciones-h">Ejecuciones publicadas</h2>
+  {% if rows %}
+  <p class="note">Ordenadas por fecha de finalización descendente (o inicio si falta; las ejecuciones con timestamp inválido o ausente aparecen al final).</p>
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Ejecución</th><th scope="col">Inicio</th><th scope="col">Fin</th>
+        <th scope="col">Versión pipeline</th><th scope="col">Schema manifest</th><th scope="col">Commit</th>
+        <th scope="col">Working tree</th><th scope="col">Estado</th>
+        <th scope="col">Clientes totales</th><th scope="col">Evaluables 6M</th><th scope="col">Sin performance 6M</th>
+        <th scope="col">Candidatas 6M</th><th scope="col">Comparables 6M</th><th scope="col">Cobertura 6M</th>
+        <th scope="col">WAPE SCP 6M</th><th scope="col">WAPE ML 6M</th><th scope="col">Mejora 6M</th>
+        <th scope="col">Reducción neta</th><th scope="col">Warnings</th><th scope="col">Errors</th><th scope="col">Informe</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.run_name }}{% if row.has_compat_warning %} <span class="note">(schema antiguo)</span>{% endif %}</td>
+        <td>{{ row.started_at }}</td>
+        <td>{{ row.finished_at }}</td>
+        <td>{{ row.pipeline_version }}</td>
+        <td>{{ row.manifest_schema_version }}</td>
+        <td><code>{{ row.git_commit_short }}</code></td>
+        <td>{{ row.git_worktree_label }}</td>
+        <td><span class="badge badge--{{ row.status | lower }}">{{ row.status }}</span></td>
+        <td>{{ row.clients_total }}</td>
+        <td>{{ row.clients_evaluable_6m }}</td>
+        <td>{{ row.clients_without_performance_6m }}</td>
+        <td>{{ row.series_candidates_6m }}</td>
+        <td>{{ row.series_comparable_6m }}</td>
+        <td>{{ row.coverage_pct_6m }}</td>
+        <td>{{ row.wape_scp_6m }}</td>
+        <td>{{ row.wape_ml_6m }}</td>
+        <td>{{ row.weighted_improvement_pct_6m }}</td>
+        <td>{{ row.net_error_reduction_6m }}</td>
+        <td>{{ row.warnings_total }}</td>
+        <td>{{ row.errors_total }}</td>
+        <td><a href="{{ row.url | encode_url_path }}">Abrir</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="note">No hay ejecuciones publicadas.</p>
+  {% endif %}
+</section>
+
+</main>
+<footer class="site-footer">
+  <p>Catálogo generado de forma offline. No requiere conexión a internet, servidor local ni Python en ejecución para consultarse. Reconstrúyelo con <code>python analysis_fov_scp_ml.py --rebuild-run-index --output-root "&lt;output-root&gt;"</code>.</p>
+</footer>
+</body>
+</html>

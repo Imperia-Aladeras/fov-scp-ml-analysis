@@ -60,6 +60,7 @@ python analysis_fov_scp_ml.py `
 | `--overwrite` | desactivado | Permite sustituir una ejecucion existente con el mismo nombre. |
 | `--copy-inputs` | desactivado | Copia los CSV originales dentro de la ejecucion (`inputs/`). |
 | `--open-report` | desactivado | Abre `index.html` en el navegador por defecto tras publicar la ejecucion. Ver [Informe HTML](#informe-html-fase-5b). |
+| `--rebuild-run-index` | desactivado | Modo separado (Fase 5C): reconstruye unicamente el catalogo de `--output-root`, sin analizar CSV. Ver [Catálogo de ejecuciones](#catálogo-de-ejecuciones-fase-5c). |
 
 ### Saneamiento de `--run-name`
 
@@ -327,8 +328,165 @@ El pipeline:
    `<run>/clients/<CLIENTE>/index.html`, ver
    [Informe HTML](#informe-html-fase-5b)).
 8. Publica la ejecucion de forma atomica (ver arriba).
+9. Tras publicar, reconstruye automaticamente el catalogo historico de
+   `--output-root` (ver [Catálogo de ejecuciones](#catálogo-de-ejecuciones-fase-5c)).
+   Un fallo en este paso no invalida la ejecucion ya publicada.
 
 No modifica nunca los CSV originales de `--input-dir`.
+
+## Catálogo de ejecuciones (Fase 5C)
+
+Cada `--output-root` mantiene, ademas de sus ejecuciones, un catalogo
+historico estatico y offline en `<output-root>/index.html`: un indice
+operativo de todas las ejecuciones publicadas, pensado para encontrar
+rapidamente la ultima validacion o comparar de un vistazo el estado de
+varias ejecuciones, sin abrir cada una por separado.
+
+El catalogo es una capa de presentacion sobre `manifest.json`: **nunca**
+vuelve a leer CSV, **nunca** recalcula metricas, **nunca** abre Excel ni
+Markdown, **nunca** analiza logs y **nunca** compara estadisticamente unas
+ejecuciones con otras (eso queda fuera de alcance de la Fase 5C). Solo
+utiliza, por cada carpeta directamente dentro de `--output-root`:
+`manifest.json`, la presencia de `.publish_complete` y la existencia de
+`index.html`.
+
+### Estructura
+
+```text
+<output-root>/
+  index.html              # catalogo: indice de ejecuciones publicadas
+  run_index.log             # registro del ultimo escaneo (incluidos/ignorados/motivos)
+  catalog_assets/
+    styles.css               # CSS local propio del catalogo (no el de ningun run)
+
+  <run_1>/
+    index.html  manifest.json  .publish_complete  ...
+  <run_2>/
+    ...
+```
+
+Todos los enlaces del catalogo son relativos (`<run>/index.html`,
+`catalog_assets/styles.css`): la carpeta completa de `--output-root` se
+puede copiar, comprimir o mover sin romper ningun enlace.
+
+### Criterio de ejecucion valida
+
+Una carpeta hija directa de `--output-root` se incluye en el catalogo
+**unicamente** cuando: no empieza por `.` (excluye `.<run>.tmp` y
+`.<run>.backup`), no es `catalog_assets/`, contiene `.publish_complete`,
+contiene un `manifest.json` valido (JSON parseable), `manifest["published"]
+== true`, `manifest["status"] != "FAILED"`, y contiene `index.html`. Nunca
+se confia unicamente en `manifest["published"]`: todas las condiciones
+deben cumplirse a la vez. Si el nombre de la carpeta no coincide con
+`manifest["run_name"]`, la ejecucion se incluye igualmente, con un warning
+`CATALOG_RUN_NAME_MISMATCH`. Ninguna carpeta que no cumpla el criterio se
+elimina ni se modifica: simplemente no aparece en la tabla, y el motivo
+queda registrado en `run_index.log`.
+
+### Compatibilidad con manifests historicos
+
+El catalogo lee manifests generados por fases anteriores (Fase 5A, Fase
+5B) sin fallar: si un manifest no tiene `catalog_summary` (el bloque que la
+Fase 5C anadio a `manifest.json`), la ejecucion se incluye igualmente, con
+un warning `CATALOG_FIELDS_MISSING`, y sus metricas 6M se muestran como
+`N/D` (nunca inventadas ni convertidas en 0). No se vuelve a procesar
+ningun CSV para completar los datos ausentes.
+
+### `manifest_schema_version` y `catalog_summary`
+
+Cada `manifest.json` nuevo incluye `manifest_schema_version` (version del
+**esquema** del manifiesto; distinta de `pipeline_version`, que versiona el
+propio pipeline de analisis) y un bloque `catalog_summary` estable, pensado
+para que el catalogo nunca tenga que recalcular nada:
+
+```json
+{
+  "manifest_schema_version": 2,
+  "catalog_summary": {
+    "clients_total": 9,
+    "clients_evaluable_6m": 7,
+    "clients_without_performance_6m": 2,
+    "series_candidates_6m": 20539,
+    "series_comparable_6m": 7881,
+    "coverage_pct_6m": 38.37,
+    "wape_scp_6m": 0.5642,
+    "wape_ml_6m": 0.6310,
+    "weighted_improvement_pct_6m": -11.9,
+    "net_error_reduction_6m": -19668843.908,
+    "warnings_total": 123,
+    "errors_total": 0
+  }
+}
+```
+
+Todos los valores de `catalog_summary` provienen de campos **ya
+calculados** por `GlobalAnalysisResult`/`ExecutionRecord` (ver
+`src/manifest.py`): `manifest.py` no repite ningun calculo estadistico. Un
+valor ausente se serializa como `null` (nunca como `0`). No es necesario
+ni se recomienda modificar retroactivamente manifests ya publicados.
+
+### Orden y "Ultima ejecucion completada"
+
+Las ejecuciones se ordenan por `finished_at` descendente; si falta, por
+`started_at` descendente; como desempate deterministico, por nombre de
+ejecucion. Los timestamps se parsean respetando su zona horaria (ISO 8601
+con offset). Una ejecucion con timestamp invalido o ausente **no se
+excluye**: se coloca al final, se muestra como `N/D` y se registra un
+warning `CATALOG_INVALID_TIMESTAMP`. La seccion "Ultima ejecucion
+completada" reutiliza la primera fila de ese mismo orden: nunca se calcula
+por separado ni con un criterio distinto.
+
+### Incidencias del escaneo
+
+`run_index.log` registra, en cada reconstruccion: timestamp, numero de
+directorios inspeccionados, ejecuciones incluidas e ignoradas (con motivo),
+warnings de compatibilidad y de timestamp invalido. La pagina del catalogo
+incluye un resumen (totales) y un detalle desplegable; nunca muestra
+tracebacks completos (esos quedan solo en `run_index.log`).
+
+### `--rebuild-run-index`
+
+```powershell
+python analysis_fov_scp_ml.py `
+  --rebuild-run-index `
+  --output-root "C:\Informes\FOV\runs"
+```
+
+Modo separado que **no** descubre CSV, **no** calcula clientes, **no** crea
+ningun run ni directorio temporal de run, y **no** modifica ningun
+`manifest.json` ni `.publish_complete` existente: solo reconstruye
+`index.html` y `run_index.log` a partir de las ejecuciones ya publicadas.
+En este modo **solo** se admite `--output-root`; `--input-dir`,
+`--run-name`, `--overwrite`, `--copy-inputs` y `--open-report` son
+incompatibles (el parser de este modo ni siquiera los reconoce, por lo que
+usarlos junto a `--rebuild-run-index` termina en un error de "argumento no
+reconocido"). Codigos de salida: `0` catalogo reconstruido; `1` fallo de
+reconstruccion; `2` argumentos incompatibles.
+
+### Reconstruccion automatica tras publicar
+
+Tras cada `publish_run()` con exito, el pipeline intenta reconstruir el
+catalogo de `--output-root` automaticamente, **antes** de procesar
+`--open-report`. Es una operacion derivada, fuera del directorio del run:
+nunca se anade al `manifest.json` del run ni a su `outputs_generated`. Si
+falla (p.ej. un problema de disco al escribir el catalogo), el run **ya
+publicado sigue siendo valido**: no se revierte, `.publish_complete` no se
+borra, el manifest no cambia a `FAILED`, y el codigo de salida del analisis
+sigue siendo `0`. Se muestra un aviso claro por consola (con el comando
+`--rebuild-run-index` exacto para reintentarlo) y, de forma best-effort, se
+anade una linea al `execution.log` ya publicado del run.
+
+### Generacion atomica
+
+`index.html`/`run_index.log` se escriben primero como `.tmp` en el mismo
+`--output-root`; solo se sustituyen los ficheros definitivos (`os.replace`,
+`index.html` en ultimo lugar) si la generacion **y** la validacion de
+enlaces del catalogo terminan con exito. Si algo falla en cualquier punto,
+el catalogo anterior (si existia) queda completamente intacto y no se toca
+ningun run. La validacion de enlaces del catalogo comprueba unicamente el
+HTML que se esta generando (nunca vuelve a recorrer ni revalidar el
+contenido de cada run historico, que ya se valido cuando ese run se
+publico, ver [Informe HTML](#informe-html-fase-5b)).
 
 ### Tests
 
@@ -504,6 +662,136 @@ entre clientes, y posible mojibake en columnas de texto. El detalle completo
 esta en `src/quality_checks.py` y en la pestana `13_data_quality_checks` /
 `15_data_quality_checks` de cada Excel.
 
+## Guías operativas
+
+### Ejecutar una nueva validación
+
+```powershell
+python analysis_fov_scp_ml.py `
+  --input-dir "C:\Datos\Validacion" `
+  --output-root "C:\Informes\FOV\runs" `
+  --run-name "validacion_septiembre_2026"
+```
+
+Publica una ejecución nueva, aislada y versionada en
+`<output-root>\validacion_septiembre_2026\`, y actualiza automáticamente el
+catálogo de `<output-root>\index.html`.
+
+### Consultar una ejecución
+
+- Abre `<run>\index.html` (doble clic): punto de entrada recomendado,
+  navegable y offline.
+- Usa el **Excel** (`fov_scp_ml_*_summary*.xlsx`) para análisis detallado,
+  filtros y tablas dinámicas.
+- Usa el **Markdown** (`fov_scp_ml_*_report*.md`) para auditoría y
+  versionado legible en diffs de texto.
+- Usa los **logs** (`processing_log_*.txt`, `execution.log`) para
+  diagnóstico técnico.
+- Usa `manifest.json` para trazabilidad (hashes de los CSV de entrada,
+  commit de Git, estado de publicación).
+
+### Consultar el histórico
+
+Abre `<output-root>\index.html`: incluye la sección "Última ejecución
+completada", la tabla completa ordenada por fecha de finalización
+descendente, y una sección de incidencias del escaneo. `N/D` significa que
+esa métrica no existe para esa ejecución (nunca que valga cero); es
+especialmente frecuente en ejecuciones publicadas antes de la Fase 5C (ver
+[Catálogo de ejecuciones](#catálogo-de-ejecuciones-fase-5c)).
+
+### Reconstruir el catálogo
+
+```powershell
+python analysis_fov_scp_ml.py `
+  --rebuild-run-index `
+  --output-root "C:\Informes\FOV\runs"
+```
+
+Útil si el catálogo no se actualizó automáticamente (por ejemplo, tras un
+fallo puntual de disco), o tras mover/restaurar manualmente ejecuciones
+dentro de `--output-root`. No analiza ningún CSV ni crea ninguna ejecución
+nueva.
+
+### Repetir una ejecución
+
+Vuelve a ejecutar el mismo comando con un `--run-name` distinto (o sin
+`--run-name`, para usar el timestamp automático): cada ejecución queda
+aislada, y ambas aparecen por separado en el catálogo.
+
+### Sobrescribir una ejecución
+
+Añade `--overwrite` para sustituir una ejecución existente con el mismo
+`--run-name`. La ejecución anterior se conserva en un backup temporal hasta
+que la nueva termina de publicarse con éxito (ver la sección
+"Comportamiento de `--overwrite`" más arriba); el catálogo, tras la
+reconstrucción automática, muestra una única fila con los datos del
+manifiesto más reciente.
+
+### Archivar inputs
+
+Añade `--copy-inputs` para copiar los CSV originales dentro de
+`<run>\inputs\` (verificados byte a byte tras la copia). Sin este flag, la
+trazabilidad de los CSV de entrada se mantiene igualmente vía SHA-256 en
+`manifest.json`; el catálogo nunca depende de la carpeta `inputs\`.
+
+### Diagnosticar errores
+
+- Código de salida `1`: revisa `execution.log` dentro del directorio
+  temporal indicado en consola (`<output-root>\.<run-name>.tmp\`); incluye
+  la fase donde falló y el traceback completo.
+- Código de salida `2`: error de configuración detectado antes de tocar
+  disco (revisa el mensaje de consola: `--run-name` peligroso,
+  `--input-dir` inexistente, colisión sin `--overwrite`, o argumento
+  incompatible con `--rebuild-run-index`).
+- Si el catálogo no se actualizó tras una ejecución publicada con éxito
+  (código `0` pero sin aviso de "Catálogo actualizado"), revisa el aviso
+  por consola y el `execution.log` **ya publicado** de ese run, y
+  reconstruye manualmente con `--rebuild-run-index`.
+
+### Mover o compartir resultados
+
+Tanto `<run>\` como `<output-root>\` completo se pueden copiar, comprimir o
+mover a otra ubicación sin romper ningún enlace: todas las rutas dentro del
+HTML (informe por ejecución y catálogo) son relativas. No es necesario
+mover ni conservar `inputs\`, `manifest.json` ni ningún otro fichero
+concreto por separado: basta con la carpeta completa.
+
+### Outputs legacy
+
+`data/` y las carpetas `outputs/<CLIENTE>/`, `outputs/global/`,
+`outputs/execution_summary.md`, `outputs/execution_summary.xlsx`
+(generadas en las Fases 1-4, antes de las ejecuciones versionadas) **no**
+forman parte del catálogo ni de ninguna estructura de ejecución
+reproducible:
+
+- No tienen `manifest.json` ni `.publish_complete`, por lo que
+  `scan_output_root()` nunca podría registrarlas como una ejecución válida
+  aunque estuvieran dentro de `--output-root` (no lo están: viven en
+  `outputs/`, no en `outputs/runs/`).
+- No pueden convertirse retroactivamente en una ejecución versionada: no
+  existe forma de reconstruir su `manifest.json` (hashes de los CSV
+  originales en el momento exacto de esa ejecución, commit de Git, etc.)
+  sin volver a ejecutar el pipeline sobre los CSV correspondientes.
+- Para obtener un equivalente versionado y catalogable, genera una
+  ejecución nueva sobre los CSV actuales de `data/` (ver
+  [Ejecutar una nueva validación](#ejecutar-una-nueva-validación) más
+  arriba, sin `--input-dir` para usar `data/` por defecto).
+- **No se implementa ninguna migración automática ni destructiva**: este
+  proyecto nunca borra ni mueve `data/` ni `outputs/<CLIENTE>/` /
+  `outputs/global/` por sí mismo.
+- Qué puede eliminarse manualmente: una vez verificada una nueva ejecución
+  versionada equivalente (mismos CSV, resultados revisados), las carpetas
+  legacy en `outputs/` pueden eliminarse manualmente si ya no se necesitan
+  como referencia inmediata.
+- Qué conviene conservar por auditoría: si esos outputs legacy fueron la
+  base de una decisión o entrega ya comunicada, consérvalos (están
+  versionados en git como snapshot histórico) aunque exista una ejecución
+  nueva equivalente; el historial de git ya documenta cuándo y por qué se
+  generaron.
+- `outputs/runs/` (excluida de git, ver `.gitignore`) es la estructura
+  operativa vigente: toda ejecución nueva, con o sin argumentos, se publica
+  ahí, con su propio `manifest.json` como fuente de trazabilidad.
+
 ## Arquitectura del codigo
 
 ```text
@@ -531,10 +819,13 @@ src/
   html_formatters.py          # formatters centralizados para el informe HTML (N/D, %, es-ES)
   html_view_models.py         # traduce ClientAnalysisResult/GlobalAnalysisResult/ExecutionRecord a datos para las plantillas
   html_report.py              # orquestacion del HTML (Fase 5B): paginas, assets, validacion de enlaces
-templates/                    # plantillas Jinja2 (autoescape) del informe HTML
-  base.html  global_report.html  client_report.html  components/
+  run_catalog_models.py       # traduce manifest.json (nunca ClientAnalysisResult/GlobalAnalysisResult) a filas del catalogo
+  run_catalog.py               # catalogo historico (Fase 5C): descubrimiento, orden, reconstruccion atomica
+templates/                    # plantillas Jinja2 (autoescape) del informe HTML y del catalogo
+  base.html  global_report.html  client_report.html  components/  run_catalog.html
 report_assets/
-  styles.css                  # CSS local unico del informe HTML
+  styles.css                  # CSS local unico del informe HTML por ejecucion
+  catalog_styles.css           # CSS local unico del catalogo (independiente de cada run)
 tests/                        # tests unitarios con datos sinteticos
 ```
 

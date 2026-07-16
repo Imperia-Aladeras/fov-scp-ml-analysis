@@ -6,7 +6,7 @@
     <div class="chart-grid">
       {% for chart in group.charts %}
       <figure class="chart-item">
-        <a href="{{ chart.url | encode_url_path }}">
+        <a href="{{ chart.url | encode_url_path }}" target="_blank" rel="noopener">
           <img src="{{ chart.url | encode_url_path }}" alt="{{ chart.alt }}" loading="lazy">
         </a>
         <figcaption>{{ chart.alt }}</figcaption>
