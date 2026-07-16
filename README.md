@@ -497,6 +497,35 @@ python -m pytest
 Los tests usan datos sinteticos (`tests/factories.py`); ninguno depende de
 los CSV reales de `data/`.
 
+## Archivos de entrada
+
+El pipeline procesa archivos `.csv`, con un archivo por cliente. La primera
+fila debe contener los nombres de las columnas y los campos deben estar
+delimitados por comas.
+
+Los nombres de archivo deben seguir el patrón:
+
+`TA_FOV_SCP_ML_<ID_CLIENT>_<ETIQUETA>.csv`
+
+Ejemplo:
+
+`TA_FOV_SCP_ML_10592_Plasfesa.csv`
+
+Los valores de texto pueden aparecer entre comillas dobles cuando el
+contenido lo requiera. Los valores nulos se representan mediante campos
+vacíos.
+
+Los archivos deben proporcionarse en su formato CSV original. No es
+necesario abrirlos en Excel, ejecutar "Texto en columnas", separar
+manualmente los datos por columnas ni convertirlos a XLSX. Que Excel u otra
+herramienta muestre cada fila completa dentro de una única columna no
+significa que el archivo sea inválido: el pipeline interpreta directamente
+las comas del contenido como delimitadores.
+
+Cualquier normalización necesaria (ver "Defecto de formato conocido" más
+abajo) se realiza únicamente en memoria; el archivo original nunca se
+modifica.
+
 ## Estructura de `data/`
 
 Un CSV por cliente, con el prefijo `TA_FOV_SCP_ML_` seguido del `ID_CLIENT`
