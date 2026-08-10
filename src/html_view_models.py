@@ -69,7 +69,7 @@ def improvement_verdict(pct) -> str:
 
 def build_header_vm(
     run_config, git_commit, git_worktree_dirty, status, started_at, finished_at,
-    n_csv_discovered, n_clients_valid, batches_detected,
+    n_clients_processed, n_clients_valid, batches_detected,
 ) -> dict:
     duration = (finished_at - started_at).total_seconds() if started_at and finished_at else None
     if git_worktree_dirty is True:
@@ -88,7 +88,13 @@ def build_header_vm(
         "git_commit_full": git_commit or NA_TEXT,
         "git_worktree_label": worktree_label,
         "status": status,
-        "n_csv_discovered": fmt_int(n_csv_discovered),
+        # n_clients_processed: numero de registros que representan un
+        # cliente logico real (id_client is not None), ya filtrado por el
+        # llamador. NI el numero de CSV fisicos (ver manifest["n_csv_discovered"]
+        # en src/manifest.py para eso) NI el numero de filas del resumen: un
+        # CSV con read_error genera una fila sin cliente asociado que no debe
+        # contar aqui.
+        "n_clients_processed": fmt_int(n_clients_processed),
         "n_clients_valid": fmt_int(n_clients_valid),
         "batches_detected": ", ".join(str(b) for b in batches_detected) if batches_detected else NA_TEXT,
         "copy_inputs": fmt_bool_si_no(run_config.copy_inputs),

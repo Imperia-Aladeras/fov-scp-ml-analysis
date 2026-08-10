@@ -72,12 +72,33 @@ def detect_git_worktree_dirty(repo_dir: Path) -> bool | None:
     return bool(completed.stdout.strip())
 
 
-def _build_csv_entry(record, result: ClientAnalysisResult | None, copy_inputs: bool) -> dict:
+# Precedencia estricta de estado agregado cuando un unico CSV fisico produce
+# varios ClientAnalysisResult (particion por ID_CLIENT): ERROR domina sobre
+# SUCCESS_WITH_WARNINGS, que domina sobre SUCCESS. Un estado que no aparezca
+# aqui debe fallar de forma ruidosa (KeyError), nunca hacer fallback en
+# silencio a un estado por defecto.
+_STATUS_PRECEDENCE = {"SUCCESS": 1, "SUCCESS_WITH_WARNINGS": 2, "ERROR": 3}
+
+
+def _aggregate_status(statuses: list[str]) -> str:
+    return max(statuses, key=lambda status: _STATUS_PRECEDENCE[status])
+
+
+def _build_csv_entry(record, results_for_file: list[ClientAnalysisResult], copy_inputs: bool) -> dict:
     """
     Procedencia individual por CSV (nunca un booleano global aplicado a
     todos): un fichero con `read_error` no se copia ni se analiza nunca,
     aunque --copy-inputs este activo, y debe quedar como `not_analyzed`
     explicitamente, no como `copy`.
+
+    manifest.csv_files sigue siendo estrictamente fisico: un unico CSV que
+    load_client_sources_from_csv particiono en varios ID_CLIENT sigue
+    generando exactamente una entrada aqui, con filas/warnings/errors sumados
+    y el estado agregado por precedencia estricta. id_client y etiqueta solo
+    se conservan cuando el CSV produjo un unico cliente: con N clientes no
+    representan a ninguno en particular, y quedan en None (no se anaden
+    client_ids ni n_clients: eso pertenece a execution_summary, no al
+    manifest).
     """
     entry: dict = {
         "name": record.name,
@@ -91,16 +112,21 @@ def _build_csv_entry(record, result: ClientAnalysisResult | None, copy_inputs: b
         entry["analyzed_source"] = "not_analyzed"
         entry["analysis_status"] = "INPUT_READ_ERROR"
         entry["analysis_error"] = record.read_error
-    elif result is not None:
+    elif results_for_file:
         entry["analyzed_source"] = "copy" if copy_inputs else "original"
-        entry["analysis_status"] = result.status
         entry["analysis_error"] = None
-        counts = result.quality.summary_counts()
+        aggregated_status = _aggregate_status([r.status for r in results_for_file])
         entry.update({
-            "id_client": result.source.id_client, "etiqueta": result.source.file_label,
-            "filas": result.source.n_rows, "estado": result.status,
-            "warnings": counts.get("WARNING", 0), "errors": counts.get("ERROR", 0),
+            "filas": sum(r.source.n_rows for r in results_for_file),
+            "estado": aggregated_status,
+            "warnings": sum(r.quality.summary_counts().get("WARNING", 0) for r in results_for_file),
+            "errors": sum(r.quality.summary_counts().get("ERROR", 0) for r in results_for_file),
         })
+        entry["analysis_status"] = aggregated_status
+        if len(results_for_file) == 1:
+            only = results_for_file[0]
+            entry["id_client"] = only.source.id_client
+            entry["etiqueta"] = only.source.file_label
     else:
         entry["analyzed_source"] = "not_analyzed"
         entry["analysis_status"] = "NOT_PROCESSED"
@@ -136,8 +162,10 @@ def build_manifest(
     input_metadata_changed: list[str] = (),
     failure: dict | None = None,
 ) -> dict:
-    by_filename = {r.source.file_name: r for r in results}
-    csv_entries = [_build_csv_entry(record, by_filename.get(record.name), copy_inputs) for record in inventory]
+    by_filename: dict[str, list[ClientAnalysisResult]] = {}
+    for r in results:
+        by_filename.setdefault(r.source.file_name, []).append(r)
+    csv_entries = [_build_csv_entry(record, by_filename.get(record.name, []), copy_inputs) for record in inventory]
 
     total_rows = sum(r.source.n_rows for r in results)
     total_candidates = sum(r.n_candidates for r in results)

@@ -81,10 +81,20 @@ def _period_history_sum(r: ClientAnalysisResult, period: str) -> float:
 
 
 def _client_improvement_series(client_results: list[ClientAnalysisResult], period: str) -> pd.Series:
+    """
+    Indexado por ID_CLIENT, no por file_label: desde que un unico CSV fisico
+    puede particionarse en varios clientes (Fase 3), varios ClientAnalysisResult
+    comparten el mismo file_label (derivado del nombre de fichero fisico, no
+    del cliente), lo que colapsaria silenciosamente entradas distintas bajo
+    la misma clave de dict. id_client es unico por construccion (un CSV
+    invalido con clientes duplicados no llega a producir ClientAnalysisResult
+    validos duplicados). Solo se usan los VALORES aqui (cross_entity_stats no
+    depende de las etiquetas del indice).
+    """
     values = {}
     for r in client_results:
         pr = r.periods.get(period)
-        values[r.source.file_label] = pr.wape.get("improvement_pct") if pr else float("nan")
+        values[r.source.id_client] = pr.wape.get("improvement_pct") if pr else float("nan")
     return pd.Series(values, dtype=float)
 
 

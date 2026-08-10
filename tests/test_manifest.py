@@ -230,6 +230,103 @@ def test_build_manifest_correlates_csv_entries_with_client_results(tmp_path: Pat
     assert manifest["n_clients_total"] == 3
 
 
+# --------------------------------------------------------------------------
+# Fase 3: agregacion de csv_files cuando un unico CSV fisico produce varios
+# ClientAnalysisResult (particion por ID_CLIENT).
+# --------------------------------------------------------------------------
+
+def _results_sharing_one_physical_file(results: list, shared_name: str = "TA_FOV_SCP_ML_full_export.csv") -> list:
+    """Fuerza a que todos los resultados compartan el mismo csv_path fisico, como produce load_client_sources_from_csv."""
+    for r in results:
+        r.source.csv_path = Path(shared_name)
+    return results
+
+
+def test_build_manifest_aggregates_multi_client_csv_into_a_single_entry(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    results = _results_sharing_one_physical_file(build_multi_client_results())
+    (data_dir / "TA_FOV_SCP_ML_full_export.csv").write_text("dummy", encoding="utf-8")
+    cfg = _run_config(tmp_path)
+    inventory = build_input_inventory(cfg.input_dir)
+
+    now = _now()
+    manifest = build_manifest(
+        cfg, inventory, results=results, global_result=None, outputs_generated=[],
+        started_at=now, finished_at=now, status="SUCCESS_WITH_WARNINGS",
+        git_commit=None, git_worktree_dirty=None, copy_inputs=False, published=False,
+    )
+    assert manifest["n_csv_discovered"] == 1
+    assert len(manifest["csv_files"]) == 1
+    entry = manifest["csv_files"][0]
+    # con N>1 clientes en el mismo CSV fisico, id_client/etiqueta no representan
+    # a ninguno de ellos en particular
+    assert entry["id_client"] is None
+    assert entry["etiqueta"] is None
+    assert entry["filas"] == sum(r.source.n_rows for r in results)
+    assert entry["warnings"] == sum(r.quality.summary_counts().get("WARNING", 0) for r in results)
+    assert entry["errors"] == sum(r.quality.summary_counts().get("ERROR", 0) for r in results)
+
+
+def test_build_manifest_status_precedence_error_dominates(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    results = _results_sharing_one_physical_file(build_multi_client_results())
+    results[0].status = "SUCCESS"
+    results[1].status = "SUCCESS_WITH_WARNINGS"
+    results[2].status = "ERROR"
+    (data_dir / "TA_FOV_SCP_ML_full_export.csv").write_text("dummy", encoding="utf-8")
+    cfg = _run_config(tmp_path)
+    inventory = build_input_inventory(cfg.input_dir)
+
+    now = _now()
+    manifest = build_manifest(
+        cfg, inventory, results=results, global_result=None, outputs_generated=[],
+        started_at=now, finished_at=now, status="SUCCESS_WITH_WARNINGS",
+        git_commit=None, git_worktree_dirty=None, copy_inputs=False, published=False,
+    )
+    assert manifest["csv_files"][0]["estado"] == "ERROR"
+
+
+def test_build_manifest_status_precedence_warnings_dominate_over_success(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    results = _results_sharing_one_physical_file(build_multi_client_results())
+    results[0].status = "SUCCESS"
+    results[1].status = "SUCCESS_WITH_WARNINGS"
+    results[2].status = "SUCCESS"
+    (data_dir / "TA_FOV_SCP_ML_full_export.csv").write_text("dummy", encoding="utf-8")
+    cfg = _run_config(tmp_path)
+    inventory = build_input_inventory(cfg.input_dir)
+
+    now = _now()
+    manifest = build_manifest(
+        cfg, inventory, results=results, global_result=None, outputs_generated=[],
+        started_at=now, finished_at=now, status="SUCCESS_WITH_WARNINGS",
+        git_commit=None, git_worktree_dirty=None, copy_inputs=False, published=False,
+    )
+    assert manifest["csv_files"][0]["estado"] == "SUCCESS_WITH_WARNINGS"
+
+
+def test_build_manifest_single_client_csv_retains_id_client_and_etiqueta(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    results = build_multi_client_results()[:1]  # un unico cliente para este CSV fisico
+    (data_dir / results[0].source.csv_path.name).write_text("dummy", encoding="utf-8")
+    cfg = _run_config(tmp_path)
+    inventory = build_input_inventory(cfg.input_dir)
+
+    now = _now()
+    manifest = build_manifest(
+        cfg, inventory, results=results, global_result=None, outputs_generated=[],
+        started_at=now, finished_at=now, status="SUCCESS_WITH_WARNINGS",
+        git_commit=None, git_worktree_dirty=None, copy_inputs=False, published=False,
+    )
+    entry = manifest["csv_files"][0]
+    assert entry["id_client"] == results[0].source.id_client
+    assert entry["etiqueta"] == results[0].source.file_label
+
+
 def test_build_manifest_includes_failure_block_when_provided(tmp_path: Path):
     cfg = _run_config(tmp_path)
     now = _now()

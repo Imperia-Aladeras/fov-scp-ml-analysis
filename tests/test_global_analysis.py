@@ -1,12 +1,18 @@
 import math
 
+from src.client_analysis import analyze_client
 from src.global_analysis import (
     analyze_global,
     build_client_period_table,
     build_global_period_result,
     global_category_performance_table,
 )
-from tests.factories import build_multi_client_results, build_negative_net_multi_client_results
+from tests.factories import (
+    build_multi_client_results,
+    build_negative_net_multi_client_results,
+    build_synthetic_client_dataframe,
+    make_client_source,
+)
 
 
 def test_analyze_global_includes_only_file_valid_clients():
@@ -58,6 +64,45 @@ def test_client_improvement_stats_distinguishes_total_evaluable_and_missing():
     # El porcentaje de clientes que mejoran debe calcularse sobre evaluables (2), no sobre el total (3).
     assert math.isclose(stats["pct_improved"], 50.0)
     assert not math.isclose(stats["pct_improved"], 1 / 3 * 100)
+
+
+def test_client_improvement_stats_does_not_collapse_clients_sharing_the_same_file_label():
+    """
+    Fase 3: un unico CSV fisico puede particionarse en varios ID_CLIENT, y
+    todos ellos comparten el mismo file_label (derivado del nombre del
+    fichero fisico, no de cada cliente). _client_improvement_series debe
+    indexar por ID_CLIENT, no por file_label: de lo contrario, dos clientes
+    con el mismo file_label colapsarian silenciosamente en una unica entrada
+    del diccionario y uno de los dos desaparaceria de las estadisticas por
+    cliente (regresion real detectada al adaptar el pipeline a Fase 3).
+    """
+    df_a = build_synthetic_client_dataframe()
+    df_a["ID_CLIENT"] = 10204
+    source_a = make_client_source(df_a, 10204, "FullExport")
+
+    df_b = build_synthetic_client_dataframe()
+    df_b["ID_CLIENT"] = 10461
+    source_b = make_client_source(df_b, 10461, "FullExport")
+
+    # mismo CSV fisico: mismo file_label/csv_path, ID_CLIENT distinto
+    source_b.file_label = source_a.file_label
+    source_b.csv_path = source_a.csv_path
+
+    result_a = analyze_client(source_a)
+    result_b = analyze_client(source_b)
+    assert result_a.source.file_label == result_b.source.file_label
+    assert result_a.source.id_client != result_b.source.id_client
+    # ambos evaluables: PeriodResult.wape.improvement_pct no es NaN para ninguno
+    assert result_a.periods["6M"].wape.get("improvement_pct") is not None
+    assert result_b.periods["6M"].wape.get("improvement_pct") is not None
+
+    gp = build_global_period_result([result_a, result_b], "6M")
+    stats = gp.client_improvement_stats
+
+    # sin la colision de clave, ambos clientes deben contarse por separado
+    assert stats["n_total"] == 2
+    assert stats["n_evaluable"] == 2
+    assert stats["count"] == 2
 
 
 def test_global_period_result_series_perspective_uses_raw_rows_not_client_medians():

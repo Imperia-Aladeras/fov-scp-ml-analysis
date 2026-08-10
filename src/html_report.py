@@ -125,7 +125,7 @@ def generate_html_report(
     run_config: RunConfig,
     results: list[ClientAnalysisResult],
     global_result: GlobalAnalysisResult,
-    all_outputs: dict[str, list[str]],
+    all_outputs: dict[int, list[str]],
     global_outputs: list[str],
     execution_records: list,
     started_at, finished_at,
@@ -146,10 +146,15 @@ def generate_html_report(
     ordered_results = sorted(results, key=lambda r: r.source.file_name)
     n_clients_valid = sum(1 for r in results if r.file_valid)
     batches_detected = sorted({b for r in results for b in r.source.id_batch})
+    # No todo ExecutionRecord representa un cliente: un CSV con read_error
+    # (o que nunca llego a parsearse) genera un ExecutionRecord fisico con
+    # id_client=None y estado=INPUT_NOT_ANALYZED. Solo cuentan como cliente
+    # los registros con id_client asignado.
+    n_clients_processed = sum(1 for rec in execution_records if rec.id_client is not None)
 
     header = vm.build_header_vm(
         run_config, git_commit, git_worktree_dirty, status, started_at, finished_at,
-        len(execution_records), n_clients_valid, batches_detected,
+        n_clients_processed, n_clients_valid, batches_detected,
     )
     resumen = vm.build_executive_summary_vm(global_result)
     perspectives = vm.build_perspectives_vm(global_result)
@@ -165,7 +170,7 @@ def generate_html_report(
             _rel_url("index.html", f"clients/{row['folder_name']}/index.html")
             if row["has_client_page"] and row["folder_name"] else None
         )
-        own_paths = posix_all_outputs.get(record.archivo, [])
+        own_paths = posix_all_outputs.get(record.id_client, [])
         log_path = _find_first(own_paths, ".txt")
         row["log_url"] = _rel_url("index.html", log_path) if log_path else None
 
@@ -218,7 +223,7 @@ def generate_html_report(
         )
         page = vm.build_client_page_vm(result, prev_client=prev_dict, next_client=next_dict)
 
-        own_paths = posix_all_outputs.get(result.source.file_name, [])
+        own_paths = posix_all_outputs.get(result.source.id_client, [])
         own_excel = _find_first(own_paths, ".xlsx")
         own_md = _find_first(own_paths, ".md")
         own_log = _find_first(own_paths, ".txt")

@@ -18,22 +18,31 @@ from src.periods import ALL_PERIODS, period_columns
 SIMPLE_HEADER = "ID,ID_BATCH,ID_RUN_STAGING,ID_CLIENT,SOURCE_RUN_ID,ID_CONFIGURATION,VALUE_LEVEL_1"
 
 
-def _write_invalid_csv(path: Path, id_client: int) -> None:
-    """CSV parseable pero sin el esquema completo: queda ERROR (columnas obligatorias faltantes)."""
-    path.write_text(SIMPLE_HEADER + "\n" + f"1,63,63,{id_client},1,23,LABEL\n", encoding="utf-8")
-
-
-def _write_full_valid_csv(path: Path, id_client: int) -> None:
+def _write_structurally_broken_csv(path: Path) -> None:
     """
-    CSV con el esquema completo (todas las columnas de periods.all_required_columns()),
-    una unica fila comparable en todos los periodos, con agregados consistentes
-    (RECENT_3M/OLDER_3M = 3 meses, 6M = 6 meses) para no disparar warnings de
-    coherencia agregada.
+    CSV parseable pero sin el esquema completo: load_client_sources_from_csv
+    lo rechaza con StructuralInputError (MISSING_REQUIRED_COLUMNS) antes de
+    llegar a CLIENT_PROCESSING. Ya no existe un "cliente invalido que no
+    bloquea a los demas": con un unico CSV fisico, un problema estructural
+    invalida la ejecucion completa.
+    """
+    path.write_text(SIMPLE_HEADER + "\n" + "1,63,63,10204,1,23,LABEL\n", encoding="utf-8")
+
+
+def _full_valid_row(
+    id_client: int, *, id_configuration: int = 1, id_batch: int = 63, id_run_staging: int = 60,
+    source_run_id: int = 1, run_start_date: str = "2026-01-01",
+) -> dict:
+    """
+    Fila con el esquema completo (todas las columnas de periods.all_required_columns()
+    mas RUN_START_DATE, exigida por load_client_sources_from_csv), comparable
+    en todos los periodos, con agregados consistentes (RECENT_3M/OLDER_3M = 3
+    meses, 6M = 6 meses) para no disparar warnings de coherencia agregada.
     """
     month_history, month_scp_err, month_ml_err = 100.0, 20.0, 10.0
     row = {
-        "ID": 1, "ID_BATCH": 63, "ID_RUN_STAGING": 60, "ID_CLIENT": id_client, "SOURCE_RUN_ID": 1,
-        "ID_CONFIGURATION": 1,
+        "ID": id_configuration, "ID_BATCH": id_batch, "ID_RUN_STAGING": id_run_staging, "ID_CLIENT": id_client,
+        "SOURCE_RUN_ID": source_run_id, "ID_CONFIGURATION": id_configuration, "RUN_START_DATE": run_start_date,
         "VALUE_LEVEL_1": "Cat", "VALUE_LEVEL_2": None, "VALUE_LEVEL_3": None,
         "VALUE_LEVEL_4": None, "VALUE_LEVEL_5": None,
         "ML_BEST_MODEL": "AutoETS", "ML_CLASSIFICATION": "smooth", "ML_TYPE": "smooth_ok", "ML_STATUS": "OK",
@@ -80,7 +89,20 @@ def _write_full_valid_csv(path: Path, id_client: int) -> None:
         row[pcols.finalist_method] = "SCP"
         row[pcols.finalist_model] = "x11 seasonal"
         row[pcols.winner_improvement_pct] = (scp_wape - ml_wape) / scp_wape * 100
-    pd.DataFrame([row]).to_csv(path, index=False)
+    return row
+
+
+def _write_full_valid_csv(path: Path, id_client: int) -> None:
+    pd.DataFrame([_full_valid_row(id_client)]).to_csv(path, index=False)
+
+
+def _write_full_valid_multi_client_csv(path: Path, id_clients: list[int]) -> None:
+    """Un unico CSV fisico con una fila por cada ID_CLIENT de `id_clients` (particion N=len(id_clients))."""
+    rows = [
+        _full_valid_row(id_client, id_configuration=i + 1, id_batch=63 + i, id_run_staging=60 + i, source_run_id=1 + i)
+        for i, id_client in enumerate(id_clients)
+    ]
+    pd.DataFrame(rows).to_csv(path, index=False)
 
 
 def test_main_with_zero_csv_returns_1_and_does_not_publish(tmp_path: Path):
@@ -104,7 +126,56 @@ def test_main_with_zero_csv_returns_1_and_does_not_publish(tmp_path: Path):
     assert manifest["output_dir_final"] == str(output_root / "empty_run")
 
 
-def test_main_creates_run_structure_and_never_touches_legacy_outputs(tmp_path: Path):
+def test_main_creates_run_structure_for_single_client_csv(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _write_full_valid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
+    output_root = tmp_path / "runs"
+
+    exit_code = pipeline.main([
+        "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "single_run",
+    ])
+
+    assert exit_code == 0
+    run_dir = output_root / "single_run"
+    assert run_dir.exists()
+    assert not (output_root / ".single_run.tmp").exists()
+
+    assert (run_dir / "manifest.json").exists()
+    assert (run_dir / "run_config.json").exists()
+    assert (run_dir / "execution.log").exists()
+    assert (run_dir / "execution_summary.md").exists()
+    assert (run_dir / "execution_summary.xlsx").exists()
+    assert (run_dir / "global" / "fov_scp_ml_global_summary.xlsx").exists()
+    assert (run_dir / "global" / "fov_scp_ml_global_report.md").exists()
+
+    valid_client_dir = run_dir / "clients" / "10204"
+    assert (valid_client_dir / "fov_scp_ml_summary_10204.xlsx").exists()
+    assert (valid_client_dir / "fov_scp_ml_report_10204.md").exists()
+    assert (valid_client_dir / "processing_log_10204.txt").exists()
+
+    # nunca en las rutas legacy
+    assert not (tmp_path / "outputs" / "10204").exists()
+    assert not (tmp_path / "outputs" / "global").exists()
+
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "SUCCESS_WITH_WARNINGS"
+    assert manifest["n_csv_discovered"] == 1
+    assert manifest["n_clients_valid"] == 1
+    assert manifest["published"] is True
+    assert manifest["output_dir_working"] is None
+    assert manifest["output_dir_final"] == str(run_dir)
+    entry = manifest["csv_files"][0]
+    assert entry["name"] == "TA_FOV_SCP_ML_10204_SKLUM.csv"
+    assert entry["sha256"] is not None
+    assert entry["id_client"] == 10204
+    assert entry["analyzed_source"] == "original"
+
+    run_config = json.loads((run_dir / "run_config.json").read_text(encoding="utf-8"))
+    assert run_config["run_name_effective"] == "single_run"
+
+
+def test_main_with_two_physical_csv_fails_with_multiple_csv_found_error(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     _write_full_valid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
@@ -115,54 +186,111 @@ def test_main_creates_run_structure_and_never_touches_legacy_outputs(tmp_path: P
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "mixed_run",
     ])
 
+    assert exit_code == 1
+    assert not (output_root / "mixed_run").exists()
+    temp_dir = output_root / ".mixed_run.tmp"
+    assert temp_dir.exists()
+    manifest = json.loads((temp_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "FAILED"
+    assert manifest["published"] is False
+    assert manifest["failure"]["phase"] == "INVENTORY"
+    assert manifest["failure"]["error_type"] == "MultipleCsvFoundError"
+    assert not (temp_dir / "clients").exists() or not any((temp_dir / "clients").iterdir())
+
+
+def test_main_with_copy_inputs_and_two_physical_csv_fails_before_copying_anything(tmp_path: Path, monkeypatch):
+    """
+    La validacion de cardinalidad fisica (0/1/>1 CSV) debe ocurrir ANTES de
+    COPY_INPUTS: con --copy-inputs y >1 CSV, la ejecucion falla con
+    MultipleCsvFoundError sin haber copiado ni un solo fichero.
+    """
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _write_full_valid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
+    (data_dir / "TA_FOV_SCP_ML_99999_Broken.csv").write_bytes(b"\xff\xfe not a csv")
+    output_root = tmp_path / "runs"
+
+    copy_calls = []
+    real_copy2 = pipeline.shutil.copy2
+
+    def spying_copy2(src, dst):
+        copy_calls.append((src, dst))
+        return real_copy2(src, dst)
+
+    monkeypatch.setattr(pipeline.shutil, "copy2", spying_copy2)
+
+    exit_code = pipeline.main([
+        "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "mixed_copy_run",
+        "--copy-inputs",
+    ])
+
+    assert exit_code == 1
+    assert copy_calls == []  # ninguna copia fisica antes del fallo
+    temp_dir = output_root / ".mixed_copy_run.tmp"
+    assert temp_dir.exists()
+    # _prepare_run_directories crea inputs/ de antemano (--copy-inputs), pero
+    # debe quedar vacio: la validacion de cardinalidad corta antes de copiar nada
+    assert not any((temp_dir / "inputs").iterdir())
+    manifest = json.loads((temp_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "FAILED"
+    assert manifest["published"] is False
+    assert manifest["failure"]["phase"] == "INVENTORY"
+    assert manifest["failure"]["error_type"] == "MultipleCsvFoundError"
+
+
+def test_main_with_single_csv_multiple_clients_creates_one_directory_per_client(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _write_full_valid_multi_client_csv(data_dir / "TA_FOV_SCP_ML_full_export.csv", id_clients=[10204, 10467])
+    output_root = tmp_path / "runs"
+
+    exit_code = pipeline.main([
+        "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "multi_client_run",
+    ])
+
     assert exit_code == 0
-    run_dir = output_root / "mixed_run"
-    assert run_dir.exists()
-    assert not (output_root / ".mixed_run.tmp").exists()
+    run_dir = output_root / "multi_client_run"
 
-    assert (run_dir / "manifest.json").exists()
-    assert (run_dir / "run_config.json").exists()
-    assert (run_dir / "execution.log").exists()
-    assert (run_dir / "execution_summary.md").exists()
-    assert (run_dir / "execution_summary.xlsx").exists()
-    assert (run_dir / "global" / "fov_scp_ml_global_summary.xlsx").exists()
-    assert (run_dir / "global" / "fov_scp_ml_global_report.md").exists()
-
-    valid_client_dir = run_dir / "clients" / "10204_SKLUM"
-    assert (valid_client_dir / "fov_scp_ml_summary_10204_SKLUM.xlsx").exists()
-    assert (valid_client_dir / "fov_scp_ml_report_10204_SKLUM.md").exists()
-    assert (valid_client_dir / "processing_log_10204_SKLUM.txt").exists()
-
-    broken_client_dir = run_dir / "clients" / "99999_Broken"
-    assert (broken_client_dir / "processing_log_99999_Broken.txt").exists()
-    assert not (broken_client_dir / "fov_scp_ml_summary_99999_Broken.xlsx").exists()
-
-    # nunca en las rutas legacy
-    assert not (tmp_path / "outputs" / "10204_SKLUM").exists()
-    assert not (tmp_path / "outputs" / "global").exists()
+    client_10204_dir = run_dir / "clients" / "10204"
+    client_10467_dir = run_dir / "clients" / "10467"
+    assert (client_10204_dir / "fov_scp_ml_summary_10204.xlsx").exists()
+    assert (client_10467_dir / "fov_scp_ml_summary_10467.xlsx").exists()
 
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["status"] == "SUCCESS_WITH_WARNINGS"
-    assert manifest["n_csv_discovered"] == 2
-    assert manifest["n_clients_valid"] == 1
-    assert manifest["published"] is True
-    assert manifest["output_dir_working"] is None
-    assert manifest["output_dir_final"] == str(run_dir)
-    csv_by_name = {e["name"]: e for e in manifest["csv_files"]}
-    assert csv_by_name["TA_FOV_SCP_ML_10204_SKLUM.csv"]["sha256"] is not None
-    assert csv_by_name["TA_FOV_SCP_ML_10204_SKLUM.csv"]["id_client"] == 10204
-    assert csv_by_name["TA_FOV_SCP_ML_10204_SKLUM.csv"]["analyzed_source"] == "original"
-    assert csv_by_name["TA_FOV_SCP_ML_99999_Broken.csv"]["sha256"] is not None
-    assert csv_by_name["TA_FOV_SCP_ML_99999_Broken.csv"]["id_client"] is None
+    assert manifest["n_csv_discovered"] == 1
+    assert manifest["n_clients_total"] == 2
+    assert len(manifest["csv_files"]) == 1
+    entry = manifest["csv_files"][0]
+    # con N>1 clientes, id_client y etiqueta no representan a ninguno en particular
+    assert entry["id_client"] is None
+    assert entry["etiqueta"] is None
+    assert entry["filas"] == 2  # suma de filas de ambos clientes
+    # WINNER_FORMULA_NOT_AUDITABLE + BATCH_HETEROGENEITY_ACROSS_CLIENTS (distintos ID_BATCH
+    # entre los dos clientes) por cada cliente, sumado: 2 warnings x 2 clientes.
+    assert entry["warnings"] == 4
 
-    run_config = json.loads((run_dir / "run_config.json").read_text(encoding="utf-8"))
-    assert run_config["run_name_effective"] == "mixed_run"
+    records_md = (run_dir / "execution_summary.md").read_text(encoding="utf-8")
+    assert "10204" in records_md
+    assert "10467" in records_md
+    # 1 CSV fisico, 2 clientes: execution_summary.md nunca debe presentar el
+    # numero de clientes como numero de CSV (Fase 3, cierre de inconsistencia)
+    assert "CSV descubiertos" not in records_md
+    assert "**Clientes procesados:** 2" in records_md
+
+    global_html = (run_dir / "index.html").read_text(encoding="utf-8")
+    assert "CSV descubiertos" not in global_html
+    assert "Clientes procesados" in global_html
+
+    import openpyxl
+    wb = openpyxl.load_workbook(run_dir / "execution_summary.xlsx")
+    ws = wb["execution_summary"]
+    assert ws.max_row == 3  # cabecera + 2 clientes (1 fila por ClientAnalysisResult, no por CSV fisico)
 
 
 def test_main_fails_with_exit_code_2_on_collision_without_overwrite(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    _write_invalid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
+    _write_full_valid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
     output_root = tmp_path / "runs"
 
     first = pipeline.main(["--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "dup_run"])
@@ -177,7 +305,7 @@ def test_main_fails_with_exit_code_2_on_collision_without_overwrite(tmp_path: Pa
 def test_main_succeeds_with_overwrite_after_collision(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    _write_invalid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
+    _write_full_valid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
     output_root = tmp_path / "runs"
 
     first = pipeline.main(["--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "dup_run"])
@@ -195,7 +323,7 @@ def test_main_succeeds_with_overwrite_after_collision(tmp_path: Path):
 def test_main_fails_with_exit_code_2_when_orphan_temp_exists_without_overwrite(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    _write_invalid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
+    _write_full_valid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
     output_root = tmp_path / "runs"
     orphan_temp = output_root / ".orphan_run.tmp"
     orphan_temp.mkdir(parents=True)
@@ -212,7 +340,7 @@ def test_main_fails_with_exit_code_2_when_orphan_temp_exists_without_overwrite(t
 def test_main_removes_orphan_temp_explicitly_with_overwrite(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    _write_invalid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
+    _write_full_valid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
     output_root = tmp_path / "runs"
     orphan_temp = output_root / ".orphan_run.tmp"
     orphan_temp.mkdir(parents=True)
@@ -250,7 +378,7 @@ def test_main_with_copy_inputs_copies_original_csv_bytes(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     csv_path = data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv"
-    _write_invalid_csv(csv_path, id_client=10204)
+    _write_full_valid_csv(csv_path, id_client=10204)
     output_root = tmp_path / "runs"
 
     exit_code = pipeline.main([
@@ -272,10 +400,67 @@ def test_main_with_copy_inputs_copies_original_csv_bytes(tmp_path: Path):
     assert entry["sha256"] == hashlib.sha256(copied.read_bytes()).hexdigest()
 
 
+# --------------------------------------------------------------------------
+# Fase 3 (decision 2 + 3): source_path pasado al nuevo loader
+# (load_client_sources_from_csv). Comprobado directamente via spy/monkeypatch,
+# no solo indirectamente a traves de los bytes copiados/analizados.
+# --------------------------------------------------------------------------
+
+def test_main_without_copy_inputs_passes_original_path_to_loader(tmp_path: Path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv"
+    _write_full_valid_csv(csv_path, id_client=10204)
+    output_root = tmp_path / "runs"
+
+    real_loader = pipeline.load_client_sources_from_csv
+    calls = []
+
+    def spying_loader(path):
+        calls.append(path)
+        return real_loader(path)
+
+    monkeypatch.setattr(pipeline, "load_client_sources_from_csv", spying_loader)
+
+    exit_code = pipeline.main([
+        "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "spy_no_copy",
+    ])
+    assert exit_code == 0
+    assert calls == [csv_path]
+
+
+def test_main_with_copy_inputs_passes_archived_copy_path_to_loader(tmp_path: Path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv"
+    _write_full_valid_csv(csv_path, id_client=10204)
+    output_root = tmp_path / "runs"
+
+    real_loader = pipeline.load_client_sources_from_csv
+    calls = []
+
+    def spying_loader(path):
+        calls.append(path)
+        return real_loader(path)
+
+    monkeypatch.setattr(pipeline, "load_client_sources_from_csv", spying_loader)
+
+    exit_code = pipeline.main([
+        "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "spy_copy", "--copy-inputs",
+    ])
+    assert exit_code == 0
+    # el loader se invoca mientras la ejecucion todavia vive en el directorio
+    # temporal (antes de que publish_run la renombre al nombre final)
+    temp_dir = output_root / ".spy_copy.tmp"
+    expected_copy_path = temp_dir / "inputs" / "TA_FOV_SCP_ML_10204_SKLUM.csv"
+    assert calls == [expected_copy_path]
+    assert calls[0] != csv_path
+
+
 def test_main_without_copy_inputs_does_not_create_inputs_dir(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    _write_invalid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
+    _write_full_valid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
     output_root = tmp_path / "runs"
 
     exit_code = pipeline.main([
@@ -289,20 +474,20 @@ def test_main_runs_on_paths_with_spaces_and_accents(tmp_path: Path):
     weird_dir = tmp_path / "Carpeta con espacios y ñ"
     data_dir = weird_dir / "data"
     data_dir.mkdir(parents=True)
-    _write_invalid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
+    _write_full_valid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
     output_root = weird_dir / "outputs" / "runs"
 
     exit_code = pipeline.main([
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "acentos_run",
     ])
     assert exit_code == 0
-    assert (output_root / "acentos_run" / "clients" / "10204_SKLUM").exists()
+    assert (output_root / "acentos_run" / "clients" / "10204").exists()
 
 
 def test_default_command_with_no_args_uses_repo_data_and_creates_timestamped_run(tmp_path: Path, monkeypatch):
     fake_repo = tmp_path / "fake_repo"
     (fake_repo / "data").mkdir(parents=True)
-    _write_invalid_csv(fake_repo / "data" / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
+    _write_full_valid_csv(fake_repo / "data" / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
     monkeypatch.setattr(pipeline, "BASE_DIR", fake_repo)
 
     exit_code = pipeline.main([])
@@ -314,7 +499,7 @@ def test_default_command_with_no_args_uses_repo_data_and_creates_timestamped_run
     # catalog_assets/, que es propio del catalogo, no un run).
     run_dirs = [p for p in output_root.iterdir() if p.is_dir() and p.name != "catalog_assets"]
     assert len(run_dirs) == 1
-    assert (run_dirs[0] / "clients" / "10204_SKLUM").exists()
+    assert (run_dirs[0] / "clients" / "10204").exists()
     assert (output_root / "index.html").exists()
     assert (output_root / "run_index.log").exists()
 
@@ -327,7 +512,7 @@ def test_main_fails_when_input_csv_changes_during_run_without_copy_inputs(tmp_pa
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     csv_path = data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv"
-    _write_invalid_csv(csv_path, id_client=10204)
+    _write_full_valid_csv(csv_path, id_client=10204)
     output_root = tmp_path / "runs"
 
     from src.client_analysis import analyze_client as real_analyze_client
@@ -361,7 +546,7 @@ def test_main_fails_when_copy_does_not_match_original(tmp_path: Path, monkeypatc
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     csv_path = data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv"
-    _write_invalid_csv(csv_path, id_client=10204)
+    _write_full_valid_csv(csv_path, id_client=10204)
     output_root = tmp_path / "runs"
 
     def corrupting_copy2(src, dst):
@@ -411,7 +596,7 @@ def test_prepare_run_directories_propagates_filesystem_failure(tmp_path: Path, m
 def test_main_handles_setup_failure_when_preparing_directories(tmp_path: Path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    _write_invalid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
+    _write_full_valid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
     output_root = tmp_path / "runs"
 
     def raiser(run_config):
@@ -440,7 +625,7 @@ def test_main_handles_setup_failure_when_preparing_directories(tmp_path: Path, m
 def test_main_handles_setup_failure_when_writing_run_config_json(tmp_path: Path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    _write_invalid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
+    _write_full_valid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
     output_root = tmp_path / "runs"
 
     original_write_text = Path.write_text
@@ -470,7 +655,7 @@ def test_main_handles_setup_failure_when_writing_run_config_json(tmp_path: Path,
 def test_main_handles_setup_failure_when_removing_orphan_temp_with_overwrite(tmp_path: Path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    _write_invalid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
+    _write_full_valid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
     output_root = tmp_path / "runs"
     orphan_temp = output_root / ".dup_run.tmp"
     orphan_temp.mkdir(parents=True)
@@ -495,7 +680,7 @@ def test_main_handles_setup_failure_when_removing_orphan_temp_with_overwrite(tmp
 def test_main_handles_setup_failure_when_reconciling_orphan_backup(tmp_path: Path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    _write_invalid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
+    _write_full_valid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
     output_root = tmp_path / "runs"
 
     def raiser(run_config):
@@ -523,7 +708,7 @@ def test_main_returns_1_and_repairs_manifest_when_manifest_patch_fails_after_ren
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    _write_invalid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
+    _write_full_valid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
     output_root = tmp_path / "runs"
 
     def failing_patch(run_config):
@@ -556,7 +741,7 @@ def test_main_returns_1_and_repairs_manifest_when_final_log_append_fails(tmp_pat
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    _write_invalid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
+    _write_full_valid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
     output_root = tmp_path / "runs"
 
     def failing_log(run_config):
@@ -583,7 +768,7 @@ def test_main_restores_previous_run_when_publish_finalization_fails_with_overwri
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    _write_invalid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
+    _write_full_valid_csv(data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv", id_client=10204)
     output_root = tmp_path / "runs"
 
     first = pipeline.main([
@@ -612,24 +797,27 @@ def test_main_restores_previous_run_when_publish_finalization_fails_with_overwri
 
 # --------------------------------------------------------------------------
 # Correccion (punto 2 + 3 + 4): procedencia individual por CSV bajo
-# --copy-inputs cuando un fichero tiene read_error, y su fila en
-# execution_summary.
+# --copy-inputs cuando el (unico) fichero tiene read_error.
+#
+# Con el contrato de Fase 3 (exactamente 1 CSV fisico), el escenario legacy
+# de "un CSV con read_error se aisla y los demas se procesan igual" ya no es
+# posible: solo hay un CSV fisico. Un read_error en ese unico fichero impide
+# copiarlo (--copy-inputs) y por tanto impide analizarlo: la ejecucion
+# completa falla, no se publica.
 # --------------------------------------------------------------------------
 
-def test_main_with_copy_inputs_marks_read_error_csv_as_not_analyzed_end_to_end(tmp_path: Path, monkeypatch):
+def test_main_with_copy_inputs_fails_when_the_only_csv_has_read_error(tmp_path: Path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    good_path = data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv"
-    _write_invalid_csv(good_path, id_client=10204)
-    broken_path = data_dir / "TA_FOV_SCP_ML_66666_Broken.csv"
-    broken_path.write_bytes(b"whatever bytes")
+    csv_path = data_dir / "TA_FOV_SCP_ML_10204_SKLUM.csv"
+    _write_full_valid_csv(csv_path, id_client=10204)
     output_root = tmp_path / "runs"
 
     import src.input_inventory as inv_module
     real_hash = inv_module.compute_sha256
 
     def failing_hash(p):
-        if p.name == "TA_FOV_SCP_ML_66666_Broken.csv":
+        if p.name == "TA_FOV_SCP_ML_10204_SKLUM.csv":
             raise OSError("permiso denegado (simulado)")
         return real_hash(p)
 
@@ -639,33 +827,15 @@ def test_main_with_copy_inputs_marks_read_error_csv_as_not_analyzed_end_to_end(t
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "readerr_copy",
         "--copy-inputs",
     ])
-    assert exit_code == 0
-    run_dir = output_root / "readerr_copy"
-
+    assert exit_code == 1
+    assert not (output_root / "readerr_copy").exists()
+    temp_dir = output_root / ".readerr_copy.tmp"
+    assert temp_dir.exists()
     # nunca se copia un fichero con read_error, ni siquiera con --copy-inputs
-    assert not (run_dir / "inputs" / "TA_FOV_SCP_ML_66666_Broken.csv").exists()
-    assert (run_dir / "inputs" / "TA_FOV_SCP_ML_10204_SKLUM.csv").exists()
-
-    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
-    by_name = {e["name"]: e for e in manifest["csv_files"]}
-    broken_entry = by_name["TA_FOV_SCP_ML_66666_Broken.csv"]
-    assert broken_entry["analyzed_source"] == "not_analyzed"
-    assert broken_entry["analysis_status"] == "INPUT_READ_ERROR"
-    assert broken_entry["read_error"] is not None
-    assert by_name["TA_FOV_SCP_ML_10204_SKLUM.csv"]["analyzed_source"] == "copy"
-
-    # csv_copiados refleja el numero REAL de copias (1), no len(inventory) (2)
-    log_text = (run_dir / "execution.log").read_text(encoding="utf-8")
-    assert "csv_copiados=1" in log_text
-
-    summary_md = (run_dir / "execution_summary.md").read_text(encoding="utf-8")
-    assert "TA_FOV_SCP_ML_66666_Broken.csv" in summary_md
-    assert "INPUT_NOT_ANALYZED" in summary_md
-
-    import openpyxl
-    wb = openpyxl.load_workbook(run_dir / "execution_summary.xlsx")
-    ws = wb["execution_summary"]
-    assert ws.max_row == 3  # cabecera + 2 CSV (uno analizado, uno no)
+    assert not (temp_dir / "inputs" / "TA_FOV_SCP_ML_10204_SKLUM.csv").exists()
+    manifest = json.loads((temp_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "FAILED"
+    assert manifest["published"] is False
 
 
 # --------------------------------------------------------------------------

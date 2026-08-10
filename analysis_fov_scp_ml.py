@@ -88,7 +88,7 @@ from src.input_inventory import (
     verify_copies_match_originals,
     verify_originals_unchanged,
 )
-from src.input_loader import ClientSource, load_client_sources
+from src.input_loader import ClientSource, load_client_sources_from_csv
 from src.logging_utils import build_processing_log
 from src.manifest import build_manifest, detect_git_commit, detect_git_worktree_dirty, write_manifest
 from src.quality_checks import Severity
@@ -241,7 +241,7 @@ def _print_client_summary(result: ClientAnalysisResult, outputs_generated: list[
 
 
 def _print_global_summary(
-    results: list[ClientAnalysisResult], all_outputs: dict[str, list[str]],
+    results: list[ClientAnalysisResult], all_outputs: dict[int, list[str]],
     global_result, global_outputs: list[str],
 ) -> None:
     print("\n" + "=" * 78)
@@ -252,7 +252,10 @@ def _print_global_summary(
     for result in results:
         status_counts[result.status] = status_counts.get(result.status, 0) + 1
 
-    print(f"CSV descubiertos: {len(results)}")
+    # len(results) es el numero de ClientAnalysisResult (clientes), no de CSV
+    # fisicos: desde la Fase 3, un unico CSV fisico puede particionarse en
+    # varios clientes, asi que nunca debe presentarse como "CSV descubiertos".
+    print(f"Clientes procesados: {len(results)}")
     for status, n in sorted(status_counts.items()):
         print(f"  {status}: {n}")
 
@@ -271,8 +274,14 @@ def _print_global_summary(
     print("\nComprobacion: ningun cliente con fichero valido queda inutilizado por completo")
     print("por una incidencia de periodo/fila localizada:")
     for result in results:
+        # filename ya no identifica a un cliente en particular (varios
+        # clientes pueden compartir el mismo CSV fisico): ID_CLIENT es la
+        # identidad inequivoca, filename queda solo como metadata.
         if not result.file_valid:
-            print(f"  [OMITIDO] {result.source.file_name}: fichero no valido, solo se genero el log.")
+            print(
+                f"  [OMITIDO] ID_CLIENT={result.source.id_client} | archivo={result.source.file_name}: "
+                f"fichero no valido, solo se genero el log."
+            )
             continue
         period_statuses = {p: pr.status for p, pr in result.periods.items()}
         n_error_periods = sum(1 for s in period_statuses.values() if s == "ERROR")
@@ -280,8 +289,8 @@ def _print_global_summary(
         n_comparable_total = sum(pr.n_comparable for pr in result.periods.values())
         coverage_note = "" if n_comparable_total > 0 else " (sin series comparables en ningun periodo: caso valido de cobertura)"
         print(
-            f"  [OK] {result.source.file_name}: estado_cliente={result.status}, "
-            f"periodos_con_ERROR={n_error_periods}/{n_periods}{coverage_note}"
+            f"  [OK] ID_CLIENT={result.source.id_client} | archivo={result.source.file_name}: "
+            f"estado_cliente={result.status}, periodos_con_ERROR={n_error_periods}/{n_periods}{coverage_note}"
         )
 
     m6 = global_result.periods["6M"]
@@ -422,7 +431,7 @@ def run_pipeline(run_config: RunConfig) -> int:
     phase = "SETUP"
     results: list[ClientAnalysisResult] = []
     global_result = None
-    all_outputs: dict[str, list[str]] = {}
+    all_outputs: dict[int, list[str]] = {}
     outputs_generated: list[str] = []
     inventory: list[InputFileRecord] = []
     git_commit: str | None = None
@@ -454,21 +463,6 @@ def run_pipeline(run_config: RunConfig) -> int:
         log(f"csv_encontrados={len(inventory)}")
         print(f"CSV encontrados: {len(inventory)}")
 
-        if run_config.copy_inputs:
-            phase = "COPY_INPUTS"
-            run_config.inputs_dir.mkdir(parents=True, exist_ok=True)
-            n_copied = 0
-            for record in inventory:
-                if record.read_error is not None:
-                    continue
-                shutil.copy2(record.path, run_config.inputs_dir / record.name)
-                n_copied += 1
-            verify_copies_match_originals(inventory, run_config.inputs_dir)
-            log(f"csv_copiados={n_copied} en {run_config.inputs_dir}; SHA-256 de cada copia verificado contra el original")
-            source_dir_for_parsing = run_config.inputs_dir
-        else:
-            source_dir_for_parsing = run_config.input_dir
-
         if not inventory:
             phase = "INVENTORY"
             log("ERROR: no se ha encontrado ningun CSV en input_dir.")
@@ -486,28 +480,67 @@ def run_pipeline(run_config: RunConfig) -> int:
             print(f"ERROR: no se ha encontrado ningun CSV en {run_config.input_dir}.", file=sys.stderr)
             return 1
 
-        phase = "DISCOVER"
-        sources = load_client_sources(source_dir_for_parsing)
-        log(f"clientes_cargados={len(sources)} desde {source_dir_for_parsing}")
+        if len(inventory) > 1:
+            phase = "INVENTORY"
+            log(f"ERROR: se han encontrado {len(inventory)} CSV en input_dir; se esperaba exactamente 1.")
+            finished_at = now_local()
+            manifest = build_manifest(
+                run_config, inventory, results, None, outputs_generated, started_at, finished_at, "FAILED",
+                git_commit, git_worktree_dirty, run_config.copy_inputs, published=False,
+                failure={
+                    "phase": phase, "error_type": "MultipleCsvFoundError",
+                    "error_message": (
+                        f"Se han encontrado {len(inventory)} CSV en input_dir; se esperaba exactamente 1."
+                    ),
+                },
+            )
+            write_manifest(manifest, run_config.manifest_path)
+            _write_execution_log(log_lines, run_config.execution_log_path)
+            print(
+                f"ERROR: se han encontrado {len(inventory)} CSV en {run_config.input_dir}; "
+                f"se esperaba exactamente 1.", file=sys.stderr,
+            )
+            return 1
 
-        durations: dict[str, float] = {}
+        if run_config.copy_inputs:
+            phase = "COPY_INPUTS"
+            run_config.inputs_dir.mkdir(parents=True, exist_ok=True)
+            n_copied = 0
+            for record in inventory:
+                if record.read_error is not None:
+                    continue
+                shutil.copy2(record.path, run_config.inputs_dir / record.name)
+                n_copied += 1
+            verify_copies_match_originals(inventory, run_config.inputs_dir)
+            log(f"csv_copiados={n_copied} en {run_config.inputs_dir}; SHA-256 de cada copia verificado contra el original")
+
+        phase = "DISCOVER"
+        source_path = (
+            run_config.inputs_dir / inventory[0].name if run_config.copy_inputs else inventory[0].path
+        )
+        sources = load_client_sources_from_csv(source_path)
+        for source in sources:
+            source.folder_name = str(source.id_client)
+        log(f"clientes_cargados={len(sources)} desde {source_path}")
+
+        durations: dict[int, float] = {}
         phase = "CLIENT_PROCESSING"
         for source in sources:
             try:
                 result = analyze_client(source)
                 outputs, duration = _generate_client_outputs(result, run_config.clients_dir, run_config.run_dir_temp)
             except Exception as exc:  # noqa: BLE001 - aislar errores por cliente
-                print(f"\nERROR INESPERADO procesando {source.file_name}: {exc}", file=sys.stderr)
+                print(f"\nERROR INESPERADO procesando cliente {source.id_client}: {exc}", file=sys.stderr)
                 traceback.print_exc()
-                log(f"ERROR AISLADO cliente={source.file_name}: {exc}")
+                log(f"ERROR AISLADO cliente={source.id_client}: {exc}")
                 result = ClientAnalysisResult(source=source, file_valid=False, status="ERROR")
                 outputs, duration = [], 0.0
             results.append(result)
-            all_outputs[source.file_name] = outputs
-            durations[source.file_name] = duration
+            all_outputs[source.id_client] = outputs
+            durations[source.id_client] = duration
             counts = result.quality.summary_counts()
             log(
-                f"cliente={source.file_name} estado={result.status} duracion={duration:.3f}s "
+                f"cliente={source.id_client} estado={result.status} duracion={duration:.3f}s "
                 f"warnings={counts.get('WARNING', 0)} errors={counts.get('ERROR', 0)}"
             )
             outputs_generated.extend(outputs)

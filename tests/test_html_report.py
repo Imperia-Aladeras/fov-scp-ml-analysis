@@ -30,6 +30,7 @@ from tests.factories import build_global_analysis_result, build_synthetic_client
 
 _HEADER_STATIC = {
     "ID": 1, "ID_BATCH": 63, "ID_RUN_STAGING": 60, "SOURCE_RUN_ID": 1, "ID_CONFIGURATION": 1,
+    "RUN_START_DATE": "2026-01-01",
     "VALUE_LEVEL_2": None, "VALUE_LEVEL_3": None, "VALUE_LEVEL_4": None, "VALUE_LEVEL_5": None,
     "ML_STATUS": "OK", "SCP_STATUS": "OK",
     "HAS_SCP_CALCULATED": 1, "HAS_ML_CALCULATED": 1,
@@ -38,15 +39,17 @@ _HEADER_STATIC = {
 }
 
 
-def _write_client_csv(
-    path: Path, id_client: int, *,
+def _build_client_row(
+    id_client: int, *,
     ml_best_model: str = "AutoETS", scp_best_model: str = "x11 seasonal",
     value_level_1: str = "Cat", comparable: bool = True,
     history: float = 100.0, scp_err: float = 20.0, ml_err: float = 10.0, winner: str = "ML",
-) -> None:
+    id_configuration: int = 1, id_batch: int = 63, id_run_staging: int = 60, source_run_id: int = 1,
+) -> dict:
     row = dict(_HEADER_STATIC)
     row.update({
-        "ID_CLIENT": id_client,
+        "ID": id_configuration, "ID_CLIENT": id_client, "ID_CONFIGURATION": id_configuration,
+        "ID_BATCH": id_batch, "ID_RUN_STAGING": id_run_staging, "SOURCE_RUN_ID": source_run_id,
         "VALUE_LEVEL_1": value_level_1,
         "ML_BEST_MODEL": ml_best_model, "ML_CLASSIFICATION": "smooth", "ML_TYPE": "smooth_ok",
         "SCP_BEST_MODEL": scp_best_model, "SCP_CLASSIFICATION": "smooth",
@@ -91,7 +94,30 @@ def _write_client_csv(
         row[pcols.winner_improvement_pct] = (
             (scp_wape - ml_wape) / scp_wape * 100 if comparable and scp_wape else None
         )
-    pd.DataFrame([row]).to_csv(path, index=False)
+    return row
+
+
+def _write_client_csv(path: Path, id_client: int, **kwargs) -> None:
+    pd.DataFrame([_build_client_row(id_client, **kwargs)]).to_csv(path, index=False)
+
+
+def _write_multi_client_csv(path: Path, specs: list[dict]) -> None:
+    """
+    Un unico CSV fisico con una fila por cada spec (particion por ID_CLIENT).
+    Cada spec es un dict de kwargs para _build_client_row (debe incluir
+    id_client); si no fija id_batch/id_run_staging/source_run_id, cada
+    cliente recibe un scope de ejecucion distinto por defecto (indice en la
+    lista), para no chocar con AMBIGUOUS_CLIENT_EXECUTION.
+    """
+    rows = []
+    for i, spec in enumerate(specs):
+        spec = dict(spec)
+        spec.setdefault("id_configuration", i + 1)
+        spec.setdefault("id_batch", 63 + i)
+        spec.setdefault("id_run_staging", 60 + i)
+        spec.setdefault("source_run_id", 1 + i)
+        rows.append(_build_client_row(**spec))
+    pd.DataFrame(rows).to_csv(path, index=False)
 
 
 # --------------------------------------------------------------------------
@@ -101,9 +127,10 @@ def _write_client_csv(
 def test_pipeline_generates_global_index_and_client_pages(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    _write_client_csv(data_dir / "TA_FOV_SCP_ML_10204_Mejora.csv", 10204, winner="ML", scp_err=20.0, ml_err=10.0)
-    _write_client_csv(data_dir / "TA_FOV_SCP_ML_10461_NoPerf.csv", 10461, comparable=False)
-    (data_dir / "TA_FOV_SCP_ML_99999_Invalido.csv").write_bytes(b"\xff\xfe not a csv")
+    _write_multi_client_csv(data_dir / "TA_FOV_SCP_ML_full_export.csv", [
+        dict(id_client=10204, winner="ML", scp_err=20.0, ml_err=10.0),
+        dict(id_client=10461, comparable=False),
+    ])
     output_root = tmp_path / "runs"
 
     exit_code = pipeline.main([
@@ -114,12 +141,87 @@ def test_pipeline_generates_global_index_and_client_pages(tmp_path: Path):
 
     assert (run_dir / "index.html").exists()
     assert (run_dir / "assets" / "styles.css").exists()
-    assert (run_dir / "clients" / "10204_Mejora" / "index.html").exists()
-    assert (run_dir / "clients" / "10461_NoPerf" / "index.html").exists()
-    assert (run_dir / "clients" / "99999_Invalido" / "index.html").exists()
+    assert (run_dir / "clients" / "10204" / "index.html").exists()
+    assert (run_dir / "clients" / "10461" / "index.html").exists()
 
     problems = validate_run_links(run_dir)
     assert problems == []
+
+
+def test_global_index_labels_client_count_not_csv_count_for_single_csv_multiple_clients(tmp_path: Path):
+    """
+    Fase 3 (cierre de inconsistencia): 1 CSV fisico particionado en 2
+    clientes NUNCA debe mostrarse en el HTML global como "CSV descubiertos: 2"
+    (ExecutionRecord/ClientAnalysisResult son por cliente, no por fichero
+    fisico). La cabecera debe decir "Clientes procesados: 2".
+    """
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _write_multi_client_csv(data_dir / "TA_FOV_SCP_ML_full_export.csv", [
+        dict(id_client=10204, winner="ML", scp_err=20.0, ml_err=10.0),
+        dict(id_client=10461, comparable=False),
+    ])
+    output_root = tmp_path / "runs"
+
+    exit_code = pipeline.main([
+        "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "label_run",
+    ])
+    assert exit_code == 0
+    global_html = (output_root / "label_run" / "index.html").read_text(encoding="utf-8")
+
+    assert "CSV descubiertos" not in global_html
+    assert "CSV descubiertos: 2" not in global_html
+    assert "Clientes procesados</th><td>2</td>" in global_html
+
+
+def test_execution_summary_and_html_header_count_only_real_clients_not_physical_records(tmp_path: Path):
+    """
+    Fase 3 (cierre de inconsistencia, segunda vuelta): no todo ExecutionRecord
+    representa un cliente. Un CSV con read_error (o que nunca llego a
+    parsearse) genera un ExecutionRecord fisico con id_client=None y
+    estado=INPUT_NOT_ANALYZED; ese registro NO debe contar como "cliente
+    procesado".
+
+    Este escenario (1 CSV fisico con read_error, 0 ClientAnalysisResult) NO
+    es alcanzable end-to-end via pipeline.main(): con el contrato de Fase 3
+    (exactamente 1 CSV fisico), un read_error en ese unico fichero impide
+    copiarlo/leerlo y la ejecucion completa falla ANTES de la fase
+    EXECUTION_SUMMARY/HTML_REPORT (ver test_pipeline_runs.py::
+    test_main_with_copy_inputs_fails_when_the_only_csv_has_read_error). Por
+    eso se ejercitan aqui directamente las funciones que construyen el
+    resumen y el HTML global, con el ExecutionRecord fisico ya construido.
+    """
+    from datetime import datetime
+
+    from src.execution_summary import ExecutionRecord, INPUT_NOT_ANALYZED, build_execution_summary_markdown
+    from src.global_analysis import analyze_global
+
+    record = ExecutionRecord(
+        archivo="TA_FOV_SCP_ML_full_export.csv", carpeta_salida="", id_client=None, etiqueta=None,
+        id_batch=[], id_run_staging=[], filas=None, candidatas=None, comparables_6m=None,
+        estado=INPUT_NOT_ANALYZED, warnings=None, errors=None, duracion_segundos=0.0,
+        informe_generado=False, excel_generado=False, graficos_generados=0, log_generado=False,
+        size_bytes=10, sha256=None, analysis_error="permiso denegado (simulado)",
+    )
+
+    markdown = build_execution_summary_markdown([record])
+    assert "**Clientes procesados:** 0" in markdown
+
+    run_config = pipeline.build_run_config(
+        pipeline.build_arg_parser(tmp_path).parse_args([
+            "--input-dir", str(tmp_path / "data"), "--output-root", str(tmp_path / "runs"), "--run-name", "readerr_only",
+        ]),
+        tmp_path,
+    )
+    now = datetime.now().astimezone()
+    generate_html_report(
+        run_config=run_config, results=[], global_result=analyze_global([]),
+        all_outputs={}, global_outputs=[], execution_records=[record],
+        started_at=now, finished_at=now, status="FAILED",
+        git_commit=None, git_worktree_dirty=None,
+    )
+    global_html = (run_config.run_dir_temp / "index.html").read_text(encoding="utf-8")
+    assert "Clientes procesados</th><td>0</td>" in global_html
 
 
 def test_client_with_improvement_page_shows_positive_verdict(tmp_path: Path):
@@ -131,7 +233,7 @@ def test_client_with_improvement_page_shows_positive_verdict(tmp_path: Path):
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "improve_run",
     ])
     assert exit_code == 0
-    html = (output_root / "improve_run" / "clients" / "10204_Mejora" / "index.html").read_text(encoding="utf-8")
+    html = (output_root / "improve_run" / "clients" / "10204" / "index.html").read_text(encoding="utf-8")
     assert "ML mejora el WAPE global ponderado" in html
     assert "+50.0%" in html
 
@@ -145,7 +247,7 @@ def test_client_with_deterioration_page_shows_negative_verdict(tmp_path: Path):
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "worse_run",
     ])
     assert exit_code == 0
-    html = (output_root / "worse_run" / "clients" / "10620_Peor" / "index.html").read_text(encoding="utf-8")
+    html = (output_root / "worse_run" / "clients" / "10620" / "index.html").read_text(encoding="utf-8")
     assert "ML no mejora el WAPE global ponderado" in html
 
 
@@ -158,14 +260,21 @@ def test_client_without_performance_shows_nd_not_zero(tmp_path: Path):
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "noperf_run",
     ])
     assert exit_code == 0
-    html = (output_root / "noperf_run" / "clients" / "10461_NoPerf" / "index.html").read_text(encoding="utf-8")
+    html = (output_root / "noperf_run" / "clients" / "10461" / "index.html").read_text(encoding="utf-8")
     assert "Sin performance calculable" in html
     assert "WAPE, mejora y winner no están disponibles (N/D), no son cero" in html
     # nunca un WAPE/mejora fabricado en cero para este caso
     assert "<td>0.0%</td></tr>\n      <tr><th scope=\"row\">WAPE SCP" not in html
 
 
-def test_invalid_client_gets_diagnostic_page_without_fictional_stats(tmp_path: Path):
+def test_structurally_broken_csv_fails_pipeline_without_generating_html(tmp_path: Path):
+    """
+    Con el contrato de Fase 3 (exactamente 1 CSV fisico, particionado por
+    ID_CLIENT), un CSV fisicamente ilegible ya no es un "cliente invalido"
+    aislado: load_client_sources_from_csv lanza StructuralInputError antes
+    de CLIENT_PROCESSING, la ejecucion completa falla y no se genera ningun
+    HTML de cliente ni de indice.
+    """
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     (data_dir / "TA_FOV_SCP_ML_99999_Invalido.csv").write_bytes(b"\xff\xfe not a csv")
@@ -173,49 +282,18 @@ def test_invalid_client_gets_diagnostic_page_without_fictional_stats(tmp_path: P
     exit_code = pipeline.main([
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "invalid_run",
     ])
-    assert exit_code == 0
-    html = (output_root / "invalid_run" / "clients" / "99999_Invalido" / "index.html").read_text(encoding="utf-8")
-    assert "No se muestran secciones estadísticas" in html
-    assert "id=\"semestre\"" not in html
-    assert "id=\"modelos\"" not in html
+    assert exit_code == 1
+    assert not (output_root / "invalid_run").exists()
+    temp_dir = output_root / ".invalid_run.tmp"
+    assert temp_dir.exists()
+    assert not (temp_dir / "index.html").exists()
+    assert not (temp_dir / "clients").exists() or not any((temp_dir / "clients").iterdir())
 
-
-def test_read_error_csv_appears_in_inventory_without_client_link(tmp_path: Path, monkeypatch):
-    """
-    Un CSV cuyo hash de inventario falla (read_error) y que, con
-    --copy-inputs, nunca se copia ni se llega a parsear: no produce ningun
-    ClientAnalysisResult correlacionado (INPUT_NOT_ANALYZED), a diferencia
-    de un CSV que SI se lee pero es invalido (ese es el caso de "cliente
-    invalido", cubierto en otro test).
-    """
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    _write_client_csv(data_dir / "TA_FOV_SCP_ML_10204_Ok.csv", 10204)
-    unreadable = data_dir / "TA_FOV_SCP_ML_66666_Unreadable.csv"
-    unreadable.write_bytes(b"whatever")
-    output_root = tmp_path / "runs"
-
-    import src.input_inventory as inv_module
-    real_hash = inv_module.compute_sha256
-
-    def failing_hash(p, _real=real_hash):
-        if p.name == "TA_FOV_SCP_ML_66666_Unreadable.csv":
-            raise OSError("permiso denegado (simulado)")
-        return _real(p)
-
-    monkeypatch.setattr(inv_module, "compute_sha256", failing_hash)
-
-    exit_code = pipeline.main([
-        "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "readerr_run",
-        "--copy-inputs",
-    ])
-
-    assert exit_code == 0
-    run_dir = output_root / "readerr_run"
-    assert not (run_dir / "clients" / "66666_Unreadable").exists()
-    global_html = (run_dir / "index.html").read_text(encoding="utf-8")
-    assert "TA_FOV_SCP_ML_66666_Unreadable.csv" in global_html
-    assert "clients/66666_Unreadable/index.html" not in global_html
+    import json
+    manifest = json.loads((temp_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "FAILED"
+    assert manifest["published"] is False
+    assert manifest["failure"]["error_type"] == "CSV_NOT_READABLE"
 
 
 def test_html_included_in_outputs_generated_and_manifest(tmp_path: Path):
@@ -231,7 +309,7 @@ def test_html_included_in_outputs_generated_and_manifest(tmp_path: Path):
     manifest = json.loads((output_root / "manifest_run" / "manifest.json").read_text(encoding="utf-8"))
     outs = manifest["outputs_generated"]
     assert "index.html" in outs
-    assert "clients/10204_Ok/index.html" in outs
+    assert "clients/10204/index.html" in outs
     assert "assets/styles.css" in outs
 
 
@@ -279,7 +357,7 @@ def test_client_page_uses_exact_temporal_labels(tmp_path: Path):
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "labels_run",
     ])
     assert exit_code == 0
-    html = (output_root / "labels_run" / "clients" / "10204_Ok" / "index.html").read_text(encoding="utf-8")
+    html = (output_root / "labels_run" / "clients" / "10204" / "index.html").read_text(encoding="utf-8")
     assert "Semestre completo (M1–M6)" in html
     assert "Primer trimestre del semestre (M1–M3)" in html
     assert "Segundo trimestre del semestre (M4–M6)" in html
@@ -293,8 +371,10 @@ def test_client_page_uses_exact_temporal_labels(tmp_path: Path):
 def test_global_page_shows_numerator_and_denominator_for_clients_that_improve(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    _write_client_csv(data_dir / "TA_FOV_SCP_ML_10204_Mejora.csv", 10204, winner="ML", scp_err=20.0, ml_err=10.0)
-    _write_client_csv(data_dir / "TA_FOV_SCP_ML_10461_NoPerf.csv", 10461, comparable=False)
+    _write_multi_client_csv(data_dir / "TA_FOV_SCP_ML_full_export.csv", [
+        dict(id_client=10204, winner="ML", scp_err=20.0, ml_err=10.0),
+        dict(id_client=10461, comparable=False),
+    ])
     output_root = tmp_path / "runs"
     exit_code = pipeline.main([
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "fraction_run",
@@ -321,7 +401,7 @@ def test_malicious_model_name_is_escaped_not_executed(tmp_path: Path):
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "xss_run",
     ])
     assert exit_code == 0
-    html = (output_root / "xss_run" / "clients" / "10204_Ok" / "index.html").read_text(encoding="utf-8")
+    html = (output_root / "xss_run" / "clients" / "10204" / "index.html").read_text(encoding="utf-8")
     assert "<script>alert" not in html
     assert "&lt;script&gt;alert(&#34;x&#34;)&lt;/script&gt;" in html or "&lt;script&gt;alert" in html
 
@@ -336,7 +416,7 @@ def test_ampersand_in_client_label_is_escaped_in_text_and_links(tmp_path: Path):
     ])
     assert exit_code == 0
     run_dir = output_root / "amp_run"
-    assert (run_dir / "clients" / "10204_R&D" / "index.html").exists()
+    assert (run_dir / "clients" / "10204" / "index.html").exists()
     global_html = (run_dir / "index.html").read_text(encoding="utf-8")
     assert "10204_R&amp;D" in global_html
     assert "10204_R&D<" not in global_html  # nunca sin escapar seguido de una etiqueta
@@ -403,9 +483,9 @@ def test_validate_run_links_rejects_external_scheme(tmp_path: Path):
 def test_prev_next_navigation_between_clients(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    _write_client_csv(data_dir / "TA_FOV_SCP_ML_10204_Alfa.csv", 10204)
-    _write_client_csv(data_dir / "TA_FOV_SCP_ML_10461_Beta.csv", 10461)
-    _write_client_csv(data_dir / "TA_FOV_SCP_ML_10620_Gamma.csv", 10620)
+    _write_multi_client_csv(data_dir / "TA_FOV_SCP_ML_full_export.csv", [
+        dict(id_client=10204), dict(id_client=10461), dict(id_client=10620),
+    ])
     output_root = tmp_path / "runs"
     exit_code = pipeline.main([
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "navrun",
@@ -413,15 +493,15 @@ def test_prev_next_navigation_between_clients(tmp_path: Path):
     assert exit_code == 0
     run_dir = output_root / "navrun"
 
-    beta_html = (run_dir / "clients" / "10461_Beta" / "index.html").read_text(encoding="utf-8")
-    assert "../10204_Alfa/index.html" in beta_html
-    assert "../10620_Gamma/index.html" in beta_html
+    beta_html = (run_dir / "clients" / "10461" / "index.html").read_text(encoding="utf-8")
+    assert "../10204/index.html" in beta_html
+    assert "../10620/index.html" in beta_html
 
-    alfa_html = (run_dir / "clients" / "10204_Alfa" / "index.html").read_text(encoding="utf-8")
+    alfa_html = (run_dir / "clients" / "10204" / "index.html").read_text(encoding="utf-8")
     assert "<span></span>" in alfa_html  # sin cliente anterior: no se inventa un enlace
 
-    gamma_html = (run_dir / "clients" / "10620_Gamma" / "index.html").read_text(encoding="utf-8")
-    assert "../10461_Beta/index.html" in gamma_html
+    gamma_html = (run_dir / "clients" / "10620" / "index.html").read_text(encoding="utf-8")
+    assert "../10461/index.html" in gamma_html
 
 
 def test_client_page_links_to_own_excel_markdown_log_and_they_exist(tmp_path: Path):
@@ -433,14 +513,14 @@ def test_client_page_links_to_own_excel_markdown_log_and_they_exist(tmp_path: Pa
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "fileslink_run",
     ])
     assert exit_code == 0
-    client_dir = output_root / "fileslink_run" / "clients" / "10204_Ok"
+    client_dir = output_root / "fileslink_run" / "clients" / "10204"
     html = (client_dir / "index.html").read_text(encoding="utf-8")
-    assert "fov_scp_ml_summary_10204_Ok.xlsx" in html
-    assert (client_dir / "fov_scp_ml_summary_10204_Ok.xlsx").exists()
-    assert "fov_scp_ml_report_10204_Ok.md" in html
-    assert (client_dir / "fov_scp_ml_report_10204_Ok.md").exists()
-    assert "processing_log_10204_Ok.txt" in html
-    assert (client_dir / "processing_log_10204_Ok.txt").exists()
+    assert "fov_scp_ml_summary_10204.xlsx" in html
+    assert (client_dir / "fov_scp_ml_summary_10204.xlsx").exists()
+    assert "fov_scp_ml_report_10204.md" in html
+    assert (client_dir / "fov_scp_ml_report_10204.md").exists()
+    assert "processing_log_10204.txt" in html
+    assert (client_dir / "processing_log_10204.txt").exists()
 
 
 def test_global_page_links_to_client_and_back(tmp_path: Path):
@@ -454,8 +534,8 @@ def test_global_page_links_to_client_and_back(tmp_path: Path):
     assert exit_code == 0
     run_dir = output_root / "backlink_run"
     global_html = (run_dir / "index.html").read_text(encoding="utf-8")
-    assert "clients/10204_Ok/index.html" in global_html
-    client_html = (run_dir / "clients" / "10204_Ok" / "index.html").read_text(encoding="utf-8")
+    assert "clients/10204/index.html" in global_html
+    client_html = (run_dir / "clients" / "10204" / "index.html").read_text(encoding="utf-8")
     assert "../../index.html" in client_html
 
 
@@ -466,8 +546,9 @@ def test_global_page_links_to_client_and_back(tmp_path: Path):
 def test_run_copy_moved_to_another_location_keeps_all_links_valid(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    _write_client_csv(data_dir / "TA_FOV_SCP_ML_10204_Alfa.csv", 10204)
-    _write_client_csv(data_dir / "TA_FOV_SCP_ML_10461_Beta.csv", 10461, comparable=False)
+    _write_multi_client_csv(data_dir / "TA_FOV_SCP_ML_full_export.csv", [
+        dict(id_client=10204), dict(id_client=10461, comparable=False),
+    ])
     output_root = tmp_path / "runs"
     exit_code = pipeline.main([
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "portable_run",

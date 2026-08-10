@@ -632,6 +632,7 @@ def test_repeated_rebuild_does_not_duplicate_timestamp_warnings(tmp_path: Path):
 
 _HEADER_STATIC = {
     "ID": 1, "ID_BATCH": 63, "ID_RUN_STAGING": 60, "SOURCE_RUN_ID": 1, "ID_CONFIGURATION": 1,
+    "RUN_START_DATE": "2026-01-01",
     "VALUE_LEVEL_1": "Cat", "VALUE_LEVEL_2": None, "VALUE_LEVEL_3": None, "VALUE_LEVEL_4": None, "VALUE_LEVEL_5": None,
     "ML_STATUS": "OK", "SCP_STATUS": "OK", "HAS_SCP_CALCULATED": 1, "HAS_ML_CALCULATED": 1,
     "HAS_ML_EXCLUDED": 0, "ML_EXCLUSION_REASON": None, "SCP_NO_OUTPUT_REASON": None, "COPIED_AT": "2026-01-01",
@@ -641,9 +642,15 @@ _HEADER_STATIC = {
 }
 
 
-def _write_client_csv(path: Path, id_client: int, *, history: float = 100.0, scp_err: float = 20.0, ml_err: float = 10.0, winner: str = "ML") -> None:
+def _build_run_catalog_row(
+    id_client: int, *, history: float = 100.0, scp_err: float = 20.0, ml_err: float = 10.0, winner: str = "ML",
+    id_configuration: int = 1, id_batch: int = 63, id_run_staging: int = 60, source_run_id: int = 1,
+) -> dict:
     row = dict(_HEADER_STATIC)
-    row["ID_CLIENT"] = id_client
+    row.update({
+        "ID_CLIENT": id_client, "ID": id_configuration, "ID_CONFIGURATION": id_configuration,
+        "ID_BATCH": id_batch, "ID_RUN_STAGING": id_run_staging, "SOURCE_RUN_ID": source_run_id,
+    })
     for period in ALL_PERIODS:
         pcols = period_columns(period)
         n_months = 1 if period.startswith("M") else (3 if period in ("RECENT_3M", "OLDER_3M") else 6)
@@ -672,7 +679,23 @@ def _write_client_csv(path: Path, id_client: int, *, history: float = 100.0, scp
         row[pcols.finalist_method] = "SCP"
         row[pcols.finalist_model] = "x11 seasonal"
         row[pcols.winner_improvement_pct] = (scp_wape - ml_wape) / scp_wape * 100
-    pd.DataFrame([row]).to_csv(path, index=False)
+    return row
+
+
+def _write_client_csv(path: Path, id_client: int, **kwargs) -> None:
+    pd.DataFrame([_build_run_catalog_row(id_client, **kwargs)]).to_csv(path, index=False)
+
+
+def _write_multi_client_csv(path: Path, specs: list[dict]) -> None:
+    rows = []
+    for i, spec in enumerate(specs):
+        spec = dict(spec)
+        spec.setdefault("id_configuration", i + 1)
+        spec.setdefault("id_batch", 63 + i)
+        spec.setdefault("id_run_staging", 60 + i)
+        spec.setdefault("source_run_id", 1 + i)
+        rows.append(_build_run_catalog_row(**spec))
+    pd.DataFrame(rows).to_csv(path, index=False)
 
 
 # --------------------------------------------------------------------------
@@ -893,8 +916,9 @@ def test_e2e_zero_valid_runs_produces_valid_catalog_with_correct_message(tmp_pat
 def test_e2e_moving_output_root_preserves_all_catalog_links(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    _write_client_csv(data_dir / "TA_FOV_SCP_ML_10204_Alfa.csv", 10204)
-    _write_client_csv(data_dir / "TA_FOV_SCP_ML_10461_Beta.csv", 10461, winner="SCP", scp_err=10.0, ml_err=30.0)
+    _write_multi_client_csv(data_dir / "TA_FOV_SCP_ML_full_export.csv", [
+        dict(id_client=10204), dict(id_client=10461, winner="SCP", scp_err=10.0, ml_err=30.0),
+    ])
     output_root = tmp_path / "runs"
     assert pipeline.main(["--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "movable_run"]) == 0
 

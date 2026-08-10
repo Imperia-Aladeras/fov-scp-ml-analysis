@@ -29,9 +29,9 @@ def _inventory_for_results(results) -> list[InputFileRecord]:
 def test_build_execution_records_one_per_client():
     results = build_multi_client_results()
     inventory = _inventory_for_results(results)
-    outputs_by_file = {r.source.file_name: [] for r in results}
-    durations_by_file = {r.source.file_name: 0.42 for r in results}
-    records = build_execution_records(inventory, results, outputs_by_file, durations_by_file)
+    outputs_by_client = {r.source.id_client: [] for r in results}
+    durations_by_client = {r.source.id_client: 0.42 for r in results}
+    records = build_execution_records(inventory, results, outputs_by_client, durations_by_client)
 
     assert len(records) == 3
     assert {rec.id_client for rec in records} == {99999, 88888, 77777}
@@ -42,10 +42,10 @@ def test_build_execution_records_one_per_client():
 def test_execution_summary_table_columns():
     results = build_multi_client_results()
     inventory = _inventory_for_results(results)
-    outputs = {r.source.file_name: [f"outputs/{r.source.folder_name}/x.xlsx", f"outputs/{r.source.folder_name}/x.md",
+    outputs = {r.source.id_client: [f"outputs/{r.source.folder_name}/x.xlsx", f"outputs/{r.source.folder_name}/x.md",
                                      f"outputs/{r.source.folder_name}/processing_log_x.txt",
                                      "c.png", "c.png"] for r in results}
-    durations = {r.source.file_name: 1.0 for r in results}
+    durations = {r.source.id_client: 1.0 for r in results}
     records = build_execution_records(inventory, results, outputs, durations)
     table = execution_summary_table(records)
 
@@ -83,6 +83,37 @@ def test_build_execution_summary_markdown_mentions_all_clients():
     markdown = build_execution_summary_markdown(records)
     for name in ("TA_FOV_SCP_ML_99999_Synthetic.csv", "TA_FOV_SCP_ML_88888_NoComparable.csv", "TA_FOV_SCP_ML_77777_AllMlWins.csv"):
         assert name in markdown
+
+
+# --------------------------------------------------------------------------
+# Fase 3 (cierre de inconsistencia, segunda vuelta): "Clientes procesados"
+# debe contar solo registros con id_client asignado, no filas fisicas del
+# resumen (un CSV con read_error genera una fila sin cliente asociado).
+# --------------------------------------------------------------------------
+
+def test_build_execution_summary_markdown_counts_only_records_with_id_client():
+    """Escenario A: 1 CSV fisico particionado en varios clientes -> se cuentan todos (ninguno es id_client=None)."""
+    results = build_multi_client_results()
+    inventory = _inventory_for_results(results)
+    records = build_execution_records(inventory, results, {}, {})
+    assert all(rec.id_client is not None for rec in records)
+
+    markdown = build_execution_summary_markdown(records)
+    assert "**Clientes procesados:** 3" in markdown
+
+
+def test_build_execution_summary_markdown_excludes_read_error_record_without_client():
+    """Escenario B: 1 CSV fisico con read_error, sin ClientAnalysisResult -> Clientes procesados: 0."""
+    inventory = [_record_for("TA_FOV_SCP_ML_66666_Broken.csv", read_error="permiso denegado (simulado)")]
+    records = build_execution_records(inventory, [], {}, {})
+
+    assert len(records) == 1
+    assert records[0].id_client is None
+    assert records[0].estado == INPUT_NOT_ANALYZED
+
+    markdown = build_execution_summary_markdown(records)
+    assert "**Clientes procesados:** 0" in markdown
+    assert "**Clientes procesados:** 1" not in markdown
 
 
 # --------------------------------------------------------------------------
@@ -128,7 +159,7 @@ def test_build_execution_records_invalid_result_gets_folder_when_a_real_output_w
 
     inventory = _inventory_for_results(results)
     folder = invalid_result.source.folder_name
-    outputs = {invalid_result.source.file_name: [f"outputs/{folder}/processing_log_{folder}.txt"]}
+    outputs = {invalid_result.source.id_client: [f"outputs/{folder}/processing_log_{folder}.txt"]}
     records = build_execution_records(inventory, results, outputs, {})
 
     row = next(r for r in records if r.archivo == invalid_result.source.file_name)

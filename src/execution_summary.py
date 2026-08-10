@@ -50,57 +50,64 @@ class ExecutionRecord:
 def build_execution_records(
     inventory: list,
     results: list[ClientAnalysisResult],
-    outputs_by_file: dict[str, list[str]],
-    durations_by_file: dict[str, float],
+    outputs_by_client: dict[int, list[str]],
+    durations_by_client: dict[int, float],
     clients_subdir: str = "outputs",
 ) -> list[ExecutionRecord]:
     """
-    Combina el inventario de CSV descubiertos con los resultados de analisis
-    por nombre de fichero. Un CSV sin resultado correlacionado (nunca llego a
-    parsearse: read_error, o no procesado por un fallo global) genera una
-    fila con estado INPUT_NOT_ANALYZED, sin metricas inventadas y sin
-    carpeta de cliente.
+    Combina el inventario de CSV descubiertos con los resultados de analisis,
+    agrupados por nombre de fichero fisico: un CSV puede haber producido
+    varios ClientAnalysisResult (particion por ID_CLIENT), y cada uno genera
+    su propia fila. outputs_by_client/durations_by_client estan indexados por
+    ID_CLIENT, no por fichero. Un CSV sin ningun resultado correlacionado
+    (nunca llego a parsearse: read_error, o no procesado por un fallo global)
+    genera una unica fila con estado INPUT_NOT_ANALYZED, sin metricas
+    inventadas y sin carpeta de cliente.
     """
-    by_filename = {r.source.file_name: r for r in results}
+    by_filename: dict[str, list[ClientAnalysisResult]] = {}
+    for r in results:
+        by_filename.setdefault(r.source.file_name, []).append(r)
+
     records: list[ExecutionRecord] = []
     for record in inventory:
-        r = by_filename.get(record.name)
-        outputs = outputs_by_file.get(record.name, [])
-        duration = durations_by_file.get(record.name, 0.0)
+        client_results = by_filename.get(record.name, [])
 
-        if r is not None:
-            source = r.source
-            counts = r.quality.summary_counts()
-            pr_6m = r.periods.get("6M")
-            log_generado = any(p.endswith(".txt") for p in outputs)
-            # la carpeta de cliente se informa si se genero ALGUN output real
-            # (como minimo el processing_log, que se escribe siempre que el
-            # cliente se procesa, incluso si el fichero es invalido); nunca
-            # se deriva solo de file_valid, que no dice nada sobre si la
-            # carpeta llego a crearse en disco.
-            carpeta_salida = f"{clients_subdir}/{source.folder_name}/" if outputs else ""
-            records.append(ExecutionRecord(
-                archivo=record.name,
-                carpeta_salida=carpeta_salida,
-                id_client=source.id_client, etiqueta=source.file_label,
-                id_batch=source.id_batch, id_run_staging=source.id_run_staging,
-                filas=source.n_rows, candidatas=r.n_candidates,
-                comparables_6m=pr_6m.n_comparable if pr_6m else 0,
-                estado=r.status, warnings=counts.get("WARNING", 0), errors=counts.get("ERROR", 0),
-                duracion_segundos=duration,
-                informe_generado=any(p.endswith(".md") for p in outputs),
-                excel_generado=any(p.endswith(".xlsx") for p in outputs),
-                graficos_generados=sum(1 for p in outputs if p.endswith(".png")),
-                log_generado=log_generado,
-                size_bytes=record.size_bytes, sha256=record.sha256, analysis_error=None,
-            ))
+        if client_results:
+            for r in client_results:
+                source = r.source
+                outputs = outputs_by_client.get(source.id_client, [])
+                duration = durations_by_client.get(source.id_client, 0.0)
+                counts = r.quality.summary_counts()
+                pr_6m = r.periods.get("6M")
+                log_generado = any(p.endswith(".txt") for p in outputs)
+                # la carpeta de cliente se informa si se genero ALGUN output real
+                # (como minimo el processing_log, que se escribe siempre que el
+                # cliente se procesa, incluso si el fichero es invalido); nunca
+                # se deriva solo de file_valid, que no dice nada sobre si la
+                # carpeta llego a crearse en disco.
+                carpeta_salida = f"{clients_subdir}/{source.folder_name}/" if outputs else ""
+                records.append(ExecutionRecord(
+                    archivo=record.name,
+                    carpeta_salida=carpeta_salida,
+                    id_client=source.id_client, etiqueta=source.file_label,
+                    id_batch=source.id_batch, id_run_staging=source.id_run_staging,
+                    filas=source.n_rows, candidatas=r.n_candidates,
+                    comparables_6m=pr_6m.n_comparable if pr_6m else 0,
+                    estado=r.status, warnings=counts.get("WARNING", 0), errors=counts.get("ERROR", 0),
+                    duracion_segundos=duration,
+                    informe_generado=any(p.endswith(".md") for p in outputs),
+                    excel_generado=any(p.endswith(".xlsx") for p in outputs),
+                    graficos_generados=sum(1 for p in outputs if p.endswith(".png")),
+                    log_generado=log_generado,
+                    size_bytes=record.size_bytes, sha256=record.sha256, analysis_error=None,
+                ))
         else:
             records.append(ExecutionRecord(
                 archivo=record.name, carpeta_salida="",
                 id_client=None, etiqueta=None, id_batch=[], id_run_staging=[],
                 filas=None, candidatas=None, comparables_6m=None,
                 estado=INPUT_NOT_ANALYZED, warnings=None, errors=None,
-                duracion_segundos=duration,
+                duracion_segundos=0.0,
                 informe_generado=False, excel_generado=False, graficos_generados=0,
                 log_generado=False,
                 size_bytes=record.size_bytes, sha256=record.sha256,
@@ -147,7 +154,13 @@ def build_execution_summary_markdown(records: list[ExecutionRecord]) -> str:
     lines: list[str] = []
     a = lines.append
 
-    n_total = len(records)
+    # len(records) es el numero de filas de este resumen: una por cada
+    # ClientAnalysisResult (Fase 3: un unico CSV fisico puede particionarse
+    # en varios clientes), mas una por cada CSV con read_error que nunca
+    # llego a producir un cliente (id_client=None, estado=INPUT_NOT_ANALYZED).
+    # "Clientes procesados" cuenta solo los registros que representan
+    # realmente un cliente: nunca el numero de filas ni el de CSV fisicos.
+    n_clients_processed = sum(1 for rec in records if rec.id_client is not None)
     status_counts: dict[str, int] = {}
     for rec in records:
         status_counts[rec.estado] = status_counts.get(rec.estado, 0) + 1
@@ -156,7 +169,7 @@ def build_execution_summary_markdown(records: list[ExecutionRecord]) -> str:
     a("# Resumen de ejecucion")
     a("")
     a(f"**Fecha:** {pd.Timestamp.now():%d/%m/%Y %H:%M}")
-    a(f"**CSV descubiertos:** {n_total}")
+    a(f"**Clientes procesados:** {n_clients_processed}")
     a(f"**Duracion total:** {total_duration:.2f} s")
     a("")
     a("| Estado | N |")
