@@ -3,6 +3,7 @@ import pandas as pd
 from src.periods import period_columns
 from src.quality_checks import (
     Severity,
+    StructuralInputError,
     check_aggregate_vs_monthly_sum,
     check_bias_reconstruction,
     check_batch_heterogeneity,
@@ -19,6 +20,21 @@ from src.quality_checks import (
     check_winner_formula_not_auditable,
     check_wrapped_csv_normalized,
 )
+
+
+def test_structural_input_error_exposes_code_and_message():
+    exc = StructuralInputError("INVALID_ID_CLIENT", "3 fila(s) con ID_CLIENT invalido.")
+    assert exc.code == "INVALID_ID_CLIENT"
+    assert str(exc) == "3 fila(s) con ID_CLIENT invalido."
+
+
+def test_structural_input_error_is_raisable_and_catchable_by_code():
+    try:
+        raise StructuralInputError("AMBIGUOUS_CLIENT_EXECUTION", "cliente 10338 con 2 scopes")
+    except StructuralInputError as exc:
+        assert exc.code == "AMBIGUOUS_CLIENT_EXECUTION"
+    else:
+        raise AssertionError("StructuralInputError no fue lanzada")
 
 
 def test_check_aggregate_vs_monthly_sum_detects_mismatch():

@@ -9,6 +9,11 @@ import pandas as pd
 from src.input_loader import ClientSource
 from src.periods import period_columns
 
+# Fecha sintetica estable para tests que necesitan RUN_START_DATE (Fase 2).
+# No depende de ser dia 1 del mes; centralizada aqui para no hardcodear una
+# fecha en decenas de tests distintos.
+DEFAULT_RUN_START_DATE = "2026-01-01"
+
 
 def set_period(df: pd.DataFrame, period: str, total_history, scp_forecast, scp_abs_error, scp_wape,
                 ml_forecast, ml_abs_error, ml_wape, winner_method) -> None:

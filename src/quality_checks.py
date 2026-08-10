@@ -87,6 +87,26 @@ class QualityReport:
         return counts
 
 
+class StructuralInputError(RuntimeError):
+    """
+    Error estructural que invalida el CSV fisico completo: cuando se lanza,
+    no se crea ningun ClientSource. `code` es uno de los codigos ya usados
+    como QualityIssue de severidad ERROR y ambito "file" (CSV_NOT_READABLE,
+    MISSING_REQUIRED_COLUMNS, DUPLICATE_LOGICAL_KEY), mas los codigos nuevos
+    de Fase 2 (INVALID_ID_CLIENT, INVALID_EXECUTION_SCOPE,
+    INVALID_ID_CONFIGURATION, INVALID_RUN_START_DATE,
+    AMBIGUOUS_CLIENT_EXECUTION, INCONSISTENT_CLIENT_RUN_START_DATE,
+    INCOMPATIBLE_RUN_START_DATE). Misma
+    forma que InputIntegrityError (src/input_inventory.py): permite que
+    run_pipeline traduzca exc.code directamente a failure.error_type sin
+    ningun cambio en ese mecanismo ya existente.
+    """
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
 def values_close(a: pd.Series, b: pd.Series) -> pd.Series:
     """
     Compara con tolerancia absoluta + relativa (ver docstring del modulo).

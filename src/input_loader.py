@@ -36,11 +36,13 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from src.periods import all_required_columns
 from src.quality_checks import (
     QualityReport,
+    StructuralInputError,
     check_batch_heterogeneity,
     check_csv_readable,
     check_dtypes,
@@ -57,6 +59,9 @@ from src.quality_checks import (
 
 FILENAME_PREFIX = "TA_FOV_SCP_ML_"
 KEY_COLUMNS = ["ID_BATCH", "ID_RUN_STAGING", "ID_CLIENT", "SOURCE_RUN_ID", "ID_CONFIGURATION"]
+# Columnas que definen la ejecucion logica de un ID_CLIENT (Fase 2): para
+# cada cliente debe existir exactamente una combinacion de estas tres.
+SCOPE_COLUMNS = ["ID_BATCH", "ID_RUN_STAGING", "SOURCE_RUN_ID"]
 
 # Nivel 2: columnas minimas para identificar cliente y grano de la fila.
 # Deliberadamente NO es "> 50 columnas": ese umbral era un numero arbitrario
@@ -420,5 +425,302 @@ def load_client_sources(data_dir: Path) -> list[ClientSource]:
         for source in sources:
             if source.id_client is not None:
                 source.quality.add(batch_issue)
+
+    return sources
+
+
+# ==============================================================================
+# Fase 2 (EN PARALELO al loader legacy de arriba, todavia sin integrar en
+# run_pipeline): un unico CSV fisico completo, una unica lectura, particion
+# por ID_CLIENT. N=1 (un unico ID_CLIENT) no es un caso especial: recorre
+# exactamente el mismo camino que N>1, es simplemente una particion.
+#
+# RUN_START_DATE es obligatoria SOLO para load_client_sources_from_csv
+# durante esta fase: se exige explicitamente aqui (all_required_columns() +
+# "RUN_START_DATE"), sin anadirla todavia a periods.STATIC_REQUIRED_COLUMNS,
+# para no alterar el contrato del loader legacy (load_client_sources) antes
+# de que run_pipeline migre a este loader nuevo en una fase posterior.
+# ==============================================================================
+
+def _numeric_and_integral_mask(series: pd.Series) -> pd.Series:
+    """
+    True donde el valor NO es un entero finito interpretable: nulo, no
+    numerico (coaccionado a NaN por pd.to_numeric), infinito, o decimal no
+    entero (p.ej. 63.5). Acepta enteros y floats sin parte fraccionaria
+    (63, 63.0). Compartido por todos los identificadores estructurales del
+    CSV (ID_CLIENT, ID_BATCH, ID_RUN_STAGING, SOURCE_RUN_ID,
+    ID_CONFIGURATION), que proceden de BIGINT en el backend. No valida
+    rango de negocio: no rechaza 0 ni negativos unicamente por su valor.
+    """
+    numeric = pd.to_numeric(series, errors="coerce")
+    non_finite = ~np.isfinite(numeric)  # cubre nulo, no numerico e infinito
+    non_integral = np.isfinite(numeric) & (numeric % 1 != 0)
+    return non_finite | non_integral
+
+
+def _validate_id_client_strict(df: pd.DataFrame) -> None:
+    """
+    Valida ID_CLIENT sobre los valores originales, ANTES de
+    coerce_numeric_columns: un ID_CLIENT nulo o no numerico no debe
+    convertirse primero en NaN (silenciosamente, via coercion general) y
+    perderse despues en la deteccion.
+    """
+    invalid_mask = _numeric_and_integral_mask(df["ID_CLIENT"])
+    if invalid_mask.any():
+        n_bad = int(invalid_mask.sum())
+        raise StructuralInputError(
+            "INVALID_ID_CLIENT",
+            f"{n_bad} fila(s) con ID_CLIENT nulo, no numerico, infinito o no entero. "
+            f"ID_CLIENT debe ser inequivocamente convertible a un entero finito.",
+        )
+
+
+def _validate_execution_scope_fields(df: pd.DataFrame) -> None:
+    """
+    Tras la coercion numerica general, cada fila debe disponer de valores
+    ID_BATCH, ID_RUN_STAGING y SOURCE_RUN_ID interpretables como entero
+    finito (proceden de BIGINT en el backend). No basta con comprobar
+    isna(): un decimal no entero (63.5) o un infinito ya coaccionado por
+    coerce_numeric_columns no es NaN y pasaria desapercibido si solo se
+    comprobara nulidad. No se inventan validaciones de rango/signo.
+    """
+    invalid_mask = pd.Series(False, index=df.index)
+    for col in SCOPE_COLUMNS:
+        invalid_mask |= _numeric_and_integral_mask(df[col])
+    if invalid_mask.any():
+        n_bad = int(invalid_mask.sum())
+        raise StructuralInputError(
+            "INVALID_EXECUTION_SCOPE",
+            f"{n_bad} fila(s) con ID_BATCH, ID_RUN_STAGING o SOURCE_RUN_ID nulo, no numerico, "
+            f"infinito o no entero.",
+        )
+
+
+def _validate_id_configuration_strict(df: pd.DataFrame) -> None:
+    """
+    ID_CONFIGURATION no participa en el scope de ejecucion
+    (_check_ambiguous_client_scope), pero si forma parte de la clave
+    logica canonica (KEY_COLUMNS) y procede de BIGINT en el backend. No
+    esta incluida en numeric_required_columns() (es categorica para el
+    resto del pipeline), asi que coerce_numeric_columns nunca la toca: se
+    valida aqui, sobre los valores originales, para impedir que una
+    configuracion con ID estructuralmente invalido llegue a
+    check_duplicate_key o al analisis posterior sin ser detectada.
+    """
+    invalid_mask = _numeric_and_integral_mask(df["ID_CONFIGURATION"])
+    if invalid_mask.any():
+        n_bad = int(invalid_mask.sum())
+        raise StructuralInputError(
+            "INVALID_ID_CONFIGURATION",
+            f"{n_bad} fila(s) con ID_CONFIGURATION nulo, no numerico, infinito o no entero.",
+        )
+
+
+def _parse_run_start_date_strict(df: pd.DataFrame) -> pd.Series:
+    """
+    Parsea RUN_START_DATE con pd.to_datetime(errors="coerce",
+    format="mixed"). La exportacion manual de una columna SQL DATETIME2
+    puede mezclar precision textual entre filas (con/sin fraccion de
+    segundo, con/sin componente de hora): sin format="mixed", pandas (2.3.3,
+    version verificada en este entorno) infiere el formato de la PRIMERA
+    fila y convierte a NaT cualquier fila valida posterior con distinta
+    precision -- comprobado explicitamente: la Serie
+    ["2026-01-01", "2026-01-01 00:00:00.001"] produce NaT en la segunda
+    fila sin format="mixed", y la parsea correctamente (preservando los
+    milisegundos) con el. NULL, cadena vacia y texto realmente no
+    interpretable siguen colapsando a NaT de forma identica con
+    format="mixed" (tambien verificado). Devuelve la Serie parseada
+    COMPLETA (con hora/fraccion), sin normalizar: la normalizacion a fecha
+    se aplica unicamente, y por separado, para comparar igualdad logica de
+    ventana (ver _logical_run_start_dates). No se usa COPIED_AT.
+    """
+    parsed = pd.to_datetime(df["RUN_START_DATE"], errors="coerce", format="mixed")
+    if parsed.isna().any():
+        n_bad = int(parsed.isna().sum())
+        raise StructuralInputError(
+            "INVALID_RUN_START_DATE",
+            f"{n_bad} fila(s) con RUN_START_DATE nulo, vacio o no interpretable como fecha.",
+        )
+    return parsed
+
+
+def _logical_run_start_dates(parsed_run_start_date: pd.Series) -> pd.Series:
+    """
+    Fecha logica usada UNICAMENTE para comparar igualdad de ventana (nunca
+    se almacena en el DataFrame): normaliza a medianoche para no comparar
+    diferencias de precision sub-diaria que la exportacion manual pudiera
+    introducir. La ventana se identifica por el dia de inicio, no por la
+    hora exacta. No se valida ni se exige que sea el primer dia del mes.
+    """
+    return parsed_run_start_date.dt.normalize()
+
+
+def _check_ambiguous_client_scope(df: pd.DataFrame) -> None:
+    """
+    Para cada ID_CLIENT debe existir exactamente una combinacion real
+    (por fila, no listas de valores unicos por columna) de SCOPE_COLUMNS.
+    ID_CONFIGURATION no participa en esta decision: mas de una combinacion
+    para el mismo cliente es siempre un error, tanto si las configuraciones
+    son disjuntas como si se solapan.
+    """
+    ambiguous: dict[int, int] = {}
+    for id_client, group in df.groupby("ID_CLIENT"):
+        n_combos = len(group[SCOPE_COLUMNS].drop_duplicates())
+        if n_combos > 1:
+            ambiguous[int(id_client)] = n_combos
+    if ambiguous:
+        raise StructuralInputError(
+            "AMBIGUOUS_CLIENT_EXECUTION",
+            f"{len(ambiguous)} cliente(s) con mas de una combinacion de "
+            f"(ID_BATCH, ID_RUN_STAGING, SOURCE_RUN_ID): {ambiguous} "
+            f"(ID_CLIENT -> numero de combinaciones distintas). ID_CONFIGURATION no afecta a "
+            f"esta decision; no se selecciona ninguna combinacion de forma arbitraria.",
+        )
+
+
+def _check_client_run_start_date_consistency(df: pd.DataFrame, logical_dates: pd.Series) -> dict[int, pd.Timestamp]:
+    """
+    Para cada ID_CLIENT, todas sus filas deben compartir una unica fecha
+    logica de RUN_START_DATE. Devuelve {id_client: fecha} (una entrada por
+    cliente, ya validada) para que la validacion global no tenga que volver
+    a agrupar el DataFrame.
+    """
+    client_dates: dict[int, pd.Timestamp] = {}
+    inconsistent: dict[int, list] = {}
+    for id_client, dates in logical_dates.groupby(df["ID_CLIENT"]):
+        unique_dates = dates.unique()
+        if len(unique_dates) > 1:
+            inconsistent[int(id_client)] = sorted(unique_dates)
+        else:
+            client_dates[int(id_client)] = unique_dates[0]
+    if inconsistent:
+        raise StructuralInputError(
+            "INCONSISTENT_CLIENT_RUN_START_DATE",
+            f"{len(inconsistent)} cliente(s) con mas de una fecha logica de RUN_START_DATE "
+            f"dentro de sus propias filas: {inconsistent}.",
+        )
+    return client_dates
+
+
+def _check_global_run_start_date(client_dates: dict[int, pd.Timestamp]) -> None:
+    """
+    Todos los ID_CLIENT del CSV deben compartir la misma fecha logica de
+    RUN_START_DATE, con independencia de que tengan ID_BATCH,
+    ID_RUN_STAGING o SOURCE_RUN_ID distintos: no se agrupa unicamente por
+    ID_BATCH.
+    """
+    by_date: dict[pd.Timestamp, list[int]] = {}
+    for id_client, date in client_dates.items():
+        by_date.setdefault(date, []).append(id_client)
+    if len(by_date) > 1:
+        raise StructuralInputError(
+            "INCOMPATIBLE_RUN_START_DATE",
+            f"Los clientes del CSV no comparten la misma fecha logica de RUN_START_DATE: "
+            f"{ {str(date.date()): ids for date, ids in by_date.items()} }.",
+        )
+
+
+def _build_client_sources(
+    df: pd.DataFrame, csv_path: Path, read_repaired: bool, physical_warnings: list[QualityIssue],
+) -> list[ClientSource]:
+    """
+    DataFrame ya validado -> list[ClientSource]. Sin I/O: testable de forma
+    aislada pasando un DataFrame construido en memoria.
+
+    csv_path/file_label/id_from_filename/read_repaired son metadata fisica
+    compartida por todas las particiones (el mismo fichero de origen). El
+    resto de campos de ClientSource es exclusivo de cada particion. No se
+    llama a check_filename_matches_id: en un full export, el nombre del
+    fichero no representa la identidad de ningun cliente concreto.
+    folder_name se deja vacio deliberadamente (metadata de presentacion,
+    fuera de alcance de esta fase).
+    """
+    file_label = extract_label_from_filename(csv_path)
+    id_from_filename = extract_id_from_label(file_label)
+
+    sources: list[ClientSource] = []
+    for id_client, group in df.groupby("ID_CLIENT", sort=True):
+        partition = group.copy()
+        quality = QualityReport()
+        quality.extend(physical_warnings)
+        quality.add(check_mojibake_in_value_levels(csv_path.name, partition))
+
+        source = ClientSource(
+            csv_path=csv_path, file_label=file_label, id_from_filename=id_from_filename,
+            dataframe=partition, read_repaired=read_repaired, id_client=int(id_client),
+            id_batch=sorted(partition["ID_BATCH"].dropna().unique().tolist()),
+            id_run_staging=sorted(partition["ID_RUN_STAGING"].dropna().unique().tolist()),
+            source_run_id=sorted(partition["SOURCE_RUN_ID"].dropna().unique().tolist()),
+            n_rows=len(partition), quality=quality,
+            is_valid=not quality.has_errors(), folder_name="",
+        )
+        sources.append(source)
+    return sources
+
+
+def load_client_sources_from_csv(path: Path) -> list[ClientSource]:
+    """
+    Fase 2. Carga UN CSV fisico completo (`path`, ya resuelto por quien
+    llama) y lo particiona por ID_CLIENT. No descubre directorios, no
+    cuenta CSV, no accede al manifest ni publica outputs. Lanza
+    StructuralInputError ante cualquier problema estructural: en ese caso
+    no se crea ningun ClientSource.
+
+    Orden de validacion (deliberado, ver src/quality_checks.StructuralInputError):
+    lectura fisica -> columnas obligatorias (incluye RUN_START_DATE, solo
+    para este loader) -> diagnostico de dtype (warning) -> ID_CLIENT
+    estricto sobre valores originales -> coercion numerica general ->
+    parseo de RUN_START_DATE -> scope basico por fila -> ID_CONFIGURATION
+    estricto -> clave logica duplicada -> ejecucion logica ambigua por
+    cliente -> RUN_START_DATE intra-cliente -> RUN_START_DATE global ->
+    particion.
+    """
+    result = read_csv_defensive(path)
+    csv_readable_issue = check_csv_readable(path.name, result.dataframe is not None, result.error)
+    if csv_readable_issue is not None:
+        raise StructuralInputError("CSV_NOT_READABLE", csv_readable_issue.message)
+    df = result.dataframe
+
+    required_columns = [*all_required_columns(), "RUN_START_DATE"]
+    missing_issue = check_required_columns(path.name, list(df.columns), required_columns)
+    if missing_issue is not None:
+        raise StructuralInputError("MISSING_REQUIRED_COLUMNS", missing_issue.message)
+
+    physical_warnings: list[QualityIssue] = []
+    if result.repaired:
+        physical_warnings.append(check_wrapped_csv_normalized(
+            path.name, result.standard_reject_reason or "motivo no determinado",
+            result.standard_columns_count, result.repaired_columns_count or len(df.columns),
+            result.n_rows_recovered or len(df),
+        ))
+    physical_warnings.extend(check_dtypes(path.name, df, numeric_required_columns()))
+
+    _validate_id_client_strict(df)
+    df = coerce_numeric_columns(df, numeric_required_columns())
+
+    parsed_run_start_date = _parse_run_start_date_strict(df)
+    df["RUN_START_DATE"] = parsed_run_start_date  # se preserva el timestamp completo, sin normalizar
+
+    _validate_execution_scope_fields(df)
+    _validate_id_configuration_strict(df)
+
+    dup_issue = check_duplicate_key(path.name, df, KEY_COLUMNS)
+    if dup_issue is not None:
+        raise StructuralInputError("DUPLICATE_LOGICAL_KEY", dup_issue.message)
+
+    _check_ambiguous_client_scope(df)
+
+    logical_dates = _logical_run_start_dates(df["RUN_START_DATE"])
+    client_dates = _check_client_run_start_date_consistency(df, logical_dates)
+    _check_global_run_start_date(client_dates)
+
+    sources = _build_client_sources(df, path, result.repaired, physical_warnings)
+
+    client_to_batches = {source.id_client: source.id_batch for source in sources}
+    batch_issue = check_batch_heterogeneity(client_to_batches)
+    if batch_issue is not None:
+        for source in sources:
+            source.quality.add(batch_issue)
+            source.is_valid = not source.quality.has_errors()
 
     return sources
