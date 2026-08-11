@@ -161,6 +161,7 @@ def build_manifest(
     published: bool,
     input_metadata_changed: list[str] = (),
     failure: dict | None = None,
+    client_catalog_info: dict | None = None,
 ) -> dict:
     by_filename: dict[str, list[ClientAnalysisResult]] = {}
     for r in results:
@@ -232,6 +233,12 @@ def build_manifest(
         "outputs_generated": outputs_generated,
         "csv_files": csv_entries,
         "catalog_summary": catalog_summary,
+        # Bloque raiz aditivo (Fase 5): trazabilidad de config/client-catalog.json.
+        # No modifica csv_files (que sigue siendo estrictamente fisico) ni
+        # ninguna clave de catalog_summary; run_catalog.py no lo lee, asi que
+        # su presencia/ausencia no afecta a manifests historicos ni dispara
+        # CATALOG_FIELDS_MISSING.
+        "client_catalog": client_catalog_info,
     }
     if failure is not None:
         manifest["failure"] = failure

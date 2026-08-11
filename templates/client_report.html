@@ -1,16 +1,16 @@
 {% extends "base.html" %}
 {% import "components/chart_gallery.html" as gallery %}
 {% import "components/quality_issues.html" as qi %}
-{% block title %}{{ page.etiqueta }} — {{ run_name }}{% endblock %}
+{% block title %}{{ page.display_name }} — {{ run_name }}{% endblock %}
 {% block content %}
 
-<h1>{{ page.etiqueta }}</h1>
+<h1>{{ page.display_name }}</h1>
 <p class="note">ID_CLIENT: {{ page.id_client }} · Fichero: {{ page.file_name }} · Estado: <span class="badge badge--{{ page.estado | lower }}">{{ page.estado }}</span></p>
 
 <nav class="client-prevnext" aria-label="Navegación entre clientes">
-  {% if page.prev_client %}<a href="{{ page.prev_client.url | encode_url_path }}">&larr; {{ page.prev_client.etiqueta }}</a>{% else %}<span></span>{% endif %}
+  {% if page.prev_client %}<a href="{{ page.prev_client.url | encode_url_path }}">&larr; {{ page.prev_client.display_name }} ({{ page.prev_client.id_client }})</a>{% else %}<span></span>{% endif %}
   <a href="{{ global_url | encode_url_path }}">Resumen global</a>
-  {% if page.next_client %}<a href="{{ page.next_client.url | encode_url_path }}">{{ page.next_client.etiqueta }} &rarr;</a>{% else %}<span></span>{% endif %}
+  {% if page.next_client %}<a href="{{ page.next_client.url | encode_url_path }}">{{ page.next_client.display_name }} ({{ page.next_client.id_client }}) &rarr;</a>{% else %}<span></span>{% endif %}
 </nav>
 
 <section id="identificacion" aria-labelledby="identificacion-h">
@@ -18,7 +18,8 @@
   <table class="kv-table">
     <tbody>
       <tr><th scope="row">ID_CLIENT</th><td>{{ page.id_client }}</td></tr>
-      <tr><th scope="row">Etiqueta</th><td>{{ page.etiqueta }}</td></tr>
+      <tr><th scope="row">Nombre</th><td>{{ page.display_name }}</td></tr>
+      <tr><th scope="row">Etiqueta (fichero)</th><td>{{ page.etiqueta }}</td></tr>
       <tr><th scope="row">ID_BATCH</th><td>{{ page.id_batch }}</td></tr>
       <tr><th scope="row">ID_RUN_STAGING</th><td>{{ page.id_run_staging }}</td></tr>
       <tr><th scope="row">SOURCE_RUN_ID</th><td>{{ page.source_run_id }}</td></tr>

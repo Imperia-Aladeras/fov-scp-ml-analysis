@@ -24,6 +24,7 @@ def build_processing_log(
     a(f"timestamp={pd.Timestamp.now().isoformat()}")
     a(f"archivo={source.file_name}")
     a(f"etiqueta_cliente={source.file_label}")
+    a(f"display_name={source.display_name}")
     a(f"id_client={source.id_client}")
     a(f"id_batch={source.id_batch}")
     a(f"id_run_staging={source.id_run_staging}")

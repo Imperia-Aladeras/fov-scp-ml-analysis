@@ -155,6 +155,9 @@ def test_negative_net_result_client_is_in_deterioration_table_not_top_contributo
 
     assert set(reducers["ETIQUETA"]) == {"55501_PositiveClient"}
     assert set(worseners["ETIQUETA"]) == {"55502_NegativeClient"}
+    # DISPLAY_NAME (Fase 5) es aditivo: convive con ETIQUETA sin sustituirla.
+    assert set(reducers["DISPLAY_NAME"]) == {"PositiveClient"}
+    assert set(worseners["DISPLAY_NAME"]) == {"NegativeClient"}
 
     # El cliente negativo NUNCA aparece en la tabla de clientes que reducen error.
     assert "55502_NegativeClient" not in set(reducers["ETIQUETA"])
@@ -174,6 +177,20 @@ def test_build_client_period_table_has_one_row_per_client():
     table = build_client_period_table(results, "6M")
     assert len(table) == 3
     assert set(table["ID_CLIENT"]) == {99999, 88888, 77777}
+
+
+def test_build_client_period_table_display_name_is_additive_alongside_etiqueta():
+    """
+    Fase 5: DISPLAY_NAME se anade en paralelo a ETIQUETA, que conserva su
+    semantica original (derivada de file_label), sin sustituirla.
+    """
+    results = build_multi_client_results()
+    table = build_client_period_table(results, "6M")
+    assert "DISPLAY_NAME" in table.columns
+    assert "ETIQUETA" in table.columns
+    row = table[table["ID_CLIENT"] == 99999].iloc[0]
+    assert row["DISPLAY_NAME"] == "Synthetic"
+    assert row["ETIQUETA"] == "99999_Synthetic"
 
 
 def test_global_category_performance_table_aggregates_across_clients():

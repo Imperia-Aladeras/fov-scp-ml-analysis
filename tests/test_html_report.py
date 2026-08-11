@@ -141,8 +141,10 @@ def test_pipeline_generates_global_index_and_client_pages(tmp_path: Path):
 
     assert (run_dir / "index.html").exists()
     assert (run_dir / "assets" / "styles.css").exists()
-    assert (run_dir / "clients" / "10204" / "index.html").exists()
-    assert (run_dir / "clients" / "10461" / "index.html").exists()
+    # Fase 5: folder_name = {id_client}-{slug(display_name)} resuelto contra
+    # el config/client-catalog.json real (10204 -> SKLUM, 10461 -> "García Millán").
+    assert (run_dir / "clients" / "10204-sklum" / "index.html").exists()
+    assert (run_dir / "clients" / "10461-garcía-millán" / "index.html").exists()
 
     problems = validate_run_links(run_dir)
     assert problems == []
@@ -198,6 +200,7 @@ def test_execution_summary_and_html_header_count_only_real_clients_not_physical_
 
     record = ExecutionRecord(
         archivo="TA_FOV_SCP_ML_full_export.csv", carpeta_salida="", id_client=None, etiqueta=None,
+        display_name=None,
         id_batch=[], id_run_staging=[], filas=None, candidatas=None, comparables_6m=None,
         estado=INPUT_NOT_ANALYZED, warnings=None, errors=None, duracion_segundos=0.0,
         informe_generado=False, excel_generado=False, graficos_generados=0, log_generado=False,
@@ -233,7 +236,7 @@ def test_client_with_improvement_page_shows_positive_verdict(tmp_path: Path):
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "improve_run",
     ])
     assert exit_code == 0
-    html = (output_root / "improve_run" / "clients" / "10204" / "index.html").read_text(encoding="utf-8")
+    html = (output_root / "improve_run" / "clients" / "10204-sklum" / "index.html").read_text(encoding="utf-8")
     assert "ML mejora el WAPE global ponderado" in html
     assert "+50.0%" in html
 
@@ -247,7 +250,7 @@ def test_client_with_deterioration_page_shows_negative_verdict(tmp_path: Path):
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "worse_run",
     ])
     assert exit_code == 0
-    html = (output_root / "worse_run" / "clients" / "10620" / "index.html").read_text(encoding="utf-8")
+    html = (output_root / "worse_run" / "clients" / "10620-frutas-bollo" / "index.html").read_text(encoding="utf-8")
     assert "ML no mejora el WAPE global ponderado" in html
 
 
@@ -260,7 +263,7 @@ def test_client_without_performance_shows_nd_not_zero(tmp_path: Path):
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "noperf_run",
     ])
     assert exit_code == 0
-    html = (output_root / "noperf_run" / "clients" / "10461" / "index.html").read_text(encoding="utf-8")
+    html = (output_root / "noperf_run" / "clients" / "10461-garcía-millán" / "index.html").read_text(encoding="utf-8")
     assert "Sin performance calculable" in html
     assert "WAPE, mejora y winner no están disponibles (N/D), no son cero" in html
     # nunca un WAPE/mejora fabricado en cero para este caso
@@ -309,7 +312,7 @@ def test_html_included_in_outputs_generated_and_manifest(tmp_path: Path):
     manifest = json.loads((output_root / "manifest_run" / "manifest.json").read_text(encoding="utf-8"))
     outs = manifest["outputs_generated"]
     assert "index.html" in outs
-    assert "clients/10204/index.html" in outs
+    assert "clients/10204-sklum/index.html" in outs
     assert "assets/styles.css" in outs
 
 
@@ -357,7 +360,7 @@ def test_client_page_uses_exact_temporal_labels(tmp_path: Path):
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "labels_run",
     ])
     assert exit_code == 0
-    html = (output_root / "labels_run" / "clients" / "10204" / "index.html").read_text(encoding="utf-8")
+    html = (output_root / "labels_run" / "clients" / "10204-sklum" / "index.html").read_text(encoding="utf-8")
     assert "Semestre completo (M1–M6)" in html
     assert "Primer trimestre del semestre (M1–M3)" in html
     assert "Segundo trimestre del semestre (M4–M6)" in html
@@ -401,7 +404,7 @@ def test_malicious_model_name_is_escaped_not_executed(tmp_path: Path):
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "xss_run",
     ])
     assert exit_code == 0
-    html = (output_root / "xss_run" / "clients" / "10204" / "index.html").read_text(encoding="utf-8")
+    html = (output_root / "xss_run" / "clients" / "10204-sklum" / "index.html").read_text(encoding="utf-8")
     assert "<script>alert" not in html
     assert "&lt;script&gt;alert(&#34;x&#34;)&lt;/script&gt;" in html or "&lt;script&gt;alert" in html
 
@@ -416,7 +419,7 @@ def test_ampersand_in_client_label_is_escaped_in_text_and_links(tmp_path: Path):
     ])
     assert exit_code == 0
     run_dir = output_root / "amp_run"
-    assert (run_dir / "clients" / "10204" / "index.html").exists()
+    assert (run_dir / "clients" / "10204-sklum" / "index.html").exists()
     global_html = (run_dir / "index.html").read_text(encoding="utf-8")
     assert "10204_R&amp;D" in global_html
     assert "10204_R&D<" not in global_html  # nunca sin escapar seguido de una etiqueta
@@ -493,15 +496,24 @@ def test_prev_next_navigation_between_clients(tmp_path: Path):
     assert exit_code == 0
     run_dir = output_root / "navrun"
 
-    beta_html = (run_dir / "clients" / "10461" / "index.html").read_text(encoding="utf-8")
-    assert "../10204/index.html" in beta_html
-    assert "../10620/index.html" in beta_html
+    # Fase 5: folder_name = {id_client}-{slug(display_name)} resuelto contra
+    # el config/client-catalog.json real (10204 -> SKLUM, 10461 -> "García Millán", 10620 -> "Frutas Bollo").
+    beta_html = (run_dir / "clients" / "10461-garcía-millán" / "index.html").read_text(encoding="utf-8")
+    assert "../10204-sklum/index.html" in beta_html
+    assert "../10620-frutas-bollo/index.html" in beta_html
+    # El texto visible del enlace debe llevar display_name (ID_CLIENT): el
+    # catalogo no garantiza nombres unicos entre ID_CLIENT distintos.
+    assert "SKLUM (10204)" in beta_html
+    assert "Frutas Bollo (10620)" in beta_html
 
-    alfa_html = (run_dir / "clients" / "10204" / "index.html").read_text(encoding="utf-8")
+    alfa_html = (run_dir / "clients" / "10204-sklum" / "index.html").read_text(encoding="utf-8")
     assert "<span></span>" in alfa_html  # sin cliente anterior: no se inventa un enlace
 
-    gamma_html = (run_dir / "clients" / "10620" / "index.html").read_text(encoding="utf-8")
-    assert "../10461/index.html" in gamma_html
+    gamma_html = (run_dir / "clients" / "10620-frutas-bollo" / "index.html").read_text(encoding="utf-8")
+    # el nombre acentuado va percent-encoded en el href (fmt.encode_url_path),
+    # aunque el nombre de carpeta en disco conserve el acento sin codificar.
+    assert fmt.encode_url_path("../10461-garcía-millán/index.html") in gamma_html
+    assert "García Millán (10461)" in gamma_html
 
 
 def test_client_page_links_to_own_excel_markdown_log_and_they_exist(tmp_path: Path):
@@ -513,14 +525,14 @@ def test_client_page_links_to_own_excel_markdown_log_and_they_exist(tmp_path: Pa
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "fileslink_run",
     ])
     assert exit_code == 0
-    client_dir = output_root / "fileslink_run" / "clients" / "10204"
+    client_dir = output_root / "fileslink_run" / "clients" / "10204-sklum"
     html = (client_dir / "index.html").read_text(encoding="utf-8")
-    assert "fov_scp_ml_summary_10204.xlsx" in html
-    assert (client_dir / "fov_scp_ml_summary_10204.xlsx").exists()
-    assert "fov_scp_ml_report_10204.md" in html
-    assert (client_dir / "fov_scp_ml_report_10204.md").exists()
-    assert "processing_log_10204.txt" in html
-    assert (client_dir / "processing_log_10204.txt").exists()
+    assert "fov_scp_ml_summary_10204-sklum.xlsx" in html
+    assert (client_dir / "fov_scp_ml_summary_10204-sklum.xlsx").exists()
+    assert "fov_scp_ml_report_10204-sklum.md" in html
+    assert (client_dir / "fov_scp_ml_report_10204-sklum.md").exists()
+    assert "processing_log_10204-sklum.txt" in html
+    assert (client_dir / "processing_log_10204-sklum.txt").exists()
 
 
 def test_global_page_links_to_client_and_back(tmp_path: Path):
@@ -534,8 +546,8 @@ def test_global_page_links_to_client_and_back(tmp_path: Path):
     assert exit_code == 0
     run_dir = output_root / "backlink_run"
     global_html = (run_dir / "index.html").read_text(encoding="utf-8")
-    assert "clients/10204/index.html" in global_html
-    client_html = (run_dir / "clients" / "10204" / "index.html").read_text(encoding="utf-8")
+    assert "clients/10204-sklum/index.html" in global_html
+    client_html = (run_dir / "clients" / "10204-sklum" / "index.html").read_text(encoding="utf-8")
     assert "../../index.html" in client_html
 
 
@@ -908,6 +920,7 @@ def test_build_inventory_row_vm_never_invents_client_link_for_unanalyzed_csv():
 
     record = ExecutionRecord(
         archivo="TA_FOV_SCP_ML_00000_Roto.csv", carpeta_salida="", id_client=None, etiqueta=None,
+        display_name=None,
         id_batch=[], id_run_staging=[], filas=None, candidatas=None, comparables_6m=None,
         estado=INPUT_NOT_ANALYZED, warnings=None, errors=None, duracion_segundos=0.0,
         informe_generado=False, excel_generado=False, graficos_generados=0, log_generado=False,

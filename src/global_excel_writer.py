@@ -23,8 +23,10 @@ _SINGLE_TABLE_SHEETS = ("15_data_quality_checks",)
 # --------------------------------------------------------------------------
 
 def readme_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.DataFrame]]:
-    clients_ok = [r.source.file_label for r in result.client_results]
-    clients_invalid = [r.source.file_label for r in result.invalid_results]
+    # display_name (ID_CLIENT): el catalogo no garantiza nombres unicos entre
+    # ID_CLIENT distintos, asi que el ID se muestra siempre junto al nombre.
+    clients_ok = [f"{r.source.display_name} ({r.source.id_client})" for r in result.client_results]
+    clients_invalid = [f"{r.source.display_name} ({r.source.id_client})" for r in result.invalid_results]
     lines = [
         f"Fecha de generacion: {pd.Timestamp.now():%Y-%m-%d %H:%M}",
         f"Clientes incluidos en la comparativa global ({len(clients_ok)}): {clients_ok}",
@@ -109,7 +111,10 @@ def executive_summary_table(result: GlobalAnalysisResult) -> pd.DataFrame:
 def client_coverage_table(result: GlobalAnalysisResult) -> pd.DataFrame:
     rows = []
     for r in result.client_results:
-        row = {"ID_CLIENT": r.source.id_client, "ETIQUETA": r.source.file_label, "N_CANDIDATAS": r.n_candidates}
+        row = {
+            "ID_CLIENT": r.source.id_client, "ETIQUETA": r.source.file_label,
+            "DISPLAY_NAME": r.source.display_name, "N_CANDIDATAS": r.n_candidates,
+        }
         for period in ALL_PERIODS:
             pr = r.periods.get(period)
             row[f"PCT_COMPARABLE_{period}"] = pr.pct_comparable if pr else float("nan")
@@ -127,7 +132,7 @@ def client_coverage_table(result: GlobalAnalysisResult) -> pd.DataFrame:
 def monthly_by_client_table(result: GlobalAnalysisResult) -> pd.DataFrame:
     rows = []
     for r in result.client_results:
-        row = {"ID_CLIENT": r.source.id_client, "ETIQUETA": r.source.file_label}
+        row = {"ID_CLIENT": r.source.id_client, "ETIQUETA": r.source.file_label, "DISPLAY_NAME": r.source.display_name}
         for month in MONTHLY_PERIODS:
             pr = r.periods.get(month)
             row[f"PCT_COMPARABLE_{month}"] = pr.pct_comparable if pr else float("nan")
@@ -278,6 +283,7 @@ def exclusions_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.DataFr
                 reason_totals[reason] = reason_totals.get(reason, 0) + n
             per_client_rows.append({
                 "ID_CLIENT": r.source.id_client, "ETIQUETA": r.source.file_label,
+                "DISPLAY_NAME": r.source.display_name,
                 "N_ML_EXCLUDED": pr_6m.n_ml_excluded, "PCT_ML_EXCLUDED": pr_6m.pct_ml_excluded,
             })
     return [
@@ -302,9 +308,16 @@ def data_quality_checks_blocks(result: GlobalAnalysisResult) -> list[tuple[str, 
             key = (issue.severity.value, issue.code)
             entry = summary_counts.setdefault(key, {"n_occurrences": 0, "clients": set()})
             entry["n_occurrences"] += 1
-            entry["clients"].add(r.source.file_label)
+            # Identidad por ID_CLIENT, nunca por file_label/display_name (Fase
+            # 5, bug corregido): varios ClientAnalysisResult de un mismo CSV
+            # fisico comparten file_label (calculado una vez por fichero,
+            # antes de particionar por ID_CLIENT), y el catalogo de nombres
+            # tampoco garantiza display_name unico entre IDs distintos. Usar
+            # cualquiera de los dos aqui infra-cuenta N_CLIENTES_AFECTADOS.
+            entry["clients"].add(r.source.id_client)
             detail_rows.append({
-                "CLIENTE": r.source.file_label, "SEVERIDAD": issue.severity.value,
+                "ID_CLIENT": r.source.id_client, "CLIENTE": r.source.display_name,
+                "SEVERIDAD": issue.severity.value,
                 "CODIGO": issue.code, "AMBITO": issue.scope, "MENSAJE": issue.message,
             })
     summary_rows = [

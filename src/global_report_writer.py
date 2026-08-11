@@ -92,9 +92,9 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     # 2. Clientes analizados
     a("## 2. Clientes analizados")
     a("")
-    rows = [[str(r.source.id_client), r.source.file_label, r.source.file_name, r.status]
+    rows = [[str(r.source.id_client), r.source.display_name, r.source.file_label, r.source.file_name, r.status]
             for r in result.client_results]
-    a("\n".join(_table_from_rows(["ID_CLIENT", "Etiqueta", "CSV", "Estado"], rows)))
+    a("\n".join(_table_from_rows(["ID_CLIENT", "Nombre", "Etiqueta", "CSV", "Estado"], rows)))
     if result.invalid_results:
         a("")
         a("Excluidos de la comparativa global por fichero invalido:")
@@ -279,19 +279,22 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     a("## 13. Clientes donde mejora ML")
     a("")
     improving = [
-        (r.source.file_label, r.periods["6M"].wape.get("improvement_pct"))
+        (r.source.id_client, r.source.display_name, r.periods["6M"].wape.get("improvement_pct"))
         for r in result.client_results
         if r.periods.get("6M") and r.periods["6M"].wape.get("improvement_pct") is not None
         and not math.isnan(r.periods["6M"].wape.get("improvement_pct")) and r.periods["6M"].wape.get("improvement_pct") > 0
     ]
-    improving.sort(key=lambda x: -x[1])
+    improving.sort(key=lambda x: -x[2])
     a(
         f"ML mejora en **{len(improving)} de {_fmt_num(n_evaluable)} clientes con performance calculable** en "
         f"6M" + (f". Otros {_fmt_num(n_missing)} clientes no tienen series comparables en 6M y no entran en "
                  f"este recuento." if n_missing else ".")
     )
     a("")
-    a("\n".join(_table_from_rows(["Cliente", "Mejora ponderada 6M"], [[c, _fmt_signed_pct_scaled(v)] for c, v in improving])) if improving else "_Ninguno._")
+    a("\n".join(_table_from_rows(
+        ["ID_CLIENT", "Cliente", "Mejora ponderada 6M"],
+        [[str(cid), name, _fmt_signed_pct_scaled(v)] for cid, name, v in improving],
+    )) if improving else "_Ninguno._")
     a("")
     a("---")
     a("")
@@ -299,19 +302,22 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     a("## 14. Clientes donde empeora")
     a("")
     worsening = [
-        (r.source.file_label, r.periods["6M"].wape.get("improvement_pct"))
+        (r.source.id_client, r.source.display_name, r.periods["6M"].wape.get("improvement_pct"))
         for r in result.client_results
         if r.periods.get("6M") and r.periods["6M"].wape.get("improvement_pct") is not None
         and not math.isnan(r.periods["6M"].wape.get("improvement_pct")) and r.periods["6M"].wape.get("improvement_pct") <= 0
     ]
-    worsening.sort(key=lambda x: x[1])
+    worsening.sort(key=lambda x: x[2])
     a(
         f"{len(worsening)} de {_fmt_num(n_evaluable)} clientes con performance calculable no mejoran (empeoran "
         f"o quedan iguales) en 6M" + (f". Otros {_fmt_num(n_missing)} clientes no tienen series comparables en "
                                       f"6M y no entran en este recuento." if n_missing else ".")
     )
     a("")
-    a("\n".join(_table_from_rows(["Cliente", "Mejora ponderada 6M"], [[c, _fmt_signed_pct_scaled(v)] for c, v in worsening])) if worsening else "_Ninguno._")
+    a("\n".join(_table_from_rows(
+        ["ID_CLIENT", "Cliente", "Mejora ponderada 6M"],
+        [[str(cid), name, _fmt_signed_pct_scaled(v)] for cid, name, v in worsening],
+    )) if worsening else "_Ninguno._")
     a("")
     a("---")
     a("")

@@ -18,6 +18,26 @@ def test_build_global_report_mentions_all_valid_clients():
         assert label in report
 
 
+def test_build_global_report_improving_and_worsening_tables_include_id_client():
+    """
+    Secciones 13/14 ("Clientes donde mejora/empeora ML"): el nombre de
+    catalogo no garantiza unicidad entre ID_CLIENT distintos, asi que estas
+    listas deben llevar una columna ID_CLIENT junto al nombre, nunca mostrar
+    solo el nombre.
+    """
+    result = build_global_analysis_result()
+    report = build_global_report(result)
+
+    section_13 = report.split("## 13.")[1].split("## 14.")[0]
+    section_14 = report.split("## 14.")[1].split("## 15.")[0]
+
+    assert "| ID_CLIENT | Cliente | Mejora ponderada 6M |" in section_13
+    assert "| ID_CLIENT | Cliente | Mejora ponderada 6M |" in section_14
+    # 77777_AllMlWins mejora (+50%); 99999_Synthetic empeora (ML peor que SCP en 6M).
+    assert "| 77777 | AllMlWins |" in section_13
+    assert "| 99999 | Synthetic |" in section_14
+
+
 def test_build_global_report_preserves_technical_period_names_in_headings():
     """
     Regresion: un .lower() aplicado a la etiqueta visible completa convertia

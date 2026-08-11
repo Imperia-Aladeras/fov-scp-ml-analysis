@@ -328,6 +328,11 @@ class ClientSource:
     quality: QualityReport = field(default_factory=QualityReport)
     is_valid: bool = False
     folder_name: str = ""
+    # Nombre resuelto por config/client-catalog.json (Fase 5). El loader es
+    # deliberadamente agnostico a presentacion/catalogo: se deja sin
+    # resolver aqui y lo rellena la orquestacion (analysis_fov_scp_ml.py)
+    # despues de construir todos los ClientSource del run.
+    display_name: str = ""
 
     @property
     def file_name(self) -> str:

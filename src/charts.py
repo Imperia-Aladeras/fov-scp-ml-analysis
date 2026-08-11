@@ -78,7 +78,8 @@ def _save_close(fig, path: Path) -> str:
 
 
 def _client_tag(result: ClientAnalysisResult) -> str:
-    return f"Cliente {result.source.file_label}"
+    source = result.source
+    return f"{source.display_name} — ClientId {source.id_client}"
 
 
 # --------------------------------------------------------------------------

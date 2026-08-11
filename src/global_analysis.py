@@ -156,6 +156,7 @@ def _client_reduction_and_deterioration_tables(
             continue
         rows.append({
             "ID_CLIENT": r.source.id_client, "ETIQUETA": r.source.file_label,
+            "DISPLAY_NAME": r.source.display_name,
             "ABS_ERROR_REDUCTION": pr.abs_error_reduction_total,
         })
     base = pd.DataFrame(rows)
@@ -240,7 +241,8 @@ def build_client_period_table(client_results: list[ClientAnalysisResult], period
         source = r.source
         counts = r.quality.summary_counts()
         row = {
-            "ID_CLIENT": source.id_client, "ETIQUETA": source.file_label, "CSV": source.file_name,
+            "ID_CLIENT": source.id_client, "ETIQUETA": source.file_label,
+            "DISPLAY_NAME": source.display_name, "CSV": source.file_name,
             "ID_BATCH": source.id_batch, "ID_RUN_STAGING": source.id_run_staging,
         }
         if pr is None:

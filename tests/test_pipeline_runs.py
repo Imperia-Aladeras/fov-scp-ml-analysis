@@ -149,10 +149,13 @@ def test_main_creates_run_structure_for_single_client_csv(tmp_path: Path):
     assert (run_dir / "global" / "fov_scp_ml_global_summary.xlsx").exists()
     assert (run_dir / "global" / "fov_scp_ml_global_report.md").exists()
 
-    valid_client_dir = run_dir / "clients" / "10204"
-    assert (valid_client_dir / "fov_scp_ml_summary_10204.xlsx").exists()
-    assert (valid_client_dir / "fov_scp_ml_report_10204.md").exists()
-    assert (valid_client_dir / "processing_log_10204.txt").exists()
+    # Fase 5: folder_name = {id_client}-{slug(display_name)}. Sin monkeypatch
+    # de BASE_DIR, se resuelve contra el config/client-catalog.json real del
+    # repositorio, donde 10204 -> "SKLUM".
+    valid_client_dir = run_dir / "clients" / "10204-sklum"
+    assert (valid_client_dir / "fov_scp_ml_summary_10204-sklum.xlsx").exists()
+    assert (valid_client_dir / "fov_scp_ml_report_10204-sklum.md").exists()
+    assert (valid_client_dir / "processing_log_10204-sklum.txt").exists()
 
     # nunca en las rutas legacy
     assert not (tmp_path / "outputs" / "10204").exists()
@@ -251,10 +254,12 @@ def test_main_with_single_csv_multiple_clients_creates_one_directory_per_client(
     assert exit_code == 0
     run_dir = output_root / "multi_client_run"
 
-    client_10204_dir = run_dir / "clients" / "10204"
-    client_10467_dir = run_dir / "clients" / "10467"
-    assert (client_10204_dir / "fov_scp_ml_summary_10204.xlsx").exists()
-    assert (client_10467_dir / "fov_scp_ml_summary_10467.xlsx").exists()
+    # Fase 5: folder_name = {id_client}-{slug(display_name)} resuelto contra
+    # el config/client-catalog.json real (10204 -> SKLUM, 10467 -> "Embutidos Martínez").
+    client_10204_dir = run_dir / "clients" / "10204-sklum"
+    client_10467_dir = run_dir / "clients" / "10467-embutidos-martínez"
+    assert (client_10204_dir / "fov_scp_ml_summary_10204-sklum.xlsx").exists()
+    assert (client_10467_dir / "fov_scp_ml_summary_10467-embutidos-martínez.xlsx").exists()
 
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["n_csv_discovered"] == 1
@@ -481,7 +486,8 @@ def test_main_runs_on_paths_with_spaces_and_accents(tmp_path: Path):
         "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "acentos_run",
     ])
     assert exit_code == 0
-    assert (output_root / "acentos_run" / "clients" / "10204").exists()
+    # Sin monkeypatch de BASE_DIR: resuelve contra el catalogo real (10204 -> SKLUM).
+    assert (output_root / "acentos_run" / "clients" / "10204-sklum").exists()
 
 
 def test_default_command_with_no_args_uses_repo_data_and_creates_timestamped_run(tmp_path: Path, monkeypatch):
@@ -499,7 +505,9 @@ def test_default_command_with_no_args_uses_repo_data_and_creates_timestamped_run
     # catalog_assets/, que es propio del catalogo, no un run).
     run_dirs = [p for p in output_root.iterdir() if p.is_dir() and p.name != "catalog_assets"]
     assert len(run_dirs) == 1
-    assert (run_dirs[0] / "clients" / "10204").exists()
+    # BASE_DIR apunta a fake_repo, sin config/client-catalog.json: catalogo
+    # vacio -> fallback "Cliente 10204" -> slug "cliente-10204".
+    assert (run_dirs[0] / "clients" / "10204-cliente-10204").exists()
     assert (output_root / "index.html").exists()
     assert (output_root / "run_index.log").exists()
 

@@ -251,6 +251,7 @@ def build_client_row_vm(result) -> dict:
     return {
         "id_client": source.id_client if source.id_client is not None else NA_TEXT,
         "etiqueta": source.file_label,
+        "display_name": source.display_name,
         "folder_name": source.folder_name,
         "estado": result.status,
         "batches": ", ".join(str(b) for b in source.id_batch) if source.id_batch else NA_TEXT,
@@ -290,6 +291,7 @@ def build_inventory_row_vm(record) -> dict:
         "archivo": record.archivo,
         "id_client": record.id_client if record.id_client is not None else NA_TEXT,
         "etiqueta": record.etiqueta or NA_TEXT,
+        "display_name": record.display_name or NA_TEXT,
         "estado": record.estado,
         "size_bytes": fmt_num(record.size_bytes),
         "sha256_short": (record.sha256[:12] + "…") if record.sha256 else NA_TEXT,
@@ -383,10 +385,13 @@ def _ranking_table_vm(df, value_col: str, signed: bool = True, top_n: int = 10) 
 
 def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
     """
-    prev_client / next_client: tuplas (etiqueta, folder_name) o None. El
-    orden determinista (ID_CLIENT, etiqueta, nombre de fichero) lo decide
-    el llamador (src/html_report.py), que tiene visibilidad de TODOS los
-    clientes de la ejecucion.
+    prev_client / next_client: dicts con claves etiqueta/display_name/id_client/url,
+    o None. El orden determinista (nombre de fichero) lo decide el llamador
+    (src/html_report.py), que tiene visibilidad de TODOS los clientes de la
+    ejecucion. display_name (Fase 5) es el nombre principal a mostrar en la
+    navegacion; etiqueta se conserva para trazabilidad. id_client se muestra
+    junto a display_name en el texto del enlace porque el catalogo no
+    garantiza nombres unicos entre ID_CLIENT distintos.
     """
     from src.models import category_performance_table, top_absolute_impact, top_percentage_changes
     from src.periods import period_columns
@@ -397,6 +402,7 @@ def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
     vm = {
         "id_client": source.id_client if source.id_client is not None else NA_TEXT,
         "etiqueta": source.file_label,
+        "display_name": source.display_name,
         "file_name": source.file_name,
         "id_batch": ", ".join(str(b) for b in source.id_batch) if source.id_batch else NA_TEXT,
         "id_run_staging": ", ".join(str(b) for b in source.id_run_staging) if source.id_run_staging else NA_TEXT,

@@ -114,7 +114,7 @@ def readme_blocks(result: ClientAnalysisResult) -> list[tuple[str, pd.DataFrame]
     no_comparable_anywhere = result.periods and all(pr.n_comparable == 0 for pr in result.periods.values())
     lines = [
         f"Fuente: {source.file_name}",
-        f"Cliente: ID_CLIENT={source.id_client} | etiqueta={source.file_label}",
+        f"Cliente: {source.display_name} | ID_CLIENT={source.id_client} | etiqueta_fichero={source.file_label}",
         f"Batch: {source.id_batch} | Run staging: {source.id_run_staging} | Source run: {source.source_run_id}",
         f"Fecha de generacion: {pd.Timestamp.now():%Y-%m-%d %H:%M}",
         f"CSV reparado en memoria (comillas dobladas): {source.read_repaired}",

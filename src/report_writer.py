@@ -138,10 +138,10 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     older = result.periods.get("OLDER_3M")
     no_comparable_anywhere = bool(result.periods) and all(pr.n_comparable == 0 for pr in result.periods.values())
 
-    a(f"# Informe individual SCP vs ML — {source.file_label}")
+    a(f"# Informe individual SCP vs ML — {source.display_name}")
     a("")
     a(f"**Fecha del analisis:** {pd.Timestamp.now():%d/%m/%Y}")
-    a(f"**Cliente:** ID_CLIENT={source.id_client} | Fichero: `{source.file_name}`")
+    a(f"**Cliente:** {source.display_name} | ID_CLIENT={source.id_client} | Fichero: `{source.file_name}` (etiqueta: {source.file_label})")
     a(f"**Batch/Run:** ID_BATCH={source.id_batch} | ID_RUN_STAGING={source.id_run_staging} | SOURCE_RUN_ID={source.source_run_id}")
     a(f"**Estado global del cliente:** {result.status}")
     a("")

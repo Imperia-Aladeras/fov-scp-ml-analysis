@@ -313,6 +313,21 @@ def test_load_client_sources_from_csv_single_client_produces_one_partition(tmp_p
     assert sources[0].n_rows == 2
 
 
+def test_load_client_sources_from_csv_does_not_resolve_display_name(tmp_path: Path):
+    """
+    Fase 5: el loader es agnostico a catalogo/presentacion (decision cerrada).
+    display_name debe quedar sin resolver (valor por defecto ""); la
+    resolucion via config/client-catalog.json ocurre despues, en la
+    orquestacion de analysis_fov_scp_ml.py, nunca aqui.
+    """
+    path = tmp_path / "TA_FOV_SCP_ML_full_export.csv"
+    _write_structural_csv(path, [_structural_row(1)])
+
+    sources = load_client_sources_from_csv(path)
+
+    assert sources[0].display_name == ""
+
+
 def test_load_client_sources_from_csv_multiple_clients_produces_one_partition_per_client(tmp_path: Path):
     path = tmp_path / "TA_FOV_SCP_ML_full_export.csv"
     _write_structural_csv(path, [

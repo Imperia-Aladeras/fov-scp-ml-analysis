@@ -29,6 +29,7 @@ class ExecutionRecord:
     carpeta_salida: str
     id_client: object
     etiqueta: object
+    display_name: object
     id_batch: list
     id_run_staging: list
     filas: object
@@ -90,6 +91,7 @@ def build_execution_records(
                     archivo=record.name,
                     carpeta_salida=carpeta_salida,
                     id_client=source.id_client, etiqueta=source.file_label,
+                    display_name=source.display_name,
                     id_batch=source.id_batch, id_run_staging=source.id_run_staging,
                     filas=source.n_rows, candidatas=r.n_candidates,
                     comparables_6m=pr_6m.n_comparable if pr_6m else 0,
@@ -104,7 +106,7 @@ def build_execution_records(
         else:
             records.append(ExecutionRecord(
                 archivo=record.name, carpeta_salida="",
-                id_client=None, etiqueta=None, id_batch=[], id_run_staging=[],
+                id_client=None, etiqueta=None, display_name=None, id_batch=[], id_run_staging=[],
                 filas=None, candidatas=None, comparables_6m=None,
                 estado=INPUT_NOT_ANALYZED, warnings=None, errors=None,
                 duracion_segundos=0.0,
@@ -123,7 +125,7 @@ def _fmt_optional(x) -> str:
 def execution_summary_table(records: list[ExecutionRecord]) -> pd.DataFrame:
     return pd.DataFrame([{
         "ARCHIVO": rec.archivo, "CARPETA_SALIDA": rec.carpeta_salida,
-        "ID_CLIENT": rec.id_client, "ETIQUETA": rec.etiqueta,
+        "ID_CLIENT": rec.id_client, "ETIQUETA": rec.etiqueta, "DISPLAY_NAME": rec.display_name,
         "ID_BATCH": str(rec.id_batch), "ID_RUN_STAGING": str(rec.id_run_staging),
         "FILAS": rec.filas, "CANDIDATAS": rec.candidatas, "COMPARABLES_6M": rec.comparables_6m,
         "ESTADO": rec.estado, "WARNINGS": rec.warnings, "ERRORS": rec.errors,
@@ -178,13 +180,13 @@ def build_execution_summary_markdown(records: list[ExecutionRecord]) -> str:
         a(f"| {status} | {n} |")
     a("")
     a(
-        "| Archivo | Carpeta salida | ID_CLIENT | Filas | Candidatas | Comparables 6M | Estado | "
+        "| Archivo | Nombre | Carpeta salida | ID_CLIENT | Filas | Candidatas | Comparables 6M | Estado | "
         "Warnings | Errors | Duracion (s) | Informe | Excel | Graficos | Log | Tamano (bytes) | SHA256 | Error de lectura |"
     )
-    a("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    a("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for rec in records:
         a(
-            f"| {rec.archivo} | {rec.carpeta_salida} | {_fmt_optional(rec.id_client)} | {_fmt_optional(rec.filas)} | "
+            f"| {rec.archivo} | {_fmt_optional(rec.display_name)} | {rec.carpeta_salida} | {_fmt_optional(rec.id_client)} | {_fmt_optional(rec.filas)} | "
             f"{_fmt_optional(rec.candidatas)} | {_fmt_optional(rec.comparables_6m)} | {rec.estado} | "
             f"{_fmt_optional(rec.warnings)} | {_fmt_optional(rec.errors)} | {rec.duracion_segundos:.2f} | "
             f"{'si' if rec.informe_generado else 'no'} | {'si' if rec.excel_generado else 'no'} | "

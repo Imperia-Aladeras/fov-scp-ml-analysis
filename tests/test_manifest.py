@@ -4,7 +4,14 @@ from datetime import datetime
 from pathlib import Path
 
 from src.input_inventory import build_input_inventory
-from src.manifest import build_manifest, compute_sha256, detect_git_commit, detect_git_worktree_dirty, write_manifest
+from src.manifest import (
+    MANIFEST_SCHEMA_VERSION,
+    build_manifest,
+    compute_sha256,
+    detect_git_commit,
+    detect_git_worktree_dirty,
+    write_manifest,
+)
 from src.run_config import build_arg_parser, build_run_config
 from tests.factories import build_multi_client_results
 
@@ -410,6 +417,56 @@ def test_build_manifest_published_run_has_no_working_dir(tmp_path: Path):
     assert manifest["published"] is True
     assert manifest["output_dir_working"] is None
     assert manifest["output_dir_final"] == str(cfg.run_dir_final)
+
+
+# --------------------------------------------------------------------------
+# Fase 5: bloque raiz aditivo client_catalog (nunca dentro de csv_files).
+# --------------------------------------------------------------------------
+
+def test_build_manifest_client_catalog_defaults_to_none_when_not_provided(tmp_path: Path):
+    cfg = _run_config(tmp_path)
+    now = _now()
+    manifest = build_manifest(
+        cfg, inventory=[], results=[], global_result=None, outputs_generated=[],
+        started_at=now, finished_at=now, status="SUCCESS",
+        git_commit=None, git_worktree_dirty=None, copy_inputs=False, published=False,
+    )
+    assert manifest["client_catalog"] is None
+
+
+def test_build_manifest_client_catalog_block_is_stored_verbatim_and_additive(tmp_path: Path):
+    """
+    El bloque client_catalog es aditivo (Fase 5): no debe alterar csv_files
+    (que sigue siendo estrictamente fisico) ni el numero de esquema del
+    manifest, que solo se incrementa si cambia la forma/semantica de campos
+    ya existentes que run_catalog.py interpreta.
+    """
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    results = build_multi_client_results()
+    for r in results:
+        (data_dir / r.source.csv_path.name).write_text("dummy", encoding="utf-8")
+    cfg = _run_config(tmp_path)
+    inventory = build_input_inventory(cfg.input_dir)
+    now = _now()
+
+    catalog_info = {
+        "relative_path": "config/client-catalog.json", "sha256": "deadbeef",
+        "n_entries": 228, "warning": None,
+    }
+    manifest = build_manifest(
+        cfg, inventory, results=results, global_result=None, outputs_generated=[],
+        started_at=now, finished_at=now, status="SUCCESS_WITH_WARNINGS",
+        git_commit=None, git_worktree_dirty=None, copy_inputs=False, published=False,
+        client_catalog_info=catalog_info,
+    )
+    assert manifest["client_catalog"] == catalog_info
+    assert manifest["manifest_schema_version"] == MANIFEST_SCHEMA_VERSION == 2
+    # csv_files sigue siendo estrictamente fisico: el bloque client_catalog
+    # no introduce ninguna clave por cliente dentro de sus entradas.
+    for entry in manifest["csv_files"]:
+        assert "client_catalog" not in entry
+        assert "clients" not in entry
 
 
 def test_write_manifest_produces_valid_json(tmp_path: Path):

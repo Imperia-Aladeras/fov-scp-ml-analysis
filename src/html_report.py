@@ -212,12 +212,14 @@ def generate_html_report(
         prev_result = ordered_results[i - 1] if i > 0 else None
         next_result = ordered_results[i + 1] if i < len(ordered_results) - 1 else None
         prev_dict = (
-            {"etiqueta": prev_result.source.file_label,
+            {"etiqueta": prev_result.source.file_label, "display_name": prev_result.source.display_name,
+             "id_client": prev_result.source.id_client,
              "url": _rel_url(page_path, f"clients/{prev_result.source.folder_name}/index.html")}
             if prev_result is not None else None
         )
         next_dict = (
-            {"etiqueta": next_result.source.file_label,
+            {"etiqueta": next_result.source.file_label, "display_name": next_result.source.display_name,
+             "id_client": next_result.source.id_client,
              "url": _rel_url(page_path, f"clients/{next_result.source.folder_name}/index.html")}
             if next_result is not None else None
         )

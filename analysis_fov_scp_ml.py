@@ -69,6 +69,7 @@ from pathlib import Path
 
 from src.charts import generate_client_charts
 from src.client_analysis import ClientAnalysisResult, analyze_client
+from src.client_catalog import build_client_folder_name, load_client_catalog, resolve_client_name
 from src.excel_writer import build_client_workbook
 from src.execution_log import format_log_line
 from src.execution_summary import (
@@ -90,7 +91,7 @@ from src.input_inventory import (
 )
 from src.input_loader import ClientSource, load_client_sources_from_csv
 from src.logging_utils import build_processing_log
-from src.manifest import build_manifest, detect_git_commit, detect_git_worktree_dirty, write_manifest
+from src.manifest import build_manifest, compute_sha256, detect_git_commit, detect_git_worktree_dirty, write_manifest
 from src.quality_checks import Severity
 from src.report_writer import build_client_report
 from src.run_catalog import rebuild_run_catalog
@@ -194,8 +195,8 @@ def _print_period_line(result: ClientAnalysisResult, period: str) -> None:
 
 def _print_client_summary(result: ClientAnalysisResult, outputs_generated: list[str]) -> None:
     source: ClientSource = result.source
-    print(f"\n=== {source.file_name} -> clients/{source.folder_name}/ ===")
-    print(f"  Etiqueta: {source.file_label} | ID esperado por nombre: {source.id_from_filename}")
+    print(f"\n=== {source.display_name} (ID_CLIENT={source.id_client}) -> clients/{source.folder_name}/ ===")
+    print(f"  Etiqueta fichero: {source.file_label} | ID esperado por nombre: {source.id_from_filename}")
     print(
         f"  Fichero valido: {result.file_valid} | Estado global del cliente: {result.status} | "
         f"CSV reparado (comillas dobladas): {source.read_repaired}"
@@ -436,6 +437,7 @@ def run_pipeline(run_config: RunConfig) -> int:
     inventory: list[InputFileRecord] = []
     git_commit: str | None = None
     git_worktree_dirty: bool | None = None
+    client_catalog_info: dict | None = None
 
     def log(message: str) -> None:
         log_lines.append(format_log_line(phase, message))
@@ -474,6 +476,7 @@ def run_pipeline(run_config: RunConfig) -> int:
                     "phase": phase, "error_type": "NoCsvFoundError",
                     "error_message": "No se ha encontrado ningun CSV en input_dir.",
                 },
+                client_catalog_info=client_catalog_info,
             )
             write_manifest(manifest, run_config.manifest_path)
             _write_execution_log(log_lines, run_config.execution_log_path)
@@ -493,6 +496,7 @@ def run_pipeline(run_config: RunConfig) -> int:
                         f"Se han encontrado {len(inventory)} CSV en input_dir; se esperaba exactamente 1."
                     ),
                 },
+                client_catalog_info=client_catalog_info,
             )
             write_manifest(manifest, run_config.manifest_path)
             _write_execution_log(log_lines, run_config.execution_log_path)
@@ -519,9 +523,31 @@ def run_pipeline(run_config: RunConfig) -> int:
             run_config.inputs_dir / inventory[0].name if run_config.copy_inputs else inventory[0].path
         )
         sources = load_client_sources_from_csv(source_path)
-        for source in sources:
-            source.folder_name = str(source.id_client)
         log(f"clientes_cargados={len(sources)} desde {source_path}")
+
+        # Fase 5: el loader (src/input_loader.py) es deliberadamente agnostico
+        # a catalogo/presentacion. La resolucion de display_name y el
+        # folder_name tecnico ocurren aqui, una unica vez por run, fuera del
+        # loader. load_client_catalog nunca lanza: un catalogo ausente o
+        # corrupto degrada a {} con warning, y cada cliente cae al fallback
+        # "Cliente <id>" de resolve_client_name, nunca bloquea el run.
+        phase = "CLIENT_CATALOG_LOAD"
+        client_catalog_path = BASE_DIR / "config" / "client-catalog.json"
+        client_catalog, client_catalog_warning = load_client_catalog(client_catalog_path)
+        if client_catalog_warning:
+            log(f"WARNING CLIENT_CATALOG: {client_catalog_warning}")
+        log(f"catalogo_clientes cargado: {len(client_catalog)} entrada(s) desde {client_catalog_path}")
+        client_catalog_info = {
+            "relative_path": str(client_catalog_path.relative_to(BASE_DIR)) if client_catalog_path.exists() else None,
+            "sha256": compute_sha256(client_catalog_path) if client_catalog_path.exists() else None,
+            "n_entries": len(client_catalog),
+            "warning": client_catalog_warning,
+        }
+
+        phase = "DISCOVER"
+        for source in sources:
+            source.display_name = resolve_client_name(source.id_client, client_catalog)
+            source.folder_name = build_client_folder_name(source.id_client, source.display_name)
 
         durations: dict[int, float] = {}
         phase = "CLIENT_PROCESSING"
@@ -591,6 +617,7 @@ def run_pipeline(run_config: RunConfig) -> int:
             run_config, inventory, results, global_result, outputs_generated, started_at, finished_at, status,
             git_commit, git_worktree_dirty, run_config.copy_inputs, published=False,
             input_metadata_changed=metadata_changed,
+            client_catalog_info=client_catalog_info,
         )
         write_manifest(manifest, run_config.manifest_path)
         log("manifest generado")
@@ -628,6 +655,7 @@ def run_pipeline(run_config: RunConfig) -> int:
                 run_config, inventory, results, global_result, outputs_generated, started_at, finished_at, "FAILED",
                 git_commit, git_worktree_dirty, run_config.copy_inputs, published=False,
                 failure={"phase": phase, "error_type": error_type, "error_message": str(exc)},
+                client_catalog_info=client_catalog_info,
             )
             write_manifest(manifest, run_config.manifest_path)
         except OSError:

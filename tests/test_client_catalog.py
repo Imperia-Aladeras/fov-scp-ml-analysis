@@ -1,7 +1,12 @@
 import json
 from pathlib import Path
 
-from src.client_catalog import load_client_catalog, resolve_client_name
+from src.client_catalog import (
+    build_client_folder_name,
+    load_client_catalog,
+    resolve_client_name,
+    slugify_display_name,
+)
 
 
 def _write_catalog(tmp_path: Path, text: str, name: str = "client-catalog.json") -> Path:
@@ -179,3 +184,65 @@ def test_load_client_catalog_detects_keys_colliding_after_int_normalization(tmp_
     assert catalog == {}
     assert warning is not None
     assert "10338" in warning
+
+
+# --------------------------------------------------------------------------
+# slugify_display_name / build_client_folder_name (Fase 5)
+# --------------------------------------------------------------------------
+
+
+def test_slugify_display_name_lowercases_only_the_slug():
+    assert slugify_display_name("Grefusa") == "grefusa"
+
+
+def test_slugify_display_name_collapses_internal_whitespace_to_hyphen():
+    assert slugify_display_name("Fiorucci 2") == "fiorucci-2"
+
+
+def test_slugify_display_name_collapses_multiple_internal_spaces():
+    assert slugify_display_name("Cliente   99999") == "cliente-99999"
+
+
+def test_slugify_display_name_strips_outer_whitespace():
+    assert slugify_display_name("  Grefusa  ") == "grefusa"
+
+
+def test_slugify_display_name_preserves_unicode_accents_without_transliteration():
+    assert slugify_display_name("Aldelís") == "aldelís"
+    assert slugify_display_name("Compañía Alfaro") == "compañía-alfaro"
+
+
+def test_slugify_display_name_sanitizes_windows_forbidden_characters():
+    assert slugify_display_name('A/B:C*D?E"F<G>H|I') == "a_b_c_d_e_f_g_h_i"
+
+
+def test_build_client_folder_name_known_client():
+    assert build_client_folder_name(10338, "Grefusa") == "10338-grefusa"
+
+
+def test_build_client_folder_name_display_name_with_space_and_digit():
+    assert build_client_folder_name(10537, "Fiorucci 2") == "10537-fiorucci-2"
+
+
+def test_build_client_folder_name_fallback_display_name():
+    fallback = resolve_client_name(99999, {})
+    assert build_client_folder_name(99999, fallback) == "99999-cliente-99999"
+
+
+def test_build_client_folder_name_preserves_accent():
+    assert build_client_folder_name(10684, "Aldelís") == "10684-aldelís"
+
+
+def test_build_client_folder_name_disambiguates_identical_display_names_by_id():
+    """
+    El catalogo no impide nombres duplicados entre IDs distintos: el
+    folder_name debe seguir siendo distinto gracias al prefijo id_client,
+    aunque el slug resultante sea identico (p.ej. dos IDs con el mismo
+    display_name tras saneado).
+    """
+    folder_a = build_client_folder_name(10503, "Fiorucci")
+    folder_b = build_client_folder_name(10537, "Fiorucci")
+
+    assert folder_a != folder_b
+    assert folder_a == "10503-fiorucci"
+    assert folder_b == "10537-fiorucci"

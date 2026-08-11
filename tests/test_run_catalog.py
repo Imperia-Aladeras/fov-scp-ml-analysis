@@ -201,6 +201,30 @@ def test_scan_flags_old_schema_without_catalog_summary(tmp_path: Path):
     assert any("CATALOG_FIELDS_MISSING" in w for w in scan.entries[0].warnings)
 
 
+def test_scan_tolerates_manifest_without_client_catalog_block(tmp_path: Path):
+    """
+    Fase 5: manifests anteriores a esta fase no tienen la clave raiz
+    client_catalog. run_catalog.py nunca la lee (solo catalog_summary), asi
+    que su ausencia no debe disparar CATALOG_FIELDS_MISSING ni ningun otro
+    warning.
+    """
+    manifest = _minimal_manifest("run_a")
+    assert "client_catalog" not in manifest
+    _make_run_dir(tmp_path, "run_a", manifest=manifest)
+    scan = scan_output_root(tmp_path)
+    assert scan.entries[0].warnings == ()
+
+
+def test_scan_tolerates_manifest_with_client_catalog_block(tmp_path: Path):
+    """El bloque client_catalog (Fase 5) es aditivo: su presencia tampoco debe alterar el escaneo."""
+    manifest = _minimal_manifest("run_a", client_catalog={
+        "relative_path": "config/client-catalog.json", "sha256": "deadbeef", "n_entries": 228, "warning": None,
+    })
+    _make_run_dir(tmp_path, "run_a", manifest=manifest)
+    scan = scan_output_root(tmp_path)
+    assert scan.entries[0].warnings == ()
+
+
 def test_row_vm_shows_nd_for_missing_optional_fields(tmp_path: Path):
     old_manifest = _minimal_manifest("run_a")
     del old_manifest["catalog_summary"]

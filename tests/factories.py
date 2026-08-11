@@ -105,12 +105,20 @@ def build_no_comparable_dataframe() -> pd.DataFrame:
     return df
 
 
-def make_client_source(df: pd.DataFrame, id_client: int, label: str) -> ClientSource:
+def make_client_source(df: pd.DataFrame, id_client: int, label: str, display_name: str | None = None) -> ClientSource:
+    """
+    display_name simula el resultado de resolver el catalogo (Fase 5), que
+    en produccion ocurre en la orquestacion, nunca en el loader (por eso
+    ClientSource no lo resuelve por si mismo). Por defecto usa `label` para
+    que las factories existentes sigan produciendo un display_name legible
+    sin tener que tocar cada llamada.
+    """
+    resolved_display_name = display_name if display_name is not None else label
     return ClientSource(
         csv_path=Path(f"TA_FOV_SCP_ML_{id_client}_{label}.csv"), file_label=f"{id_client}_{label}",
         id_from_filename=id_client, dataframe=df, read_repaired=False, id_client=id_client,
         id_batch=[1], id_run_staging=[1], source_run_id=[1], n_rows=len(df), is_valid=True,
-        folder_name=f"{id_client}_{label}",
+        folder_name=f"{id_client}_{label}", display_name=resolved_display_name,
     )
 
 

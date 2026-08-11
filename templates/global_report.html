@@ -177,7 +177,7 @@
   <table>
     <thead>
       <tr>
-        <th scope="col">ID</th><th scope="col">Etiqueta</th><th scope="col">Estado</th><th scope="col">Batches</th>
+        <th scope="col">ID</th><th scope="col">Nombre</th><th scope="col">Etiqueta</th><th scope="col">Estado</th><th scope="col">Batches</th>
         <th scope="col">Candidatas</th><th scope="col">Comparables 6M</th><th scope="col">Cobertura</th>
         <th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora</th>
         <th scope="col">Warnings</th><th scope="col">Errors</th><th scope="col">Página</th>
@@ -187,6 +187,7 @@
       {% for row in clients %}
       <tr class="client-row client-row--{{ row.status_flag }}">
         <td>{{ row.id_client }}</td>
+        <td>{{ row.display_name }}</td>
         <td>{{ row.etiqueta }}</td>
         <td><span class="badge badge--{{ row.status_flag }}">{{ row.status_label }}</span></td>
         <td>{{ row.batches }}</td>
@@ -212,13 +213,14 @@
   <div class="table-scroll">
   <table>
     <thead>
-      <tr><th scope="col">Archivo</th><th scope="col">ID_CLIENT</th><th scope="col">Etiqueta</th><th scope="col">Estado</th><th scope="col">Tamaño (bytes)</th><th scope="col">SHA-256</th><th scope="col">Error</th><th scope="col">Ficha</th><th scope="col">Log</th></tr>
+      <tr><th scope="col">Archivo</th><th scope="col">ID_CLIENT</th><th scope="col">Nombre</th><th scope="col">Etiqueta</th><th scope="col">Estado</th><th scope="col">Tamaño (bytes)</th><th scope="col">SHA-256</th><th scope="col">Error</th><th scope="col">Ficha</th><th scope="col">Log</th></tr>
     </thead>
     <tbody>
       {% for row in inventory %}
       <tr>
         <td>{{ row.archivo }}</td>
         <td>{{ row.id_client }}</td>
+        <td>{{ row.display_name }}</td>
         <td>{{ row.etiqueta }}</td>
         <td>{{ row.estado }}</td>
         <td>{{ row.size_bytes }}</td>

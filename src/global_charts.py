@@ -37,7 +37,7 @@ def _client_labels_and_values(result: GlobalAnalysisResult, period: str, getter)
         pr = r.periods.get(period)
         if pr is None:
             continue
-        labels.append(r.source.file_label)
+        labels.append(f"{r.source.display_name} ({r.source.id_client})")
         values.append(getter(pr))
     return labels, values
 
@@ -184,7 +184,7 @@ def generate_monthly_charts(result: GlobalAnalysisResult, out_dir: Path) -> list
     fig, ax = _new_fig((9, 5))
     for r in result.client_results:
         vals = [r.periods[m].wape.get("improvement_pct") if m in r.periods else np.nan for m in MONTHLY_PERIODS]
-        ax.plot(MONTHLY_PERIODS, vals, marker="o", linewidth=1.3, alpha=0.8, label=r.source.file_label)
+        ax.plot(MONTHLY_PERIODS, vals, marker="o", linewidth=1.3, alpha=0.8, label=f"{r.source.display_name} ({r.source.id_client})")
     ax.axhline(0, color="#c3c2b7", linewidth=1)
     ax.legend(frameon=False, fontsize=7, ncol=2, loc="upper left", bbox_to_anchor=(1.0, 1.0))
     ax.set_ylabel("Mejora relativa ponderada (%)", color="#52514e", fontsize=9)

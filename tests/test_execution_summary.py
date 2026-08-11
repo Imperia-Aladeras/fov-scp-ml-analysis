@@ -50,7 +50,7 @@ def test_execution_summary_table_columns():
     table = execution_summary_table(records)
 
     assert list(table.columns) == [
-        "ARCHIVO", "CARPETA_SALIDA", "ID_CLIENT", "ETIQUETA", "ID_BATCH", "ID_RUN_STAGING",
+        "ARCHIVO", "CARPETA_SALIDA", "ID_CLIENT", "ETIQUETA", "DISPLAY_NAME", "ID_BATCH", "ID_RUN_STAGING",
         "FILAS", "CANDIDATAS", "COMPARABLES_6M", "ESTADO", "WARNINGS", "ERRORS",
         "DURACION_SEGUNDOS", "INFORME_GENERADO", "EXCEL_GENERADO", "GRAFICOS_GENERADOS", "LOG_GENERADO",
         "TAMANO_BYTES", "SHA256", "ERROR_LECTURA",

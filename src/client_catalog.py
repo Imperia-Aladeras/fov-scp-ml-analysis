@@ -17,8 +17,11 @@ valido, no una degradacion, y por eso no genera warning.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from pathlib import Path
+
+from src.input_loader import normalize_folder_name
 
 
 def _loads_object_detecting_duplicate_keys(text: str) -> tuple[object, list[str]]:
@@ -122,3 +125,32 @@ def resolve_client_name(id_client: int, catalog: Mapping[int, str]) -> str:
     presentacion, nunca se usa para agrupar ni para filtrar.
     """
     return catalog.get(id_client, f"Cliente {id_client}")
+
+
+_INTERNAL_WHITESPACE = re.compile(r"\s+")
+
+
+def slugify_display_name(display_name: str) -> str:
+    """
+    Deriva un slug minimo y deterministico de un display_name ya resuelto
+    (Fase 5): recorta espacios exteriores, pasa a minusculas UNICAMENTE en
+    el slug (display_name conserva su capitalizacion original en todo lo
+    demas), colapsa el whitespace interno a un unico guion, y reutiliza
+    normalize_folder_name (src/input_loader.py) para sustituir caracteres
+    incompatibles con rutas de Windows. Nunca translitera Unicode/acentos a
+    ASCII: "Aldelís" -> "aldelís", no "aldelis".
+    """
+    text = display_name.strip().lower()
+    text = _INTERNAL_WHITESPACE.sub("-", text)
+    return normalize_folder_name(text)
+
+
+def build_client_folder_name(id_client: int, display_name: str) -> str:
+    """
+    Nombre tecnico de carpeta/fichero por cliente (Fase 5):
+    `{id_client}-{slug(display_name)}`. ID_CLIENT como prefijo es la unica
+    garantia de unicidad: dos clientes con el mismo display_name (el
+    catalogo no impide duplicados, ver config/client-catalog.json) producen
+    el mismo slug pero un folder_name distinto.
+    """
+    return f"{id_client}-{slugify_display_name(display_name)}"
