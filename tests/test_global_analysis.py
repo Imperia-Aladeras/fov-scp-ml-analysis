@@ -1,5 +1,7 @@
 import math
 
+import pandas as pd
+
 from src.client_analysis import analyze_client
 from src.global_analysis import (
     analyze_global,
@@ -7,11 +9,13 @@ from src.global_analysis import (
     build_global_period_result,
     global_category_performance_table,
 )
+from src.periods import ALL_PERIODS, period_columns
 from tests.factories import (
     build_multi_client_results,
     build_negative_net_multi_client_results,
     build_synthetic_client_dataframe,
     make_client_source,
+    set_period,
 )
 
 
@@ -179,3 +183,156 @@ def test_global_category_performance_table_aggregates_across_clients():
     row = table[table["category"] == "AutoETS"].iloc[0]
     assert row["n_comparable"] == 3
     assert row["n_clients"] == 2
+
+
+# --------------------------------------------------------------------------
+# Fase 4: propagacion de no-evaluabilidad por metrica al agregado global.
+# Un cliente COMPARABLE (poblacion 6M no cambia) pero no evaluable para una
+# metrica concreta no debe desaparecer en silencio de la agregacion global
+# (Perspectiva 1: WAPE/mejora global; Perspectiva 4: reduccion absoluta).
+# Distingue explicitamente "B ausente" de "B presente pero no evaluable".
+# --------------------------------------------------------------------------
+
+def _build_single_client_df(id_client: int, history: float, scp_abs_error: float, ml_abs_error: float, winner: str) -> pd.DataFrame:
+    scp_forecast = history + scp_abs_error
+    ml_forecast = history + ml_abs_error
+    scp_wape = scp_abs_error / history
+    ml_wape = ml_abs_error / history
+    df = pd.DataFrame({
+        "HAS_BASE_CANDIDATE": [1], "ID_CLIENT": [id_client], "ID_CONFIGURATION": [1],
+        "VALUE_LEVEL_1": ["Cat"], "VALUE_LEVEL_2": [None], "VALUE_LEVEL_3": [None],
+        "VALUE_LEVEL_4": [None], "VALUE_LEVEL_5": [None],
+        "ML_BEST_MODEL": ["AutoETS"], "SCP_BEST_MODEL": ["x11 seasonal"],
+        "ML_CLASSIFICATION": ["smooth"], "ML_TYPE": ["smooth_ok"],
+        "SERIES_CLASSIFICATION": ["smooth"], "SCP_CLASSIFICATION": ["smooth"],
+        "COMPARISON_STATUS": ["COMPARABLE"],
+    })
+    for period in ALL_PERIODS:
+        set_period(
+            df, period,
+            total_history=[history], scp_forecast=[scp_forecast], scp_abs_error=[scp_abs_error], scp_wape=[scp_wape],
+            ml_forecast=[ml_forecast], ml_abs_error=[ml_abs_error], ml_wape=[ml_wape], winner_method=[winner],
+        )
+    return df
+
+
+def test_multi_client_global_aggregate_a_alone_baseline():
+    """(A) Solo el Cliente A: agregado valido calculado unicamente con A."""
+    df_a = _build_single_client_df(60001, history=1000.0, scp_abs_error=100.0, ml_abs_error=50.0, winner="ML")
+    result_a = analyze_client(make_client_source(df_a, 60001, "ClientA"))
+
+    gp = build_global_period_result([result_a], "6M")
+    assert math.isclose(gp.scp_wape_global, 0.1, rel_tol=1e-9)
+    assert math.isclose(gp.ml_wape_global, 0.05, rel_tol=1e-9)
+    assert math.isclose(gp.reduction_totals["REDUCCION_NETA"], 50.0, rel_tol=1e-9)
+
+
+def test_multi_client_global_aggregate_b_evaluable_contributes_distinctly():
+    """
+    (B) [A, B] con B completamente evaluable: el agregado es el calculo
+    conjunto real A+B. NO se exige ni se espera que coincida con (A); al
+    contrario, se verifica que B contribuye de verdad.
+    """
+    df_a = _build_single_client_df(60001, history=1000.0, scp_abs_error=100.0, ml_abs_error=50.0, winner="ML")
+    result_a = analyze_client(make_client_source(df_a, 60001, "ClientA"))
+
+    df_b = _build_single_client_df(60002, history=500.0, scp_abs_error=80.0, ml_abs_error=60.0, winner="SCP")
+    result_b = analyze_client(make_client_source(df_b, 60002, "ClientB"))
+
+    gp = build_global_period_result([result_a, result_b], "6M")
+
+    expected_scp_wape = (100.0 + 80.0) / (1000.0 + 500.0)
+    expected_ml_wape = (50.0 + 60.0) / (1000.0 + 500.0)
+    assert math.isclose(gp.scp_wape_global, expected_scp_wape, rel_tol=1e-9)
+    assert math.isclose(gp.ml_wape_global, expected_ml_wape, rel_tol=1e-9)
+    assert math.isclose(gp.reduction_totals["REDUCCION_NETA"], (100.0 - 50.0) + (80.0 - 60.0), rel_tol=1e-9)
+
+    # Explicitamente distinto de "solo A" (prueba que B contribuye de verdad).
+    assert not math.isclose(gp.scp_wape_global, 0.1, rel_tol=1e-6)
+    assert not math.isclose(gp.reduction_totals["REDUCCION_NETA"], 50.0, rel_tol=1e-6)
+
+
+def test_multi_client_global_wape_nan_when_b_comparable_missing_history_never_recovers_a_only_value():
+    """
+    (C) [A, B] con B COMPARABLE pero con TOTAL_HISTORY_6M no evaluable: el
+    WAPE global (depende del historico) queda NaN, sin recuperar en
+    silencio el valor de "solo A". La reduccion absoluta no depende del
+    historico, asi que sigue siendo evaluable con B incluido.
+    """
+    df_a = _build_single_client_df(60001, history=1000.0, scp_abs_error=100.0, ml_abs_error=50.0, winner="ML")
+    result_a = analyze_client(make_client_source(df_a, 60001, "ClientA"))
+
+    df_b = _build_single_client_df(60003, history=500.0, scp_abs_error=80.0, ml_abs_error=60.0, winner="SCP")
+    pcols_6m = period_columns("6M")
+    df_b[pcols_6m.total_history] = [None]
+    result_b = analyze_client(make_client_source(df_b, 60003, "ClientBIncompleteHistory"))
+
+    # El cliente B sigue siendo comparable en 6M (la poblacion no cambia).
+    assert result_b.periods["6M"].n_comparable == 1
+    assert math.isnan(result_b.periods["6M"].wape["scp_wape_global"])
+
+    gp = build_global_period_result([result_a, result_b], "6M")
+
+    assert math.isnan(gp.scp_wape_global)
+    assert math.isnan(gp.ml_wape_global)
+    assert math.isnan(gp.global_improvement_pct)
+    assert gp.scp_wape_global != 0.1  # nunca coincide con "solo A"
+
+    # La reduccion absoluta no depende del historico: sigue siendo evaluable.
+    assert math.isclose(gp.reduction_totals["REDUCCION_NETA"], (100.0 - 50.0) + (80.0 - 60.0), rel_tol=1e-9)
+
+
+def test_multi_client_reduction_totals_nan_when_b_comparable_missing_abs_error_never_recovers_a_only_value():
+    """
+    (C) [A, B] con B COMPARABLE pero con ML_TOTAL_ABS_ERROR_6M no evaluable:
+    ML_WAPE_GLOBAL, la mejora global y los tres totales de reduccion
+    absoluta quedan NaN (nunca calculados ignorando a B). B no se fuerza a
+    positive_mask ni negative_mask, y sigue visible con su NaN en la tabla
+    por cliente. SCP_WAPE_GLOBAL (no depende de ML_TOTAL_ABS_ERROR) sigue
+    evaluable de forma independiente.
+    """
+    df_a = _build_single_client_df(60001, history=1000.0, scp_abs_error=100.0, ml_abs_error=50.0, winner="ML")
+    result_a = analyze_client(make_client_source(df_a, 60001, "ClientA"))
+
+    df_b = _build_single_client_df(60004, history=500.0, scp_abs_error=80.0, ml_abs_error=60.0, winner="SCP")
+    pcols_6m = period_columns("6M")
+    df_b[pcols_6m.ml_total_abs_error] = [None]
+    result_b = analyze_client(make_client_source(df_b, 60004, "ClientBIncompleteAbsError"))
+
+    assert result_b.periods["6M"].n_comparable == 1
+    assert math.isnan(result_b.periods["6M"].abs_error_reduction_total)
+
+    gp = build_global_period_result([result_a, result_b], "6M")
+
+    assert not math.isnan(gp.scp_wape_global)  # independiente, no afectado
+    assert math.isnan(gp.ml_wape_global)
+    assert math.isnan(gp.global_improvement_pct)
+    assert math.isnan(gp.reduction_totals["REDUCCION_NETA"])
+    assert math.isnan(gp.reduction_totals["REDUCCION_POSITIVA_TOTAL"])
+    assert math.isnan(gp.reduction_totals["DETERIORO_TOTAL_ABSOLUTO"])
+    assert gp.reduction_totals["REDUCCION_NETA"] != 50.0  # nunca coincide con "solo A"
+
+    # B no se fuerza a positive_mask ni negative_mask.
+    assert "ClientBIncompleteAbsError" not in set(gp.client_reduction_table["ETIQUETA"])
+    assert "ClientBIncompleteAbsError" not in set(gp.client_deterioration_table["ETIQUETA"])
+
+    # B sigue visible en la tabla por cliente, con su valor NaN.
+    table = build_client_period_table([result_a, result_b], "6M")
+    row_b = table[table["ID_CLIENT"] == 60004].iloc[0]
+    assert math.isnan(row_b["REDUCCION_ABSOLUTA"])
+
+
+def test_multi_client_partial_periods_unaffected_by_evaluability_guard():
+    """Regresion: periodos parciales sin cambios en agregacion global."""
+    df_a = _build_single_client_df(60001, history=1000.0, scp_abs_error=100.0, ml_abs_error=50.0, winner="ML")
+    result_a = analyze_client(make_client_source(df_a, 60001, "ClientA"))
+
+    df_b = _build_single_client_df(60005, history=500.0, scp_abs_error=80.0, ml_abs_error=60.0, winner="SCP")
+    pcols_6m = period_columns("6M")
+    df_b[pcols_6m.ml_total_abs_error] = [None]
+    result_b = analyze_client(make_client_source(df_b, 60005, "ClientBIncompleteAbsError6MOnly"))
+
+    for period in ("M1", "RECENT_3M", "OLDER_3M"):
+        gp = build_global_period_result([result_a, result_b], period)
+        assert not math.isnan(gp.ml_wape_global)
+        assert not math.isnan(gp.reduction_totals["REDUCCION_NETA"])

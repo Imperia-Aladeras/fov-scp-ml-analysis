@@ -442,6 +442,31 @@ def check_comparison_status_vs_period_mask(
     )
 
 
+def check_comparable_missing_wape_inputs(
+    file_label: str, period: str, comparable_mask: pd.Series, df: pd.DataFrame, pcols: PeriodColumns,
+) -> QualityIssue | None:
+    """
+    Filas COMPARABLE (poblacion canonica del periodo) con TOTAL_HISTORY,
+    SCP_TOTAL_ABS_ERROR o ML_TOTAL_ABS_ERROR incompleto. La fila permanece
+    en la poblacion (no se redefine comparabilidad), pero el WAPE global
+    afectado queda no evaluable (NaN) en vez de calcularse ignorando la
+    fila en silencio (ver metrics.period_wape_global).
+    """
+    missing = comparable_mask & (
+        df[pcols.total_history].isna() | df[pcols.scp_total_abs_error].isna() | df[pcols.ml_total_abs_error].isna()
+    )
+    n_missing = int(missing.sum())
+    if n_missing == 0:
+        return None
+    return QualityIssue(
+        Severity.WARNING, "COMPARABLE_MISSING_WAPE_INPUTS",
+        f"{n_missing} filas comparables en {period} con {pcols.total_history}/{pcols.scp_total_abs_error}/"
+        f"{pcols.ml_total_abs_error} incompleto: el WAPE global afectado queda no evaluable (NaN) en vez de "
+        f"calcularse ignorando estas filas.",
+        scope="period", details={"file": file_label, "period": period, "n_missing": n_missing},
+    )
+
+
 def check_comparable_without_winner(file_label: str, period: str, comparable_mask: pd.Series, winner: pd.Series) -> QualityIssue | None:
     bad = comparable_mask & winner.isna()
     n_bad = int(bad.sum())

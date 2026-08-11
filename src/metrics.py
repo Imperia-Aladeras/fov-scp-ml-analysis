@@ -32,12 +32,24 @@ def period_wape_global(df: pd.DataFrame, pcols: PeriodColumns) -> dict:
     """
     WAPE global ponderado por volumen para SCP y ML sobre las filas de `df`
     (el llamador debe pasar ya el subconjunto comparable del periodo).
-    """
-    history_sum = float(df[pcols.total_history].sum())
-    scp_abs_error_sum = float(df[pcols.scp_total_abs_error].sum())
-    ml_abs_error_sum = float(df[pcols.ml_total_abs_error].sum())
 
-    if history_sum <= 0:
+    Si TOTAL_HISTORY, SCP_TOTAL_ABS_ERROR o ML_TOTAL_ABS_ERROR tiene algun
+    nulo dentro de `df`, la suma correspondiente queda NaN en vez de
+    calcularse ignorando esa fila en silencio (pandas.Series.sum() ignora
+    NaN por defecto). SCP_WAPE_GLOBAL y ML_WAPE_GLOBAL dependen de sumas
+    distintas y pueden quedar evaluables de forma independiente; ninguno de
+    los dos depende de SCP_WAPE/ML_WAPE (columnas distintas, no son input
+    de esta formula).
+    """
+    history_sum = np.nan if df[pcols.total_history].isna().any() else float(df[pcols.total_history].sum())
+    scp_abs_error_sum = (
+        np.nan if df[pcols.scp_total_abs_error].isna().any() else float(df[pcols.scp_total_abs_error].sum())
+    )
+    ml_abs_error_sum = (
+        np.nan if df[pcols.ml_total_abs_error].isna().any() else float(df[pcols.ml_total_abs_error].sum())
+    )
+
+    if not (history_sum > 0):
         return {
             "history_sum": history_sum,
             "scp_abs_error_sum": scp_abs_error_sum,
@@ -67,6 +79,13 @@ def absolute_error_reduction_row(df: pd.DataFrame, pcols: PeriodColumns) -> pd.S
 
 
 def absolute_error_reduction_total(df: pd.DataFrame, pcols: PeriodColumns) -> float:
+    """
+    positivo = ML reduce error absoluto; negativo = ML lo aumenta. NaN si
+    SCP_TOTAL_ABS_ERROR o ML_TOTAL_ABS_ERROR tiene algun nulo en `df` (no se
+    calcula ignorando esa fila en silencio, igual que period_wape_global).
+    """
+    if df[pcols.scp_total_abs_error].isna().any() or df[pcols.ml_total_abs_error].isna().any():
+        return float("nan")
     return float(df[pcols.scp_total_abs_error].sum() - df[pcols.ml_total_abs_error].sum())
 
 

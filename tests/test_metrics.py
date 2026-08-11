@@ -76,6 +76,99 @@ def test_absolute_error_reduction_row_and_total():
     assert absolute_error_reduction_total(df, pcols) == 47.0
 
 
+# --------------------------------------------------------------------------
+# Fase 4: evaluabilidad por metrica dentro de la poblacion COMPARABLE de 6M
+# (sin redefinir poblacion). period_wape_global/absolute_error_reduction_total
+# no deben calcular un agregado parcial ignorando filas con nulos en
+# silencio (pandas.Series.sum() ignora NaN por defecto).
+# --------------------------------------------------------------------------
+
+def test_wape_global_nan_when_history_has_a_null_row():
+    pcols = period_columns("6M")
+    df = pd.DataFrame({
+        pcols.total_history: [1000.0, None],
+        pcols.scp_total_abs_error: [100.0, 5.0],
+        pcols.ml_total_abs_error: [50.0, 5.0],
+    })
+    result = period_wape_global(df, pcols)
+    assert math.isnan(result["history_sum"])
+    assert math.isnan(result["scp_wape_global"])
+    assert math.isnan(result["ml_wape_global"])
+    assert math.isnan(result["improvement_pct"])
+
+
+def test_wape_global_nan_only_for_affected_method_when_one_abs_error_has_a_null_row():
+    pcols = period_columns("6M")
+    df = pd.DataFrame({
+        pcols.total_history: [1000.0, 10.0],
+        pcols.scp_total_abs_error: [100.0, None],
+        pcols.ml_total_abs_error: [50.0, 5.0],
+    })
+    result = period_wape_global(df, pcols)
+    assert math.isnan(result["scp_abs_error_sum"])
+    assert not math.isnan(result["ml_abs_error_sum"])
+    assert math.isnan(result["scp_wape_global"])
+    assert not math.isnan(result["ml_wape_global"])
+    assert math.isclose(result["ml_wape_global"], 55.0 / 1010.0, rel_tol=1e-9)
+    # La mejora depende de ambos WAPE: no evaluable si scp_wape_global es NaN.
+    assert math.isnan(result["improvement_pct"])
+
+
+def test_wape_global_unaffected_by_scp_wape_or_ml_wape_columns():
+    """
+    SCP_WAPE/ML_WAPE (columna distinta) no son input de period_wape_global:
+    su ausencia no debe invalidar el WAPE global mientras TOTAL_HISTORY y
+    los TOTAL_ABS_ERROR necesarios esten completos.
+    """
+    pcols = period_columns("6M")
+    df = pd.DataFrame({
+        pcols.total_history: [1000.0, 10.0],
+        pcols.scp_total_abs_error: [100.0, 5.0],
+        pcols.ml_total_abs_error: [50.0, 5.0],
+        pcols.scp_wape: [None, None],
+        pcols.ml_wape: [None, None],
+    })
+    result = period_wape_global(df, pcols)
+    assert math.isclose(result["scp_wape_global"], 105.0 / 1010.0, rel_tol=1e-9)
+    assert math.isclose(result["ml_wape_global"], 55.0 / 1010.0, rel_tol=1e-9)
+    assert not math.isnan(result["improvement_pct"])
+
+
+def test_wape_global_no_nulls_matches_previous_behavior():
+    """Regresion: sin nulos, el resultado no cambia respecto al comportamiento previo."""
+    df, pcols = _wape_frame()
+    result = period_wape_global(df, pcols)
+    expected_weighted_scp_wape = (100.0 + 5.0) / (1000.0 + 10.0)
+    assert math.isclose(result["scp_wape_global"], expected_weighted_scp_wape, rel_tol=1e-9)
+
+
+def test_absolute_error_reduction_total_nan_when_scp_abs_error_has_a_null_row():
+    pcols = period_columns("6M")
+    df = pd.DataFrame({
+        pcols.scp_total_abs_error: [100.0, None],
+        pcols.ml_total_abs_error: [50.0, 8.0],
+    })
+    assert math.isnan(absolute_error_reduction_total(df, pcols))
+
+
+def test_absolute_error_reduction_total_nan_when_ml_abs_error_has_a_null_row():
+    pcols = period_columns("6M")
+    df = pd.DataFrame({
+        pcols.scp_total_abs_error: [100.0, 5.0],
+        pcols.ml_total_abs_error: [50.0, None],
+    })
+    assert math.isnan(absolute_error_reduction_total(df, pcols))
+
+
+def test_absolute_error_reduction_total_no_nulls_matches_previous_behavior():
+    pcols = period_columns("6M")
+    df = pd.DataFrame({
+        pcols.scp_total_abs_error: [100.0, 5.0],
+        pcols.ml_total_abs_error: [50.0, 8.0],
+    })
+    assert absolute_error_reduction_total(df, pcols) == 47.0
+
+
 def test_relative_improvement_row_normal_case():
     scp = pd.Series([0.2])
     ml = pd.Series([0.1])

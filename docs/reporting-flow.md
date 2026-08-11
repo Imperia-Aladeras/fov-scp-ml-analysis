@@ -321,7 +321,7 @@ No se parsea `COPIED_AT`, no existe `RUN_START_DATE` en el contrato, y `ID_BATCH
 
 | Análisis | Objetivo | Población/filtros | Denominador/fórmula | Agrupación/output |
 |---|---|---|---|---|
-| Cobertura | Medir evaluabilidad | `HAS_BASE_CANDIDATE==1` | `n_comparable/n_candidates*100` | cliente/periodo y global |
+| Cobertura | Medir evaluabilidad | `HAS_BASE_CANDIDATE==1` en periodos parciales; universo `COMPARISON_STATUS` (todas las filas) en `6M` | `n_comparable/n_candidates*100` (mismo universo que la población del periodo, ver §10.2) | cliente/periodo y global |
 | No comparables | Explicar ausencias | candidato y no comparable P | conteo por motivo derivado y por status original | tablas/gráficos cobertura |
 | Exclusión ML | Contar flags/motivos | candidatos con `HAS_ML_EXCLUDED==1` | candidatos; no depende realmente de P | repetido por periodo |
 | WAPE agregado | Comparar error ponderado | filas comparables de P | `sum(abs_error)/sum(history)` | cliente, global, categoría |
@@ -340,7 +340,7 @@ La mejora por serie no usa `WINNER_IMPROVEMENT_PCT_*`: reconstruye una métrica 
 
 ### 10.2 Comparabilidad exacta
 
-Para periodo `P`:
+Para periodos parciales (`M1..M6`, `RECENT_3M`, `OLDER_3M`), periodo `P`:
 
 ```text
 candidate = HAS_BASE_CANDIDATE == 1
@@ -350,9 +350,17 @@ ml_valid  = ML_FORECAST_P,  ML_ABS_ERROR_P  y ML_WAPE_P no nulos
 comparable_P = candidate AND history_valid AND scp_valid AND ml_valid
 ```
 
-No forman parte explícita de la máscara: `COMPARISON_STATUS`, `HAS_SCP_CALCULATED`, `HAS_ML_CALCULATED`, `HAS_ML_EXCLUDED`, modelos, MAE/RMSE/Bias, error firmado o cuadrático. En 6M se audita la discrepancia entre la máscara y `COMPARISON_STATUS=='COMPARABLE'`; en los demás periodos no.
+No forman parte de esta máscara: `COMPARISON_STATUS`, `HAS_SCP_CALCULATED`, `HAS_ML_CALCULATED`, `HAS_ML_EXCLUDED`, modelos, MAE/RMSE/Bias, error firmado o cuadrático. El motivo derivado de no comparabilidad (`NO_HISTORY_OR_ZERO`, `MISSING_SCP_AND_ML`, `MISSING_SCP`, `MISSING_ML`, `OTHER`) es el motivo mostrado para estos periodos.
 
-El motivo derivado de no comparabilidad tiene precedencia local: `NO_HISTORY_OR_ZERO`, `MISSING_SCP_AND_ML`, `MISSING_SCP`, `MISSING_ML`, `OTHER`. Se conserva separadamente la distribución original de `COMPARISON_STATUS`.
+Para `6M` (y, por herencia, la comparativa global entre clientes) la regla es distinta — backend `COMPARISON_STATUS` es la fuente de verdad de la población, no la máscara local:
+
+```text
+comparable_6M = COMPARISON_STATUS == "COMPARABLE"
+```
+
+Sin combinar con `candidate` ni con ninguna condición local de completitud de columnas. Un `COMPARISON_STATUS` nulo o vacío (incluida una cadena formada solo por espacios) queda fuera de la población. La fórmula `comparable_P` de arriba se sigue calculando también para `6M`, pero únicamente como máscara local de auditoría/reconciliación frente a `COMPARISON_STATUS` (chequeo de consistencia que documenta discrepancias, nunca decide la población). El motivo de exclusión mostrado para `6M` es directamente la distribución de `COMPARISON_STATUS` original entre las filas no comparables; el motivo derivado local (`NO_HISTORY_OR_ZERO`, etc.) se conserva por separado, solo como auditoría.
+
+Pertenencia a la población de `6M` y evaluabilidad de una métrica concreta son conceptos distintos: una fila `COMPARABLE` permanece en la población aunque le falte un input de una métrica (p.ej. un total de error absoluto); esa métrica queda entonces no evaluable (NaN), con su propio chequeo de calidad, sin excluir la fila.
 
 ### 10.3 Análisis implementados y ausentes
 
@@ -399,8 +407,8 @@ El motivo derivado de no comparabilidad tiene precedencia local: `NO_HISTORY_OR_
 | Winner | `WINNER_METHOD_*` | fuente de verdad | No, salvo ambos WAPE cero | El backend ya documenta la fórmula completa, pero el código sigue diciendo que no es auditable |
 | Winner/finalista modelo | `WINNER_MODEL_*`, `FINALIST_*` | obligatorios, no consumidos | No | Sobrevalidación y comentario engañoso |
 | Mejora del ganador | `WINNER_IMPROVEMENT_PCT_*` | obligatoria, no consumida | Reporting calcula otra mejora | Semántica distinta: ganador-finalista vs ML-SCP |
-| Status | `COMPARISON_STATUS` | distribución y auditoría solo 6M | No | No selecciona performance |
-| Base | `HAS_BASE_CANDIDATE` | filtro candidato | No | Coincide con backend |
+| Status | `COMPARISON_STATUS` | fuente de verdad de la población de `6M`/global (`==COMPARABLE`); distribución en periodos parciales | No | Selecciona la comparabilidad de `6M`; no interviene en periodos parciales |
+| Base | `HAS_BASE_CANDIDATE` | filtro candidato en periodos parciales; cobertura/auditoría en `6M` (no filtra su población) | No | Coincide con backend |
 | Flags calculado | `HAS_SCP_CALCULATED`, `HAS_ML_CALCULATED` | QC forecast presente con flag 0 | No | No seleccionan comparables, coherente con que son trazas best-effort |
 | Exclusión ML | `HAS_ML_EXCLUDED`, `ML_EXCLUSION_REASON` | cobertura/motivos | No | No se excluye expresamente de la máscara; se confía en nulos de métricas |
 | Sin output SCP | `SCP_NO_OUTPUT_REASON` | motivo cuando forecast SCP del periodo es nulo | No | Se repite por periodo aunque el motivo sea de fila |
@@ -641,7 +649,7 @@ Como referencia histórica, un manifest existente registró 20.539 filas, nueve 
 | Mensaje “winner no auditable” | quality/MD/HTML | Cada cliente válido | REVIEW: contradice backend doc actual | Actualizar tests y auditar fórmula antes de cambiar |
 | Label desde filename | Nombre cliente | outputs/HTML | REVIEW: full export no trae un nombre por cliente | Definir etiqueta estable basada solo en CSV permitido |
 | Mezcla de batches/runs | warnings, sin filtro | análisis entero | REVIEW | Definir grano de análisis dentro del CSV completo |
-| Máscara propia vs `COMPARISON_STATUS` | comparabilidad P | núcleo | REVIEW, no necesariamente bug | Acordar semántica por periodo y tests de divergencia |
+| Máscara propia vs `COMPARISON_STATUS` | comparabilidad P | núcleo | RESUELTO (Fase 4): `COMPARISON_STATUS` es la fuente de verdad de `6M`/global; la máscara local queda solo como auditoría/reconciliación; periodos parciales siguen con máscara propia (ver §10.2) | — |
 | Catch de cliente con outputs parciales | aislamiento | orquestador | REVIEW | Test de fallo intermedio y limpieza/registro |
 | Datos versionados grandes | ejemplos reales | tests no dependen de ellos | REVIEW | Política de retención/anonimización |
 | Código experimental | — | No identificado | No aplica | — |
@@ -722,7 +730,7 @@ La fuente seguiría siendo exclusivamente el CSV completo de `TA_FOV_SCP_ML_SERI
 3. **Etiquetas de cliente:** como el contrato listado no incluye nombre de cliente, usar una etiqueta estable basada en `ID_CLIENT` (por ejemplo `client_10204`) o aceptar un mapping explícito que forme parte del mismo CSV. No obtener nombres de otra tabla.
 4. **Adaptar inventario/resumen/manifest:** hoy correlacionan uno a uno `filename -> ClientAnalysisResult`; deben admitir `un archivo -> varios resultados` sin duplicar falsamente hash/tamaño.
 5. **Revisar duplicados:** aplicar la clave lógica dentro del full export y sustituir el error “cliente en varios CSV” por reglas coherentes con el nuevo único input.
-6. **Alinear comparabilidad:** definir cuándo usar `COMPARISON_STATUS='COMPARABLE'` para 6M y cuándo mantener máscaras específicas para meses/trimestres. Mantener flags/motivos para cobertura.
+6. **Alinear comparabilidad (RESUELTO, Fase 4):** `COMPARISON_STATUS='COMPARABLE'` es la población canónica de 6M/global; los meses/trimestres mantienen su máscara específica. Ver §10.2.
 7. **Alinear mejora/winner:** decidir si se reportan ambas métricas con nombres distintos: `ML_IMPROVEMENT_VS_SCP` reconstruida y `WINNER_IMPROVEMENT_PCT` backend. Auditar la fórmula de empate ahora documentada.
 8. **Relajar contrato no utilizado:** separar columnas necesarias para performance, necesarias para auditoría y opcionales. No es imprescindible si el full export siempre conserva las 234.
 9. **Tests necesarios:** full CSV con dos clientes; varios batch/run; un cliente sin nombre; ceros/nulls/negativos; status frente a máscara; winners TIE; manifest uno-a-varios; outputs sin colisión; volumen de archivo completo; regresión de CSV por cliente.
@@ -808,8 +816,8 @@ stateDiagram-v2
 1. ¿La exportación “completa” contendrá toda la historia de batches/runs o un único batch coherente? El código no puede inferir la selección correcta.
 2. ¿Cuál debe ser el grano del informe futuro: cliente, cliente+batch, cliente+run staging o cliente+source run?
 3. La tabla no aporta un nombre de cliente en el contrato observado. ¿Se acepta mostrar solo `ID_CLIENT`?
-4. Para 6M, ¿debe prevalecer el status backend o la máscara reporting? Hoy pueden divergir y solo se advierte.
-5. Para meses/trimestres, `COMPARISON_STATUS` resume comparabilidad 6M; mantener máscaras específicas parece intencional, pero debe quedar confirmado.
+4. **RESUELTO (Fase 4):** para 6M prevalece el status backend (`COMPARISON_STATUS`); la máscara reporting queda solo como auditoría/reconciliación (ver §10.2).
+5. **RESUELTO (Fase 4):** para meses/trimestres se confirma mantener máscaras específicas por periodo, sin usar `COMPARISON_STATUS` (ver §10.2).
 6. ¿Debe mostrarse `WINNER_IMPROVEMENT_PCT` además de la mejora ML-vs-SCP? Son métricas distintas.
 7. ¿Las columnas actualmente obligatorias pero no usadas deben seguir siendo requisito de integridad del full export?
 8. El documento backend enlaza un diccionario de datos que no está en este repositorio. Por ello no se confirmaron tipos SQL exactos, longitudes ni nullability columna por columna.

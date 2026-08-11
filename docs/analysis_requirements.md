@@ -410,15 +410,48 @@ Si faltan datos imprescindibles para un periodo:
 
 # Comparabilidad específica por periodo
 
-No uses únicamente:
+La comparabilidad se define de forma distinta según el periodo. No
+reutilices la misma máscara ni el mismo criterio para todos los casos.
+
+## 6M / comparativa global
+
+La población canónica de `6M` (y, por herencia, de la comparativa global
+entre clientes) es exclusivamente:
+
+COMPARISON_STATUS == "COMPARABLE"
+
+Reglas:
+
+- no se combina con `HAS_BASE_CANDIDATE` ni con ninguna otra condición
+  local de completitud de columnas;
+- un `COMPARISON_STATUS` nulo o vacío (incluye cadenas formadas solo por
+  espacios) queda fuera de la población;
+- `HAS_BASE_CANDIDATE` sigue existiendo como campo de cobertura/auditoría a
+  nivel cliente, pero no filtra la población de `6M`;
+- la máscara local (histórico/SCP/ML válidos para `6M`) se conserva
+  únicamente como mecanismo de auditoría/reconciliación frente a
+  `COMPARISON_STATUS` (chequeo de consistencia que documenta
+  discrepancias), nunca como población;
+- los motivos de exclusión de `6M` se leen directamente de los valores de
+  `COMPARISON_STATUS` en las filas no comparables; no se sustituyen ni se
+  combinan con la reconstrucción local de motivos.
+
+Pertenencia a la población y evaluabilidad de una métrica son conceptos
+distintos. Una fila `COMPARABLE` sigue perteneciendo a la población de `6M`
+aunque le falte un input concreto de una métrica (p.ej. un total de error
+absoluto). En ese caso la métrica afectada queda no evaluable (NaN) y se
+registra el chequeo de calidad correspondiente; nunca se excluye la fila de
+la población ni se calcula esa métrica ignorando la fila en silencio.
+
+## M1..M6, RECENT_3M, OLDER_3M
+
+Para estos periodos no uses únicamente:
 
 COMPARISON_STATUS = 'COMPARABLE'
 
-para todos los periodos.
-
 Debes crear una máscara específica de comparabilidad para cada periodo.
 
-Una serie será comparable para un periodo cuando:
+Una serie será comparable para el periodo cuando:
 
 - pertenece al universo candidato;
 - tiene histórico válido para el periodo;
@@ -427,12 +460,6 @@ Una serie será comparable para un periodo cuando:
 - se puede calcular WAPE para ambos métodos;
 - el denominador histórico es mayor que cero;
 - no faltan datos esenciales del periodo.
-
-Para `6M`:
-
-- compara esta máscara específica con `COMPARISON_STATUS`;
-- genera un chequeo de consistencia;
-- documenta las discrepancias.
 
 Para cada mes:
 

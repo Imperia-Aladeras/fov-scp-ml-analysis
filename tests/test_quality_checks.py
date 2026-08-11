@@ -8,8 +8,10 @@ from src.quality_checks import (
     check_bias_reconstruction,
     check_batch_heterogeneity,
     check_both_zero_wape_is_tie,
+    check_comparable_missing_wape_inputs,
     check_comparable_without_forecasts,
     check_comparable_without_winner,
+    check_comparison_status_vs_period_mask,
     check_error_chain_reconstruction,
     check_extreme_wape,
     check_mae_reconstruction,
@@ -193,6 +195,79 @@ def test_check_comparable_without_forecasts_is_error():
     issue = check_comparable_without_forecasts("f.csv", "6M", comparable_mask, scp, ml)
     assert issue is not None
     assert issue.details["n_bad"] == 1
+
+
+# --------------------------------------------------------------------------
+# Fase 4: COMPARISON_STATUS es la fuente de verdad de 6M/global; la mascara
+# local (period_comparable_mask) pasa a ser solo auditoria/reconciliacion
+# frente a ella. La firma/logica de check_comparison_status_vs_period_mask
+# no cambia (compara dos mascaras booleanas cualquiera); lo que cambia es
+# que el llamador (client_analysis._analyze_period) ahora le pasa la
+# mascara LOCAL como segundo argumento, no la mascara backend (ver
+# tests/test_client_analysis.py).
+# --------------------------------------------------------------------------
+
+def test_check_comparison_status_vs_period_mask_no_discrepancy():
+    comparison_status = pd.Series(["COMPARABLE", "NOT_COMPARABLE_NO_HISTORY"])
+    local_mask = pd.Series([True, False])
+    issue = check_comparison_status_vs_period_mask("f.csv", "6M", comparison_status, local_mask)
+    assert issue is None
+
+
+def test_check_comparison_status_vs_period_mask_flags_discrepancy_in_either_direction():
+    comparison_status = pd.Series(["COMPARABLE", "NOT_COMPARABLE_MISSING_SCP", None])
+    local_mask = pd.Series([False, True, False])
+    issue = check_comparison_status_vs_period_mask("f.csv", "6M", comparison_status, local_mask)
+    assert issue is not None
+    assert issue.severity == Severity.WARNING
+    assert issue.code == "COMPARISON_STATUS_VS_PERIOD_MASK_DISCREPANCY"
+    assert issue.details["n_discrepancy"] == 2
+    assert issue.details["only_in_comparison_status"] == 1
+    assert issue.details["only_in_period_mask"] == 1
+
+
+def test_check_comparable_missing_wape_inputs_flags_incomplete_required_columns():
+    """
+    Fila COMPARABLE (poblacion canonica) con SCP_TOTAL_ABS_ERROR_6M nulo:
+    debe generar el issue, sin importar que SCP_WAPE_6M (columna distinta,
+    no input de esta formula) este completo o no.
+    """
+    pcols = period_columns("6M")
+    df = pd.DataFrame({
+        pcols.total_history: [100.0, 200.0],
+        pcols.scp_total_abs_error: [None, 40.0],
+        pcols.ml_total_abs_error: [10.0, 20.0],
+    })
+    comparable_mask = pd.Series([True, True])
+    issue = check_comparable_missing_wape_inputs("f.csv", "6M", comparable_mask, df, pcols)
+    assert issue is not None
+    assert issue.severity == Severity.WARNING
+    assert issue.code == "COMPARABLE_MISSING_WAPE_INPUTS"
+    assert issue.details["n_missing"] == 1
+
+
+def test_check_comparable_missing_wape_inputs_ignores_non_comparable_rows():
+    pcols = period_columns("6M")
+    df = pd.DataFrame({
+        pcols.total_history: [100.0, 200.0],
+        pcols.scp_total_abs_error: [None, 40.0],
+        pcols.ml_total_abs_error: [10.0, 20.0],
+    })
+    comparable_mask = pd.Series([False, True])
+    issue = check_comparable_missing_wape_inputs("f.csv", "6M", comparable_mask, df, pcols)
+    assert issue is None
+
+
+def test_check_comparable_missing_wape_inputs_no_discrepancy_when_all_complete():
+    pcols = period_columns("6M")
+    df = pd.DataFrame({
+        pcols.total_history: [100.0, 200.0],
+        pcols.scp_total_abs_error: [20.0, 40.0],
+        pcols.ml_total_abs_error: [10.0, 20.0],
+    })
+    comparable_mask = pd.Series([True, True])
+    issue = check_comparable_missing_wape_inputs("f.csv", "6M", comparable_mask, df, pcols)
+    assert issue is None
 
 
 # --------------------------------------------------------------------------

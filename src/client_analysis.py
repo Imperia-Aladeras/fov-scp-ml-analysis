@@ -61,6 +61,7 @@ from src.quality_checks import (
     check_aggregate_vs_monthly_sum,
     check_bias_reconstruction,
     check_both_zero_wape_is_tie,
+    check_comparable_missing_wape_inputs,
     check_comparable_without_forecasts,
     check_comparable_without_winner,
     check_comparison_status_vs_period_mask,
@@ -85,7 +86,7 @@ class PeriodResult:
     period: str
     label: str
     status: str  # OK | WARNING | ERROR (deriva unicamente de los chequeos de este periodo)
-    n_candidates: int
+    n_candidates: int  # universo de comparabilidad del periodo: HAS_BASE_CANDIDATE, salvo en 6M (len(df))
     n_comparable: int
     pct_comparable: float
     n_not_comparable: int
@@ -155,6 +156,20 @@ def period_comparable_mask(df: pd.DataFrame, pcols: PeriodColumns, candidate_mas
     return candidate_mask & history_valid & scp_valid & ml_valid
 
 
+def backend_comparable_mask_6m(df: pd.DataFrame) -> pd.Series:
+    """
+    Poblacion canonica de 6M/global (Fase 4): exclusivamente
+    COMPARISON_STATUS == "COMPARABLE", sin combinarla con HAS_BASE_CANDIDATE
+    ni con ninguna mascara local de completitud de columnas. COMPARISON_STATUS
+    nulo/vacio se trata como no comparable (la comparacion de string con NaN
+    da False sin necesidad de manejo adicional). `period_comparable_mask`
+    (local, especifica de columnas) sigue calculandose para 6M unicamente
+    como mecanismo de auditoria/reconciliacion frente a esta mascara
+    backend, nunca como poblacion.
+    """
+    return df["COMPARISON_STATUS"] == "COMPARABLE"
+
+
 def _not_comparable_reason_counts(
     df: pd.DataFrame, pcols: PeriodColumns, candidate_mask: pd.Series, comparable_mask: pd.Series,
 ) -> dict:
@@ -185,6 +200,26 @@ def _value_counts_dict(series: pd.Series) -> dict:
     return {str(k): int(v) for k, v in series.dropna().value_counts().to_dict().items()}
 
 
+COMPARISON_STATUS_NULL_BUCKET = "SIN_COMPARISON_STATUS"
+
+
+def _value_counts_dict_with_null_bucket(series: pd.Series, null_label: str = COMPARISON_STATUS_NULL_BUCKET) -> dict:
+    """
+    Como `_value_counts_dict`, pero sin perder los valores vacios: None,
+    NaN, "" y strings formados unicamente por espacios se cuentan en un
+    bucket diagnostico explicito y claramente derivado por reporting
+    (`null_label`), distinguible de los strings oficiales NOT_COMPARABLE_*
+    del backend (nunca se etiquetan como si fueran un estado backend real).
+    No se normaliza ni se renombra ningun otro valor.
+    """
+    is_blank = series.isna() | (series.astype(str).str.strip() == "")
+    counts = {str(k): int(v) for k, v in series[~is_blank].value_counts().to_dict().items()}
+    n_blank = int(is_blank.sum())
+    if n_blank:
+        counts[null_label] = n_blank
+    return counts
+
+
 def _period_status(report: QualityReport) -> str:
     if report.has_errors():
         return "ERROR"
@@ -197,14 +232,42 @@ def _analyze_period(df: pd.DataFrame, candidate_mask: pd.Series, period: str, fi
     pcols = period_columns(period)
     quality = QualityReport()
 
-    comparable_mask = period_comparable_mask(df, pcols, candidate_mask)
+    local_mask = period_comparable_mask(df, pcols, candidate_mask)
+    is_backend_6m = period == "6M" and "COMPARISON_STATUS" in df.columns
+    comparable_mask = backend_comparable_mask_6m(df) if is_backend_6m else local_mask
+
     n_candidates = int(candidate_mask.sum())
     n_comparable = int(comparable_mask.sum())
-    n_not_comparable = n_candidates - n_comparable
-    pct_comparable = (n_comparable / n_candidates * 100) if n_candidates else float("nan")
+    if is_backend_6m:
+        # Universo canonico 6M: todas las filas sobre las que se evalua
+        # COMPARISON_STATUS (el mismo universo que comparable_mask y
+        # comparison_status_not_comparable), no solo HAS_BASE_CANDIDATE.
+        # `n_candidates` (HAS_BASE_CANDIDATE) sigue usandose mas abajo para
+        # exclusiones ML y forecasts SCP/ML ausentes, sin mezclar ambos
+        # conceptos (ClientAnalysisResult.n_candidates conserva su
+        # contrato actual de cobertura HAS_BASE_CANDIDATE a nivel cliente).
+        n_comparability_universe = len(df)
+    else:
+        n_comparability_universe = n_candidates
+    n_not_comparable = n_comparability_universe - n_comparable
+    pct_comparable = (n_comparable / n_comparability_universe * 100) if n_comparability_universe else float("nan")
 
-    not_comparable_reasons = _not_comparable_reason_counts(df, pcols, candidate_mask, comparable_mask)
-    if "COMPARISON_STATUS" in df.columns:
+    # `local_mask` es siempre la fuente de los motivos DERIVADOS
+    # (NO_HISTORY_OR_ZERO/MISSING_SCP/MISSING_ML/...): en 6M queda como
+    # mecanismo de auditoria/reconciliacion, nunca como el motivo mostrado.
+    not_comparable_reasons = _not_comparable_reason_counts(df, pcols, candidate_mask, local_mask)
+    if is_backend_6m:
+        # Poblacion 6M/global = COMPARISON_STATUS=="COMPARABLE" en solitario
+        # (sin HAS_BASE_CANDIDATE): el breakdown de motivos debe ser
+        # coherente y calcularse sobre TODO el universo analizado, no solo
+        # sobre `candidate_mask`, o reintroduciria HAS_BASE_CANDIDATE como
+        # filtro de la poblacion 6M por la puerta de atras. Los nulos se
+        # cuentan en un bucket diagnostico propio, no en un string
+        # NOT_COMPARABLE_* del backend.
+        comparison_status_not_comparable = _value_counts_dict_with_null_bucket(
+            df.loc[~comparable_mask, "COMPARISON_STATUS"]
+        )
+    elif "COMPARISON_STATUS" in df.columns:
         comparison_status_not_comparable = _value_counts_dict(
             df.loc[candidate_mask & ~comparable_mask, "COMPARISON_STATUS"]
         )
@@ -276,12 +339,17 @@ def _analyze_period(df: pd.DataFrame, candidate_mask: pd.Series, period: str, fi
     quality.add(check_comparable_without_forecasts(
         file_label, period, comparable_mask, df[pcols.scp_total_forecast], df[pcols.ml_total_forecast]
     ))
-    if period == "6M" and "COMPARISON_STATUS" in df.columns:
-        quality.add(check_comparison_status_vs_period_mask(file_label, period, df["COMPARISON_STATUS"], comparable_mask))
+    if is_backend_6m:
+        # `local_mask` (reconstruccion local) se compara contra
+        # COMPARISON_STATUS (fuente de verdad backend, ya usada como
+        # `comparable_mask`) para documentar discrepancias, nunca para
+        # decidir la poblacion.
+        quality.add(check_comparison_status_vs_period_mask(file_label, period, df["COMPARISON_STATUS"], local_mask))
+        quality.add(check_comparable_missing_wape_inputs(file_label, period, comparable_mask, df, pcols))
 
     return PeriodResult(
         period=period, label=visible_label(period), status=_period_status(quality),
-        n_candidates=n_candidates, n_comparable=n_comparable, pct_comparable=pct_comparable,
+        n_candidates=n_comparability_universe, n_comparable=n_comparable, pct_comparable=pct_comparable,
         n_not_comparable=n_not_comparable, not_comparable_reason_counts=not_comparable_reasons,
         comparison_status_counts_not_comparable=comparison_status_not_comparable,
         n_ml_excluded=n_ml_excluded, pct_ml_excluded=pct_ml_excluded,

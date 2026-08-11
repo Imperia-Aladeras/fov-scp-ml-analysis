@@ -167,9 +167,20 @@ def _client_reduction_and_deterioration_tables(
     positive_mask = base["ABS_ERROR_REDUCTION"] > 0
     negative_mask = base["ABS_ERROR_REDUCTION"] < 0
 
-    totals["REDUCCION_POSITIVA_TOTAL"] = float(base.loc[positive_mask, "ABS_ERROR_REDUCTION"].sum())
-    totals["DETERIORO_TOTAL_ABSOLUTO"] = float(base.loc[negative_mask, "ABS_ERROR_REDUCTION"].abs().sum())
-    totals["REDUCCION_NETA"] = float(base["ABS_ERROR_REDUCTION"].sum())
+    if base["ABS_ERROR_REDUCTION"].isna().any():
+        # Al menos un cliente no es evaluable para reduccion absoluta (p.ej.
+        # una fila COMPARABLE de 6M con SCP/ML_TOTAL_ABS_ERROR incompleto):
+        # no puede saberse si contribuiria al grupo positivo o al de
+        # deterioro, asi que ningun total se calcula ignorandolo (pandas
+        # Series.sum() ignora NaN por defecto, lo que lo recuperaria en
+        # silencio solo con los clientes evaluables).
+        totals["REDUCCION_POSITIVA_TOTAL"] = float("nan")
+        totals["DETERIORO_TOTAL_ABSOLUTO"] = float("nan")
+        totals["REDUCCION_NETA"] = float("nan")
+    else:
+        totals["REDUCCION_POSITIVA_TOTAL"] = float(base.loc[positive_mask, "ABS_ERROR_REDUCTION"].sum())
+        totals["DETERIORO_TOTAL_ABSOLUTO"] = float(base.loc[negative_mask, "ABS_ERROR_REDUCTION"].abs().sum())
+        totals["REDUCCION_NETA"] = float(base["ABS_ERROR_REDUCTION"].sum())
 
     reducers = base.loc[positive_mask].copy()
     if not reducers.empty:
