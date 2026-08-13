@@ -1,6 +1,7 @@
 import math
 
 import pandas as pd
+import pytest
 
 from src.client_analysis import analyze_client
 from src.global_analysis import (
@@ -8,6 +9,8 @@ from src.global_analysis import (
     build_client_period_table,
     build_global_period_result,
     global_category_performance_table,
+    global_pareto_clients,
+    global_pareto_series,
 )
 from src.periods import ALL_PERIODS, period_columns
 from tests.factories import (
@@ -337,6 +340,140 @@ def test_multi_client_reduction_totals_nan_when_b_comparable_missing_abs_error_n
     table = build_client_period_table([result_a, result_b], "6M")
     row_b = table[table["ID_CLIENT"] == 60004].iloc[0]
     assert math.isnan(row_b["REDUCCION_ABSOLUTA"])
+
+
+def test_global_pareto_only_populated_for_6m():
+    results = build_multi_client_results()
+    for period in ALL_PERIODS:
+        gp = build_global_period_result(results, period)
+        if period == "6M":
+            assert gp.pareto_series is not None
+            assert gp.pareto_clients is not None
+        else:
+            assert gp.pareto_series is None
+            assert gp.pareto_clients is None
+
+
+def test_client_reduction_tables_unaffected_by_new_pareto_fields():
+    """Regresion: _client_reduction_and_deterioration_tables sigue exactamente igual."""
+    results = build_multi_client_results()
+    gp = build_global_period_result(results, "6M")
+    assert "PCT_OF_GROUP" not in gp.client_reduction_table.columns
+    assert "RANK" not in gp.client_reduction_table.columns
+    assert "PCT_OF_POSITIVE_REDUCTION" in gp.client_reduction_table.columns
+    assert "PCT_OF_TOTAL_DETERIORATION" in gp.client_deterioration_table.columns
+    assert gp.pareto_clients is not None
+    assert gp.pareto_series is not None
+
+
+def test_global_pareto_series_no_collision_when_clients_share_id_configuration():
+    """
+    Dos clientes con el mismo ID_CONFIGURATION (=1, valor por defecto de
+    _build_single_client_df) no deben colapsar en una unica fila: la
+    identidad global es ID_CLIENT + ID_CONFIGURATION.
+    """
+    df_a = _build_single_client_df(70001, history=1000.0, scp_abs_error=100.0, ml_abs_error=50.0, winner="ML")
+    result_a = analyze_client(make_client_source(df_a, 70001, "ClientA"))
+
+    df_b = _build_single_client_df(70002, history=500.0, scp_abs_error=60.0, ml_abs_error=80.0, winner="SCP")
+    result_b = analyze_client(make_client_source(df_b, 70002, "ClientB"))
+
+    pareto = global_pareto_series([result_a, result_b], "6M")
+
+    assert pareto.improvement.summary.n_total == 1
+    assert pareto.deterioration.summary.n_total == 1
+    imp_row = pareto.improvement.table.iloc[0]
+    det_row = pareto.deterioration.table.iloc[0]
+    assert (imp_row["ID_CLIENT"], imp_row["ID_CONFIGURATION"]) == (70001, 1)
+    assert (det_row["ID_CLIENT"], det_row["ID_CONFIGURATION"]) == (70002, 1)
+
+
+def test_global_pareto_series_tie_break_by_id_client_then_id_configuration():
+    """Misma magnitud de reduccion, mismo ID_CONFIGURATION: desempate por ID_CLIENT ASC."""
+    df_high = _build_single_client_df(70102, history=1000.0, scp_abs_error=100.0, ml_abs_error=50.0, winner="ML")
+    result_high = analyze_client(make_client_source(df_high, 70102, "ClientHigh"))
+
+    df_low = _build_single_client_df(70101, history=1000.0, scp_abs_error=100.0, ml_abs_error=50.0, winner="ML")
+    result_low = analyze_client(make_client_source(df_low, 70101, "ClientLow"))
+
+    pareto = global_pareto_series([result_high, result_low], "6M")
+    table = pareto.improvement.table
+    assert list(table["ID_CLIENT"]) == [70101, 70102]
+
+
+def test_global_pareto_series_display_name_is_presentation_only():
+    df_a = _build_single_client_df(70001, history=1000.0, scp_abs_error=100.0, ml_abs_error=50.0, winner="ML")
+    result_a = analyze_client(make_client_source(df_a, 70001, "ClientA", display_name="Etiqueta visible A"))
+
+    pareto = global_pareto_series([result_a], "6M")
+    table = pareto.improvement.table
+    assert table.iloc[0]["DISPLAY_NAME"] == "Etiqueta visible A"
+    # la identidad sigue siendo ID_CLIENT + ID_CONFIGURATION, no DISPLAY_NAME
+    assert list(table["ID_CLIENT"]) == [70001]
+
+
+def test_global_pareto_series_raises_when_required_context_column_missing():
+    """
+    Fail-fast (sin filtrado silencioso): si a un cliente le falta una
+    columna declarada en id_cols_wanted (aqui SERIES_CLASSIFICATION, parte
+    de _ranking_columns), global_pareto_series debe fallar claramente via
+    build_pareto_analysis, no descartar la columna en silencio.
+    """
+    df = _build_single_client_df(70001, history=1000.0, scp_abs_error=100.0, ml_abs_error=50.0, winner="ML")
+    df = df.drop(columns=["SERIES_CLASSIFICATION"])
+    result = analyze_client(make_client_source(df, 70001, "ClientMissingColumn"))
+
+    with pytest.raises(ValueError, match="SERIES_CLASSIFICATION"):
+        global_pareto_series([result], "6M")
+
+
+def test_global_pareto_clients_uses_precomputed_abs_error_reduction_total(monkeypatch):
+    """global_pareto_clients NUNCA debe recalcular desde las series: solo lee pr.abs_error_reduction_total."""
+    results = build_multi_client_results()  # analyze_client ya se ejecuto aqui, antes del parche
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("global_pareto_clients no debe recalcular desde las series")
+
+    monkeypatch.setattr("src.metrics.absolute_error_reduction_row", _boom)
+    monkeypatch.setattr("src.metrics.absolute_error_reduction_total", _boom)
+
+    pareto = global_pareto_clients(results, "6M")
+
+    expected = {
+        r.source.id_client: r.periods["6M"].abs_error_reduction_total
+        for r in results if r.periods.get("6M") is not None
+    }
+    for _, row in pareto.improvement.table.iterrows():
+        assert math.isclose(row["ABS_ERROR_REDUCTION"], expected[row["ID_CLIENT"]])
+    for _, row in pareto.deterioration.table.iterrows():
+        assert math.isclose(row["ABS_ERROR_REDUCTION"], expected[row["ID_CLIENT"]])
+
+
+def test_global_pareto_clients_excludes_nan_client_and_counts_it():
+    df_a = _build_single_client_df(60001, history=1000.0, scp_abs_error=100.0, ml_abs_error=50.0, winner="ML")
+    result_a = analyze_client(make_client_source(df_a, 60001, "ClientA"))
+
+    df_b = _build_single_client_df(60004, history=500.0, scp_abs_error=80.0, ml_abs_error=60.0, winner="SCP")
+    pcols_6m = period_columns("6M")
+    df_b[pcols_6m.ml_total_abs_error] = [None]
+    result_b = analyze_client(make_client_source(df_b, 60004, "ClientBIncompleteAbsError"))
+
+    pareto = global_pareto_clients([result_a, result_b], "6M")
+
+    assert pareto.n_no_evaluables == 1
+    assert pareto.improvement.summary.n_total == 1
+    assert "ClientBIncompleteAbsError" not in set(pareto.improvement.table["ETIQUETA"])
+    assert "ClientBIncompleteAbsError" not in set(pareto.deterioration.table["ETIQUETA"])
+
+
+def test_global_pareto_clients_percentages_never_mix_signs():
+    results = build_negative_net_multi_client_results()
+    pareto = global_pareto_clients(results, "6M")
+
+    assert math.isclose(pareto.improvement.table["PCT_OF_GROUP"].sum(), 100.0, abs_tol=1e-6)
+    assert math.isclose(pareto.deterioration.table["PCT_OF_GROUP"].sum(), 100.0, abs_tol=1e-6)
+    assert "55502_NegativeClient" not in set(pareto.improvement.table["ETIQUETA"])
+    assert "55501_PositiveClient" not in set(pareto.deterioration.table["ETIQUETA"])
 
 
 def test_multi_client_partial_periods_unaffected_by_evaluability_guard():

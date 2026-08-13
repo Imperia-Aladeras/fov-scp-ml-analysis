@@ -49,3 +49,43 @@ def test_build_global_report_preserves_technical_period_names_in_headings():
     assert "(m1-m3)" not in report
     assert "(M4-M6)" in report
     assert "(m4-m6)" not in report
+
+
+# --------------------------------------------------------------------------
+# 15. Concentracion de la mejora (ampliacion Pareto)
+# --------------------------------------------------------------------------
+
+def test_section_15_includes_pareto_client_thresholds():
+    result = build_global_analysis_result()
+    report = build_global_report(result)
+    section_15 = report.split("## 15.")[1].split("## 16.")[0]
+
+    assert "Pareto de clientes" in section_15
+    assert "explican el 50%" in section_15
+
+
+def test_section_15_includes_pareto_series_global_with_mejora_and_deterioro_separated():
+    result = build_global_analysis_result()
+    report = build_global_report(result)
+    section_15 = report.split("## 15.")[1].split("## 16.")[0]
+
+    assert "Pareto de series global" in section_15
+    assert "Top 10 series con mayor reduccion absoluta (mejora)" in section_15
+    assert "Top 10 series con mayor aumento absoluto (deterioro)" in section_15
+    # mixed (99999) aporta 1 fila de mejora y 1 de deterioro; all_ml (77777) aporta 2 de mejora.
+    assert "1001" in section_15 or "2001" in section_15  # alguna serie de mejora visible
+    assert "1002" in section_15  # la unica serie de deterioro (mixed, fila 1)
+
+
+def test_build_global_report_never_recomputes_pareto(monkeypatch):
+    result = build_global_analysis_result()  # Pareto ya calculado dentro de analyze_global
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("global_report_writer no debe recalcular el Pareto")
+
+    monkeypatch.setattr("src.global_analysis.global_pareto_series", _boom)
+    monkeypatch.setattr("src.global_analysis.global_pareto_clients", _boom)
+    monkeypatch.setattr("src.pareto.build_pareto_analysis", _boom)
+
+    report = build_global_report(result)
+    assert "Pareto de series global" in report

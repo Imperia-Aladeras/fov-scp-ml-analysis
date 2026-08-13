@@ -2,7 +2,7 @@ import math
 
 import pandas as pd
 
-from src.models import category_performance_table, top_absolute_impact, top_percentage_changes
+from src.models import category_performance_table, pareto_absolute_impact, top_absolute_impact, top_percentage_changes
 from src.periods import period_columns
 from tests.factories import build_no_comparable_dataframe, build_synthetic_client_dataframe
 
@@ -65,3 +65,72 @@ def test_top_rankings_empty_when_no_comparable_rows():
     top_improve, top_worsen = top_percentage_changes(df, pcols, empty_mask)
     assert top_reduction.empty and top_increase.empty
     assert top_improve.empty and top_worsen.empty
+
+
+def test_pareto_absolute_impact_top1_consistent_with_top_absolute_impact():
+    df = build_synthetic_client_dataframe()
+    pcols = period_columns("6M")
+    mask = df["COMPARISON_STATUS"] == "COMPARABLE"
+    top_reduction, top_increase = top_absolute_impact(df, pcols, mask, n=5)
+
+    pareto = pareto_absolute_impact(df, pcols, mask)
+
+    assert pareto.improvement.table.iloc[0]["ID_CONFIGURATION"] == top_reduction.iloc[0]["ID_CONFIGURATION"]
+    assert math.isclose(
+        pareto.improvement.table.iloc[0]["ABS_ERROR_REDUCTION"], top_reduction.iloc[0]["ABS_ERROR_REDUCTION"],
+    )
+    assert pareto.deterioration.table.iloc[0]["ID_CONFIGURATION"] == top_increase.iloc[0]["ID_CONFIGURATION"]
+    assert math.isclose(
+        pareto.deterioration.table.iloc[0]["ABS_ERROR_REDUCTION"], top_increase.iloc[0]["ABS_ERROR_REDUCTION"],
+    )
+
+
+def test_pareto_absolute_impact_nan_row_excluded_and_counted():
+    df = build_synthetic_client_dataframe()
+    pcols = period_columns("6M")
+    df.loc[0, pcols.ml_total_abs_error] = None  # fila 0 (COMPARABLE, mejora) pierde su unico input de ML
+    mask = df["COMPARISON_STATUS"] == "COMPARABLE"
+
+    pareto = pareto_absolute_impact(df, pcols, mask)
+
+    assert pareto.n_no_evaluables == 1
+    assert pareto.improvement.summary.n_total == 0  # ya no queda ninguna fila de mejora evaluable
+    assert pareto.deterioration.summary.n_total == 1  # la fila 1 (deterioro) no se ve afectada
+
+
+def _minimal_pareto_frame(comparison_status, ids, scp_abs_error, ml_abs_error):
+    pcols = period_columns("6M")
+    df = pd.DataFrame({
+        "ID_CLIENT": [1] * len(ids), "ID_CONFIGURATION": ids, "COMPARISON_STATUS": comparison_status,
+    })
+    df[pcols.scp_total_abs_error] = scp_abs_error
+    df[pcols.ml_total_abs_error] = ml_abs_error
+    return df, pcols
+
+
+def test_pareto_absolute_impact_all_improvement_leaves_deterioration_group_empty():
+    df, pcols = _minimal_pareto_frame(
+        ["COMPARABLE", "COMPARABLE"], [10, 20], scp_abs_error=[50.0, 40.0], ml_abs_error=[10.0, 10.0],
+    )
+    mask = df["COMPARISON_STATUS"] == "COMPARABLE"
+
+    pareto = pareto_absolute_impact(df, pcols, mask)
+
+    assert pareto.improvement.summary.n_total == 2
+    assert pareto.deterioration.table.empty
+    assert pareto.deterioration.summary.n_total == 0
+    assert pareto.deterioration.summary.n_for_50 is None
+
+
+def test_pareto_absolute_impact_all_deterioration_leaves_improvement_group_empty():
+    df, pcols = _minimal_pareto_frame(
+        ["COMPARABLE", "COMPARABLE"], [10, 20], scp_abs_error=[10.0, 10.0], ml_abs_error=[50.0, 40.0],
+    )
+    mask = df["COMPARISON_STATUS"] == "COMPARABLE"
+
+    pareto = pareto_absolute_impact(df, pcols, mask)
+
+    assert pareto.deterioration.summary.n_total == 2
+    assert pareto.improvement.table.empty
+    assert pareto.improvement.summary.n_total == 0
+    assert pareto.improvement.summary.n_for_50 is None

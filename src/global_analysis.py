@@ -29,12 +29,14 @@ import pandas as pd
 
 from src.client_analysis import ClientAnalysisResult
 from src.metrics import (
+    absolute_error_reduction_row,
     client_contribution_to_total_reduction,
     cross_entity_stats,
     descriptive_stats,
     relative_improvement_row,
 )
-from src.models import category_performance_table
+from src.models import _ranking_columns, category_performance_table
+from src.pareto import ParetoAnalysis, build_pareto_analysis
 from src.periods import ALL_PERIODS, period_columns, visible_label
 
 
@@ -65,6 +67,12 @@ class GlobalPeriodResult:
     client_reduction_table: pd.DataFrame  # clientes con ABS_ERROR_REDUCTION > 0
     client_deterioration_table: pd.DataFrame  # clientes con ABS_ERROR_REDUCTION < 0
     reduction_totals: dict  # REDUCCION_POSITIVA_TOTAL, DETERIORO_TOTAL_ABSOLUTO, REDUCCION_NETA
+    # Pareto de impacto absoluto (integracion global): SOLO se calculan para
+    # 6M, estructuras nuevas y separadas de client_reduction_table/
+    # client_deterioration_table (que no se modifican). None para el resto
+    # de periodos.
+    pareto_series: ParetoAnalysis | None = None
+    pareto_clients: ParetoAnalysis | None = None
 
 
 @dataclass
@@ -196,6 +204,74 @@ def _client_reduction_and_deterioration_tables(
     return reducers, worseners, totals
 
 
+def global_pareto_series(client_results: list[ClientAnalysisResult], period: str) -> ParetoAnalysis:
+    """
+    Pareto global de series: mismo patron de reconstruccion que
+    `_global_series_improvement_values`/`global_category_performance_table`
+    (concatena las filas comparables de TODOS los clientes conservando
+    ID_CLIENT, ya presente en cada dataframe), calculando ABS_ERROR_REDUCTION
+    con la misma formula que el nivel individual (`absolute_error_reduction_row`,
+    no se redefine). Identidad global = ID_CLIENT + ID_CONFIGURATION (nunca
+    se asume ID_CONFIGURATION unico entre clientes distintos): por eso el
+    desempate es magnitud DESC, ID_CLIENT ASC, ID_CONFIGURATION ASC.
+    DISPLAY_NAME se anade solo como columna de presentacion (nunca identidad
+    ni desempate). Reutiliza `_ranking_columns` de src.models (mismo set de
+    columnas de contexto que ya usa el Pareto individual) en vez de
+    duplicarlo.
+    """
+    pcols = period_columns(period)
+    id_cols_wanted = ["DISPLAY_NAME", *_ranking_columns(pcols)]
+    frames = []
+    for r in client_results:
+        pr = r.periods.get(period)
+        if pr is None or pr.n_comparable == 0 or pr.comparable_mask is None or r.source.dataframe is None:
+            continue
+        sub = r.source.dataframe.loc[pr.comparable_mask].copy()
+        sub["ABS_ERROR_REDUCTION"] = absolute_error_reduction_row(sub, pcols)
+        sub["DISPLAY_NAME"] = r.source.display_name
+        frames.append(sub)
+
+    concatenated = (
+        pd.concat(frames, ignore_index=True) if frames
+        else pd.DataFrame(columns=["ABS_ERROR_REDUCTION", *id_cols_wanted])
+    )
+    # Sin filtrado silencioso: si a algun cliente le falta una columna
+    # declarada en id_cols_wanted, build_pareto_analysis debe fallar
+    # (fail-fast), no descartarla en silencio.
+    return build_pareto_analysis(
+        concatenated, "ABS_ERROR_REDUCTION", id_cols=id_cols_wanted, tie_break_cols=["ID_CLIENT", "ID_CONFIGURATION"],
+    )
+
+
+def global_pareto_clients(client_results: list[ClientAnalysisResult], period: str) -> ParetoAnalysis:
+    """
+    Pareto global de clientes: reutiliza `pr.abs_error_reduction_total` ya
+    calculado por client_analysis.py -- NUNCA se recalcula desde las series.
+    Misma base de columnas de identidad que `_client_reduction_and_deterioration_tables`
+    (ID_CLIENT, ETIQUETA, DISPLAY_NAME solo como presentacion), pero en una
+    estructura Pareto nueva y separada: esta funcion no llama ni modifica
+    `_client_reduction_and_deterioration_tables`, `client_reduction_table` ni
+    `client_deterioration_table`. Identidad = ID_CLIENT; desempate magnitud
+    DESC, ID_CLIENT ASC. Hereda el mismo comportamiento NaN que ya tiene
+    `pr.abs_error_reduction_total` (un input ausente en cualquier serie del
+    cliente invalida el total de ESE cliente, ver metrics.absolute_error_reduction_total).
+    """
+    rows = []
+    for r in client_results:
+        pr = r.periods.get(period)
+        if pr is None:
+            continue
+        rows.append({
+            "ID_CLIENT": r.source.id_client, "ETIQUETA": r.source.file_label,
+            "DISPLAY_NAME": r.source.display_name,
+            "ABS_ERROR_REDUCTION": pr.abs_error_reduction_total,
+        })
+    base = pd.DataFrame(rows, columns=["ID_CLIENT", "ETIQUETA", "DISPLAY_NAME", "ABS_ERROR_REDUCTION"])
+    return build_pareto_analysis(
+        base, "ABS_ERROR_REDUCTION", id_cols=["ID_CLIENT", "ETIQUETA", "DISPLAY_NAME"], tie_break_cols=["ID_CLIENT"],
+    )
+
+
 def build_global_period_result(client_results: list[ClientAnalysisResult], period: str) -> GlobalPeriodResult:
     history_sum = sum(_period_history_sum(r, period) for r in client_results)
     scp_err = sum((r.periods[period].wape.get("scp_abs_error_sum") or 0.0) for r in client_results if period in r.periods)
@@ -214,6 +290,11 @@ def build_global_period_result(client_results: list[ClientAnalysisResult], perio
 
     reduction_table, deterioration_table, reduction_totals = _client_reduction_and_deterioration_tables(client_results, period)
 
+    # Pareto de impacto absoluto: solo 6M, igual que el criterio ya usado
+    # para PeriodResult.pareto en client_analysis.py.
+    pareto_series = global_pareto_series(client_results, period) if period == "6M" else None
+    pareto_clients = global_pareto_clients(client_results, period) if period == "6M" else None
+
     return GlobalPeriodResult(
         period=period, label=visible_label(period), n_clients=len(client_results),
         n_candidates_total=n_candidates_total, n_comparable_total=n_comparable_total,
@@ -226,6 +307,7 @@ def build_global_period_result(client_results: list[ClientAnalysisResult], perio
         series_improvement_stats=descriptive_stats(_global_series_improvement_values(client_results, period)),
         client_reduction_table=reduction_table, client_deterioration_table=deterioration_table,
         reduction_totals=reduction_totals,
+        pareto_series=pareto_series, pareto_clients=pareto_clients,
     )
 
 

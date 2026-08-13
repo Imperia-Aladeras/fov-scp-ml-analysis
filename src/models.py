@@ -24,6 +24,7 @@ from src.metrics import (
     period_wape_global,
     relative_improvement_row,
 )
+from src.pareto import ParetoAnalysis, build_pareto_analysis
 from src.periods import PeriodColumns
 
 MIN_SAMPLE_SIZE_FOR_STRONG_CONCLUSION = 10
@@ -131,3 +132,27 @@ def top_percentage_changes(
     top_improve = sub.sort_values("ML_IMPROVEMENT_VS_SCP_PCT", ascending=False).head(n)[ordered]
     top_worsen = sub.sort_values("ML_IMPROVEMENT_VS_SCP_PCT", ascending=True).head(n)[ordered]
     return top_improve.reset_index(drop=True), top_worsen.reset_index(drop=True)
+
+
+def pareto_absolute_impact(
+    df: pd.DataFrame, pcols: PeriodColumns, comparable_mask: pd.Series,
+) -> ParetoAnalysis:
+    """
+    Pareto de impacto absoluto sobre el universo comparable del periodo:
+    complementa a top_absolute_impact (ranking top-N crudo, sin porcentaje de
+    contribucion) con el porcentaje de contribucion y el acumulado dentro de
+    cada grupo de signo (mejora vs deterioro, nunca mezclados en el mismo
+    denominador). Reutiliza absolute_error_reduction_row -- misma formula que
+    top_absolute_impact, no se redefine ABS_ERROR_REDUCTION aqui -- y delega
+    en src.pareto.build_pareto_analysis toda la logica de orden, porcentaje,
+    acumulado y umbrales; este modulo no la reimplementa.
+
+    Desempate: magnitud de ABS_ERROR_REDUCTION DESC, despues ID_CONFIGURATION
+    ASC (una unica serie por fila dentro de un mismo cliente).
+    """
+    sub = df.loc[comparable_mask].copy()
+    sub["ABS_ERROR_REDUCTION"] = absolute_error_reduction_row(sub, pcols)
+    id_cols = [c for c in _ranking_columns(pcols) if c in sub.columns]
+    return build_pareto_analysis(
+        sub, "ABS_ERROR_REDUCTION", id_cols=id_cols, tie_break_cols=["ID_CONFIGURATION"],
+    )

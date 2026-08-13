@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from src.charts import CHART_SUBFOLDERS, generate_client_charts
-from tests.factories import build_synthetic_client_result
+from src.charts import CHART_SUBFOLDERS, generate_client_charts, generate_impact_and_risk_charts
+from tests.factories import build_multi_client_results, build_synthetic_client_result
 
 
 def test_generate_client_charts_creates_files_on_disk(tmp_path: Path):
@@ -34,3 +34,38 @@ def test_chart_subfolders_constant_matches_spec():
     assert CHART_SUBFOLDERS == (
         "coverage", "semester", "quarters", "monthly", "models", "classifications", "impact_and_risk",
     )
+
+
+def test_pareto_charts_generated_for_both_groups_when_mixed(tmp_path: Path):
+    result = build_synthetic_client_result(with_data=True)  # 1 fila mejora, 1 fila deterioro en 6M
+    out_dir = tmp_path / "impact_and_risk"
+    generated = generate_impact_and_risk_charts(result, out_dir)
+
+    assert any(p.endswith("05_pareto_series_reduction.png") for p in generated)
+    assert any(p.endswith("06_pareto_series_increase.png") for p in generated)
+    for p in generated:
+        assert Path(p).exists()
+        assert Path(p).stat().st_size > 0
+
+
+def test_pareto_increase_chart_omitted_when_deterioration_group_empty(tmp_path: Path):
+    all_ml_result = build_multi_client_results()[2]  # 77777_AllMlWins: ambas filas ganan ML en 6M
+    out_dir = tmp_path / "impact_and_risk"
+    generated = generate_impact_and_risk_charts(all_ml_result, out_dir)
+
+    assert any(p.endswith("05_pareto_series_reduction.png") for p in generated)
+    assert not any(p.endswith("06_pareto_series_increase.png") for p in generated)
+    assert not (out_dir / "06_pareto_series_increase.png").exists()
+
+
+def test_charts_never_recompute_pareto(monkeypatch, tmp_path: Path):
+    result = build_synthetic_client_result(with_data=True)  # Pareto ya calculado dentro de analyze_client
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("charts.py no debe recalcular el Pareto")
+
+    monkeypatch.setattr("src.models.pareto_absolute_impact", _boom)
+    monkeypatch.setattr("src.pareto.build_pareto_analysis", _boom)
+
+    generated = generate_client_charts(result, tmp_path / "charts")
+    assert any("05_pareto_series_reduction.png" in p for p in generated)

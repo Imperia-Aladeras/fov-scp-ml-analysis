@@ -16,7 +16,15 @@ import pandas as pd
 
 from src.global_analysis import GlobalAnalysisResult, global_category_performance_table
 from src.periods import ALL_PERIODS, MONTHLY_PERIODS, visible_label
-from src.report_writer import _fmt_num, _fmt_pct_fraction, _fmt_pct_scaled, _fmt_signed_pct_scaled, _table_from_rows
+from src.report_writer import (
+    _fmt_num,
+    _fmt_pct_fraction,
+    _fmt_pct_scaled,
+    _fmt_signed_pct_scaled,
+    _pareto_concentration_line,
+    _pareto_table_lines,
+    _table_from_rows,
+)
 
 MODEL_CLASSIFICATION_PERIOD = "6M"
 
@@ -374,6 +382,50 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
         )))
     else:
         a("Ningun cliente aumenta error en 6M.")
+    a("")
+
+    if m6.pareto_clients is not None:
+        a(
+            "**Pareto de clientes — umbrales exactos de concentracion** (complementa el top-1 anterior con "
+            "cuantos clientes explican el 50/80/90% de cada grupo; mejora y deterioro se calculan por "
+            "separado, cada uno con su propio denominador):"
+        )
+        a("")
+        a(_pareto_concentration_line(m6.pareto_clients.improvement, "mejora"))
+        a("")
+        a(_pareto_concentration_line(m6.pareto_clients.deterioration, "deterioro"))
+        if m6.pareto_clients.n_no_evaluables:
+            a("")
+            a(
+                f"{_fmt_num(m6.pareto_clients.n_no_evaluables)} cliente(s) no son evaluables para impacto "
+                f"absoluto en 6M (algun input ausente en alguna de sus series) y no participan en el Pareto "
+                f"de clientes."
+            )
+        a("")
+
+    a("### Pareto de series global (todos los clientes)")
+    a("")
+    if m6.pareto_series is not None:
+        a(_pareto_concentration_line(m6.pareto_series.improvement, "mejora"))
+        a("")
+        a(_pareto_concentration_line(m6.pareto_series.deterioration, "deterioro"))
+        if m6.pareto_series.n_no_evaluables:
+            a("")
+            a(
+                f"{_fmt_num(m6.pareto_series.n_no_evaluables)} serie(s) comparable(s) en 6M no son evaluables "
+                f"para impacto absoluto (falta SCP_TOTAL_ABS_ERROR_6M o ML_TOTAL_ABS_ERROR_6M) y no participan "
+                f"en el Pareto de series."
+            )
+        a("")
+        a("Top 10 series con mayor reduccion absoluta (mejora), todos los clientes:")
+        a("")
+        a("\n".join(_pareto_table_lines(m6.pareto_series.improvement.table, top_n=10)))
+        a("")
+        a("Top 10 series con mayor aumento absoluto (deterioro), todos los clientes:")
+        a("")
+        a("\n".join(_pareto_table_lines(m6.pareto_series.deterioration.table, top_n=10)))
+    else:
+        a("Pareto de series no disponible para este periodo.")
     a("")
     a("---")
     a("")

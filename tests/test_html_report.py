@@ -915,6 +915,145 @@ def test_build_executive_summary_vm_matches_numerator_denominator_wording():
     assert summary["n_clients_missing_performance"] != "0"
 
 
+def test_build_client_page_vm_pareto_reads_from_period_result_without_recomputing(monkeypatch):
+    """
+    vm["pareto"] debe reflejar exactamente PeriodResult.pareto (ya calculado
+    una unica vez en client_analysis.py): esta prueba lo confirma de dos
+    formas -- (a) el contenido coincide con result.periods["6M"].pareto, y
+    (b) con pareto_absolute_impact/build_pareto_analysis parcheados para
+    lanzar excepcion, build_client_page_vm sigue funcionando sin invocarlos.
+    """
+    result = build_synthetic_client_result(with_data=True)
+    m6 = result.periods["6M"]
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("html_view_models no debe recalcular el Pareto")
+
+    monkeypatch.setattr("src.models.pareto_absolute_impact", _boom)
+    monkeypatch.setattr("src.pareto.build_pareto_analysis", _boom)
+
+    page_vm = vm.build_client_page_vm(result)
+
+    improvement_rows = page_vm["pareto"]["improvement"]["rows"]
+    deterioration_rows = page_vm["pareto"]["deterioration"]["rows"]
+    assert improvement_rows[0]["id_configuration"] == str(m6.pareto.improvement.table.iloc[0]["ID_CONFIGURATION"])
+    assert deterioration_rows[0]["id_configuration"] == str(m6.pareto.deterioration.table.iloc[0]["ID_CONFIGURATION"])
+    assert page_vm["pareto"]["improvement"]["summary"]["n_total"] == "1"
+    assert page_vm["pareto"]["deterioration"]["summary"]["n_total"] == "1"
+    assert page_vm["pareto"]["has_no_evaluables"] is False
+
+
+def test_build_client_page_vm_omits_pareto_when_no_comparable_series_anywhere():
+    """
+    Cuando ninguna serie es comparable en ningun periodo, build_client_page_vm
+    devuelve el vm en un return anticipado (antes del bloque has_6m_data) que
+    tampoco fija top_abs_reductions/top_abs_increases: "pareto" tampoco se
+    fija en ese caso. El template nunca lo referencia ahi (kind ==
+    "no_performance" salta la seccion #impacto por completo).
+    """
+    result = build_synthetic_client_result(with_data=False)
+    page_vm = vm.build_client_page_vm(result)
+    assert page_vm["kind"] == "no_performance"
+    assert "pareto" not in page_vm
+
+
+def test_client_page_renders_pareto_section_with_empty_deterioration_group(tmp_path: Path):
+    """
+    Cliente con una unica serie, ML gana en 6M: el grupo de deterioro queda
+    vacio -- la pagina debe indicarlo explicitamente (no error, no PNG vacio
+    en el bloque de texto) y seguir mostrando el grupo de mejora.
+    """
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _write_client_csv(data_dir / "TA_FOV_SCP_ML_10204_Mejora.csv", 10204, winner="ML", scp_err=20.0, ml_err=10.0)
+    output_root = tmp_path / "runs"
+    exit_code = pipeline.main([
+        "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "pareto_html_run",
+    ])
+    assert exit_code == 0
+    html = (output_root / "pareto_html_run" / "clients" / "10204-sklum" / "index.html").read_text(encoding="utf-8")
+    assert "Pareto de impacto absoluto — mejora" in html
+    assert "Pareto de impacto absoluto — deterioro" in html
+    assert "Sin series con deterioro en 6M para este cliente." in html
+
+
+# --------------------------------------------------------------------------
+# Pareto global (view-model + pagina global)
+# --------------------------------------------------------------------------
+
+def test_build_perspectives_vm_pareto_table_has_four_groups_with_correct_values():
+    global_result = build_global_analysis_result()
+    m6 = global_result.periods["6M"]
+    perspectives = vm.build_perspectives_vm(global_result)
+
+    rows = perspectives["impacto_absoluto"]["pareto_rows"]
+    assert [r["grupo"] for r in rows] == [
+        "Series — mejora", "Series — deterioro", "Clientes — mejora", "Clientes — deterioro",
+    ]
+    assert rows[0]["summary"]["n_total"] == str(m6.pareto_series.improvement.summary.n_total)
+    assert rows[1]["summary"]["n_total"] == str(m6.pareto_series.deterioration.summary.n_total)
+    assert rows[2]["summary"]["n_total"] == str(m6.pareto_clients.improvement.summary.n_total)
+    assert rows[3]["summary"]["n_total"] == str(m6.pareto_clients.deterioration.summary.n_total)
+    assert perspectives["impacto_absoluto"]["n_no_evaluables_series"] == "0"
+    assert perspectives["impacto_absoluto"]["n_no_evaluables_clientes"] == "0"
+
+
+def test_build_perspectives_vm_pareto_never_recomputes(monkeypatch):
+    global_result = build_global_analysis_result()  # Pareto ya calculado dentro de analyze_global
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("html_view_models no debe recalcular el Pareto global")
+
+    monkeypatch.setattr("src.global_analysis.global_pareto_series", _boom)
+    monkeypatch.setattr("src.global_analysis.global_pareto_clients", _boom)
+    monkeypatch.setattr("src.pareto.build_pareto_analysis", _boom)
+
+    perspectives = vm.build_perspectives_vm(global_result)
+    assert len(perspectives["impacto_absoluto"]["pareto_rows"]) == 4
+
+
+def test_build_perspectives_vm_pareto_shows_zero_row_for_empty_group():
+    """Cliente unico que solo mejora: la fila 'Clientes — deterioro' debe mostrarse con N total = 0, no omitirse."""
+    from src.global_analysis import GlobalAnalysisResult, build_global_period_result
+    from tests.factories import build_multi_client_results
+
+    all_ml_result = build_multi_client_results()[2]
+    single_client_result = GlobalAnalysisResult(
+        client_results=[all_ml_result], invalid_results=[],
+        periods={"6M": build_global_period_result([all_ml_result], "6M")}, client_period_tables={},
+    )
+    perspectives = vm.build_perspectives_vm(single_client_result)
+    rows = {r["grupo"]: r["summary"] for r in perspectives["impacto_absoluto"]["pareto_rows"]}
+
+    assert rows["Clientes — deterioro"]["n_total"] == "0"
+    assert rows["Clientes — deterioro"]["n_for_50"] == "N/D"
+    assert rows["Series — deterioro"]["n_total"] == "0"
+
+
+def test_global_page_renders_pareto_table_and_sheet_reference(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _write_multi_client_csv(data_dir / "TA_FOV_SCP_ML_full_export.csv", [
+        dict(id_client=10204, winner="ML", scp_err=20.0, ml_err=10.0),
+        dict(id_client=10620, winner="SCP", scp_err=10.0, ml_err=30.0),
+    ])
+    output_root = tmp_path / "runs"
+    exit_code = pipeline.main([
+        "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "global_pareto_run",
+    ])
+    assert exit_code == 0
+    html = (output_root / "global_pareto_run" / "index.html").read_text(encoding="utf-8")
+
+    assert "Series — mejora" in html
+    assert "Series — deterioro" in html
+    assert "Clientes — mejora" in html
+    assert "Clientes — deterioro" in html
+    assert "16_pareto_absolute_impact" in html
+    assert "Series comparables no evaluables para impacto absoluto" in html
+    problems = validate_run_links(output_root / "global_pareto_run")
+    assert problems == []
+
+
 def test_build_inventory_row_vm_never_invents_client_link_for_unanalyzed_csv():
     from src.execution_summary import ExecutionRecord, INPUT_NOT_ANALYZED
 

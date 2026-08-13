@@ -472,6 +472,69 @@ def _bar_top_ranking(table: pd.DataFrame, value_col: str, title: str, subtitle: 
     return _save_close(fig, out_path)
 
 
+PARETO_CHART_TOP_N = 20
+
+
+def _pareto_bar_chart(
+    group, title: str, subtitle: str, color: str, out_path: Path,
+    label_col: str = "ID_CONFIGURATION", top_n: int | None = PARETO_CHART_TOP_N, unit_label: str = "series",
+    label_fn=None,
+) -> str | None:
+    """
+    Barras + linea de % acumulado (eje secundario) para un ParetoGroup ya
+    calculado (PeriodResult.pareto / GlobalPeriodResult.pareto_series/
+    .pareto_clients): no recalcula el Pareto, solo lo dibuja. `top_n` es un
+    limite EXCLUSIVAMENTE visual (numero de barras dibujadas) -- None dibuja
+    el grupo completo (usado para el Pareto global de clientes, donde se
+    puede mostrar todos si el numero es razonable); la linea de acumulado
+    usa CUMULATIVE_PCT tal cual viene en la tabla completa, calculado sobre
+    el grupo entero, nunca recalculado sobre el subconjunto visible.
+    `label_col` permite reutilizar esta misma funcion tanto para Pareto de
+    series (ID_CONFIGURATION) como de clientes (ETIQUETA), sin duplicar la
+    logica de dibujo. `label_fn(row) -> str`, si se pasa, sustituye a
+    `label_col` para construir una etiqueta compuesta (p.ej. "DISPLAY_NAME
+    (ID_CLIENT)" o "ID_CLIENT-ID_CONFIGURATION") sin anadir ninguna columna
+    nueva a `group.table` (la tabla en si, compartida con Excel/Markdown/
+    HTML, no se modifica: la etiqueta es puramente de renderizado).
+    """
+    table = group.table
+    if table.empty:
+        return None
+    visible = table.head(top_n) if top_n is not None else table
+    if label_fn is not None:
+        labels = [label_fn(row) for _, row in visible.iterrows()]
+    else:
+        labels = visible[label_col].astype(str).tolist()
+    values = visible["ABS_ERROR_REDUCTION"].abs().tolist()
+    cumulative = visible["CUMULATIVE_PCT"].tolist()
+
+    fig, ax = _new_fig((9, 5))
+    x = np.arange(len(labels))
+    ax.bar(x, values, color=color, width=0.6)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=7.5)
+    ax.set_ylabel("Reduccion absoluta (magnitud)", color=COLOR_TEXT_SECONDARY, fontsize=9)
+
+    ax2 = ax.twinx()
+    ax2.plot(x, cumulative, marker="o", color=COLOR_TEXT, linewidth=1.5, markersize=4)
+    ax2.set_ylim(0, 105)
+    ax2.set_ylabel("% acumulado del grupo", color=COLOR_TEXT_SECONDARY, fontsize=9)
+    for threshold in (50, 80, 90):
+        ax2.axhline(threshold, color=COLOR_AXIS, linewidth=0.8, linestyle="--")
+
+    n_total = group.summary.n_total
+    n_shown = len(visible)
+    if top_n is not None and n_total > n_shown:
+        subtitle_full = (
+            f"{subtitle} | mostrando {n_shown} de {n_total} {unit_label} (TOP {top_n} visual; "
+            f"el % acumulado ya refleja el grupo completo)"
+        )
+    else:
+        subtitle_full = f"{subtitle} | n={n_total}"
+    _apply_title(ax, title, subtitle_full)
+    return _save_close(fig, out_path)
+
+
 def generate_impact_and_risk_charts(result: ClientAnalysisResult, out_dir: Path) -> list[str]:
     df = result.source.dataframe
     pr = result.periods.get(MODEL_CLASSIFICATION_PERIOD)
@@ -496,6 +559,20 @@ def generate_impact_and_risk_charts(result: ClientAnalysisResult, out_dir: Path)
     path = _bar_top_ranking(top_worsen, "ML_IMPROVEMENT_VS_SCP_PCT", "Top deterioros porcentuales", sub_tag, COLOR_SCP, out_dir / "04_top_percentage_worsenings.png")
     if path:
         generated.append(path)
+
+    if pr.pareto is not None:
+        path = _pareto_bar_chart(
+            pr.pareto.improvement, "Pareto de impacto absoluto - mejora", sub_tag, COLOR_ML,
+            out_dir / "05_pareto_series_reduction.png",
+        )
+        if path:
+            generated.append(path)
+        path = _pareto_bar_chart(
+            pr.pareto.deterioration, "Pareto de impacto absoluto - deterioro", sub_tag, COLOR_SCP,
+            out_dir / "06_pareto_series_increase.png",
+        )
+        if path:
+            generated.append(path)
 
     return generated
 

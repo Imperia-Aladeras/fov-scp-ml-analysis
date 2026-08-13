@@ -13,7 +13,10 @@ from src.client_analysis import (
     period_comparable_mask,
 )
 from src.input_loader import ClientSource
+from src.models import pareto_absolute_impact
 from src.periods import ALL_PERIODS, period_columns
+from tests.factories import build_synthetic_client_dataframe as build_factory_synthetic_client_dataframe
+from tests.factories import make_client_source
 
 
 def _minimal_period_frame(period: str, history, scp_forecast, scp_abs_error, scp_wape,
@@ -90,6 +93,8 @@ def _build_synthetic_client_dataframe() -> pd.DataFrame:
     df = pd.DataFrame({
         "HAS_BASE_CANDIDATE": [1, 1, 1],
         "COMPARISON_STATUS": ["COMPARABLE", "COMPARABLE", "NOT_COMPARABLE_NO_HISTORY"],
+        "ID_CLIENT": [99999, 99999, 99999],
+        "ID_CONFIGURATION": [101, 102, 103],
     })
 
     for month in [f"M{i}" for i in range(1, 7)]:
@@ -158,6 +163,64 @@ def test_analyze_client_end_to_end_synthetic():
 
     assert result.status in ("SUCCESS", "SUCCESS_WITH_WARNINGS")
     assert result.file_valid is True
+
+
+# --------------------------------------------------------------------------
+# Pareto de impacto absoluto (integracion individual): calculado una unica
+# vez dentro de analyze_client, exclusivamente para 6M.
+# --------------------------------------------------------------------------
+
+def test_pareto_only_populated_for_6m():
+    df = build_factory_synthetic_client_dataframe()
+    source = make_client_source(df, 99999, "Synthetic")
+    result = analyze_client(source)
+
+    assert result.periods["6M"].pareto is not None
+    for period in ("M1", "M2", "M3", "M4", "M5", "M6", "RECENT_3M", "OLDER_3M"):
+        assert result.periods[period].pareto is None
+
+
+def test_pareto_field_matches_standalone_pareto_absolute_impact_call():
+    """
+    PeriodResult.pareto debe coincidir exactamente con una llamada
+    independiente a pareto_absolute_impact sobre el mismo df/mask (no una
+    version recortada o recalculada de otra forma dentro de analyze_client).
+    """
+    df = build_factory_synthetic_client_dataframe()
+    source = make_client_source(df, 99999, "Synthetic")
+    result = analyze_client(source)
+    period_6m = result.periods["6M"]
+
+    pcols = period_columns("6M")
+    expected = pareto_absolute_impact(df, pcols, period_6m.comparable_mask)
+
+    assert period_6m.pareto.improvement.table.equals(expected.improvement.table)
+    assert period_6m.pareto.deterioration.table.equals(expected.deterioration.table)
+    assert period_6m.pareto.n_no_evaluables == expected.n_no_evaluables
+    assert period_6m.pareto.improvement.summary == expected.improvement.summary
+    assert period_6m.pareto.deterioration.summary == expected.deterioration.summary
+
+
+def test_pareto_none_when_backend_comparison_status_column_absent():
+    """
+    Sin COMPARISON_STATUS en el CSV, 6M usa la mascara local
+    (period_comparable_mask), no la backend: is_backend_6m es False y el
+    Pareto tampoco se calcula (permanece None), igual que para M1..M6.
+    """
+    df = pd.DataFrame({"HAS_BASE_CANDIDATE": [1], "ID_CONFIGURATION": [1]})
+    for period in ALL_PERIODS:
+        _set_period(
+            df, period,
+            total_history=[100.0], scp_forecast=[120.0], scp_abs_error=[20.0], scp_wape=[0.2],
+            ml_forecast=[110.0], ml_abs_error=[10.0], ml_wape=[0.1], winner_method=["ML"],
+        )
+    source = ClientSource(
+        csv_path=Path("TA_FOV_SCP_ML_99990_Synthetic.csv"), file_label="99990_Synthetic", id_from_filename=99990,
+        dataframe=df, read_repaired=False, id_client=99990, id_batch=[1], id_run_staging=[1],
+        source_run_id=[1], n_rows=len(df), is_valid=True, folder_name="99990_Synthetic",
+    )
+    result = analyze_client(source)
+    assert result.periods["6M"].pareto is None
 
 
 # --------------------------------------------------------------------------

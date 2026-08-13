@@ -54,6 +54,8 @@ from src.metrics import (
     relative_improvement_row,
     winner_distribution,
 )
+from src.models import pareto_absolute_impact
+from src.pareto import ParetoAnalysis
 from src.periods import ALL_PERIODS, MONTHLY_PERIODS, PeriodColumns, period_columns, visible_label
 from src.quality_checks import (
     QualityReport,
@@ -108,6 +110,11 @@ class PeriodResult:
     comparable_configuration_ids: frozenset = field(default_factory=frozenset)
     comparable_mask: pd.Series = None  # mascara booleana reutilizable (Fase 3: excel/report/charts)
     quality: QualityReport = field(default_factory=QualityReport)
+    # Pareto de impacto absoluto: SOLO se calcula para 6M (poblacion backend
+    # COMPARISON_STATUS == "COMPARABLE"), una unica vez aqui. None para
+    # M1..M6/RECENT_3M/OLDER_3M. Los writers leen este campo y nunca llaman
+    # a pareto_absolute_impact/build_pareto_analysis por su cuenta.
+    pareto: ParetoAnalysis | None = None
 
 
 @dataclass
@@ -315,6 +322,12 @@ def _analyze_period(df: pd.DataFrame, candidate_mask: pd.Series, period: str, fi
         stats_scp = descriptive_stats(pd.Series(dtype=float))
         stats_tie = descriptive_stats(pd.Series(dtype=float))
 
+    # Pareto de impacto absoluto: solo 6M, poblacion backend
+    # (comparable_mask == backend_comparable_mask_6m en ese caso). Se
+    # calcula aqui, una unica vez, para que ningun writer tenga que volver
+    # a llamar a pareto_absolute_impact/build_pareto_analysis.
+    pareto = pareto_absolute_impact(df, pcols, comparable_mask) if is_backend_6m else None
+
     # --- chequeos de calidad numericos del periodo ---
     for monthly_field, aggregate_col in (
         ("HISTORY", pcols.total_history),
@@ -362,6 +375,7 @@ def _analyze_period(df: pd.DataFrame, candidate_mask: pd.Series, period: str, fi
         comparable_configuration_ids=comparable_configuration_ids,
         comparable_mask=comparable_mask,
         quality=quality,
+        pareto=pareto,
     )
 
 

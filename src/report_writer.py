@@ -108,6 +108,38 @@ def _category_table_lines(table: pd.DataFrame, top_n: int = 10) -> list[str]:
     return _table_from_rows(headers, rows)
 
 
+def _pareto_table_lines(table: pd.DataFrame, top_n: int = 5) -> list[str]:
+    """
+    Reutilizada tanto por el Pareto individual (seccion 9) como por el
+    Pareto de series global (seccion 15 del informe global): ID_CLIENT
+    siempre esta presente en la tabla (parte de `_ranking_columns`, incluida
+    tanto a nivel individual -- constante, el propio cliente -- como a nivel
+    global, donde es necesaria para desambiguar filas: dos clientes distintos
+    pueden compartir el mismo ID_CONFIGURATION, ver global_pareto_series).
+    """
+    if table.empty:
+        return ["_Sin series en este grupo._"]
+    headers = ["Rank", "ID_CLIENT", "ID_CONFIGURATION", "Reduccion absoluta", "% del grupo", "% acumulado"]
+    rows = []
+    for _, r in table.head(top_n).iterrows():
+        rows.append([
+            _fmt_num(r["RANK"]), str(r.get("ID_CLIENT", "")), str(r.get("ID_CONFIGURATION", "")),
+            _fmt_num(r["ABS_ERROR_REDUCTION"]), _fmt_pct_scaled(r["PCT_OF_GROUP"]), _fmt_pct_scaled(r["CUMULATIVE_PCT"]),
+        ])
+    return _table_from_rows(headers, rows)
+
+
+def _pareto_concentration_line(group, label: str) -> str:
+    s = group.summary
+    if s.n_total == 0:
+        return f"Sin series con {label} en 6M para este cliente."
+    parts = [f"{_fmt_num(s.n_total)} series con {label}"]
+    for pct, n_for in (("50", s.n_for_50), ("80", s.n_for_80), ("90", s.n_for_90)):
+        if n_for is not None:
+            parts.append(f"{_fmt_num(n_for)} explican el {pct}%")
+    return ", ".join(parts) + f" del impacto total de {label} ({_fmt_num(s.total_impact)} unidades)."
+
+
 def _ranking_table_lines(df: pd.DataFrame, value_col: str, value_fmt) -> list[str]:
     if df.empty:
         return ["_Sin datos (sin series comparables)._"]
@@ -321,6 +353,32 @@ def build_client_report(result: ClientAnalysisResult) -> str:
             f"Reduccion absoluta de error en 6M: **{_fmt_num(m6.abs_error_reduction_total)}** unidades de "
             f"historico (positivo = ML reduce error total frente a SCP)."
         )
+        if m6.pareto is not None:
+            pareto = m6.pareto
+            a("")
+            a(
+                "**Pareto de concentracion del impacto absoluto (6M).** Mejora y deterioro se calculan "
+                "por separado, cada uno con su propio denominador (nunca se mezclan signos)."
+            )
+            a("")
+            a(_pareto_concentration_line(pareto.improvement, "mejora"))
+            a("")
+            a(_pareto_concentration_line(pareto.deterioration, "deterioro"))
+            if pareto.n_no_evaluables:
+                a("")
+                a(
+                    f"{_fmt_num(pareto.n_no_evaluables)} serie(s) comparable(s) en 6M no son evaluables para "
+                    f"impacto absoluto (falta SCP_TOTAL_ABS_ERROR_6M o ML_TOTAL_ABS_ERROR_6M) y no participan "
+                    f"en el Pareto."
+                )
+            a("")
+            a("Top 5 series con mayor reduccion absoluta (mejora):")
+            a("")
+            a("\n".join(_pareto_table_lines(pareto.improvement.table)))
+            a("")
+            a("Top 5 series con mayor aumento absoluto (deterioro):")
+            a("")
+            a("\n".join(_pareto_table_lines(pareto.deterioration.table)))
     else:
         a(_no_data_line(visible_label("6M")))
     a("")

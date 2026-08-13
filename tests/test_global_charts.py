@@ -3,9 +3,22 @@ from pathlib import Path
 import pandas as pd
 
 from src.charts import COLOR_ML, COLOR_SCP
-from src.global_analysis import build_global_period_result
-from src.global_charts import CHART_SUBFOLDERS, contribution_colors, generate_global_charts
-from tests.factories import build_global_analysis_result, build_multi_client_results
+from src.client_analysis import analyze_client
+from src.global_analysis import GlobalAnalysisResult, build_global_period_result, global_pareto_clients, global_pareto_series
+from src.global_charts import (
+    CHART_SUBFOLDERS,
+    contribution_colors,
+    generate_global_charts,
+    generate_impact_and_risk_charts,
+    pareto_client_chart_label,
+    pareto_series_chart_label,
+)
+from tests.factories import (
+    build_global_analysis_result,
+    build_multi_client_results,
+    build_synthetic_client_dataframe,
+    make_client_source,
+)
 
 
 def test_generate_global_charts_creates_files_on_disk(tmp_path: Path):
@@ -48,3 +61,149 @@ def test_client_contribution_chart_colors_by_absolute_value_not_percentage():
         assert negative_row["ABS_ERROR_REDUCTION"] < 0
         colors = contribution_colors(combined["ABS_ERROR_REDUCTION"])
         assert colors[combined.index.get_loc(negative_row.name)] == COLOR_SCP
+
+
+# --------------------------------------------------------------------------
+# Pareto global (03-06 en impact_and_risk/)
+# --------------------------------------------------------------------------
+
+def test_pareto_charts_generated_for_both_groups_at_series_and_client_level(tmp_path: Path):
+    """mixed (99999) aporta mejora y deterioro tanto en series como a nivel cliente frente a all_ml (77777)."""
+    result = build_global_analysis_result()
+    out_dir = tmp_path / "impact_and_risk"
+    generated = generate_impact_and_risk_charts(result, out_dir)
+
+    for fname in (
+        "03_pareto_clients_reduction.png", "04_pareto_clients_increase.png",
+        "05_pareto_series_reduction.png", "06_pareto_series_increase.png",
+    ):
+        assert any(p.endswith(fname) for p in generated), f"falta {fname}"
+        assert (out_dir / fname).exists()
+        assert (out_dir / fname).stat().st_size > 0
+
+
+def test_pareto_client_increase_chart_omitted_when_all_clients_improve(tmp_path: Path):
+    """Un unico cliente (all_ml, 77777) que solo mejora: el grupo de deterioro de clientes y de series queda vacio."""
+    all_ml_result = build_multi_client_results()[2]
+    single_client_result = GlobalAnalysisResult(
+        client_results=[all_ml_result], invalid_results=[],
+        periods={"6M": build_global_period_result([all_ml_result], "6M")}, client_period_tables={},
+    )
+    out_dir = tmp_path / "impact_and_risk"
+    generated = generate_impact_and_risk_charts(single_client_result, out_dir)
+
+    assert any(p.endswith("03_pareto_clients_reduction.png") for p in generated)
+    assert not any(p.endswith("04_pareto_clients_increase.png") for p in generated)
+    assert not (out_dir / "04_pareto_clients_increase.png").exists()
+    assert any(p.endswith("05_pareto_series_reduction.png") for p in generated)
+    assert not any(p.endswith("06_pareto_series_increase.png") for p in generated)
+    assert not (out_dir / "06_pareto_series_increase.png").exists()
+
+
+def test_pareto_client_chart_label_disambiguates_clients_sharing_file_label():
+    """
+    Regresion de la auditoria real: dos clientes procedentes del mismo CSV
+    fisico multi-cliente comparten ETIQUETA (y, en este fixture, tambien
+    DISPLAY_NAME): con el comportamiento anterior (label_col="ETIQUETA") las
+    dos barras del chart de clientes global mostraban el mismo texto. La
+    nueva etiqueta compuesta DISPLAY_NAME (ID_CLIENT) debe seguir siendo
+    unica porque ID_CLIENT si es unico por construccion.
+    """
+    df_a = build_synthetic_client_dataframe()
+    source_a = make_client_source(df_a, 10001, "SharedLabel")
+    result_a = analyze_client(source_a)
+
+    df_b = build_synthetic_client_dataframe()
+    df_b["ID_CLIENT"] = 10002
+    source_b = make_client_source(df_b, 10002, "SharedLabel")
+    # mismo CSV fisico: mismo file_label/display_name que source_a, ID_CLIENT distinto
+    # (make_client_source deriva file_label como "{id_client}_{label}", asi que un
+    # mismo `label` no basta por si solo para reproducir la colision real).
+    source_b.file_label = source_a.file_label
+    source_b.display_name = source_a.display_name
+    result_b = analyze_client(source_b)
+
+    assert source_a.file_label == source_b.file_label
+    assert source_a.display_name == source_b.display_name  # peor caso: tambien colisiona
+
+    pareto = global_pareto_clients([result_a, result_b], "6M")
+    group = pareto.deterioration if not pareto.deterioration.table.empty else pareto.improvement
+    assert len(group.table) == 2  # ambos clientes sinteticos caen en el mismo grupo
+
+    old_style_labels = group.table["ETIQUETA"].astype(str).tolist()
+    assert len(set(old_style_labels)) == 1  # reproduce la ambiguedad detectada en la auditoria real
+
+    new_labels = [pareto_client_chart_label(row) for _, row in group.table.iterrows()]
+    assert len(new_labels) == len(set(new_labels)), f"etiquetas duplicadas: {new_labels}"
+    assert set(new_labels) == {"SharedLabel (10001)", "SharedLabel (10002)"}
+
+
+def test_pareto_series_chart_label_disambiguates_shared_id_configuration_across_clients():
+    """
+    Regresion de la auditoria real: dos clientes distintos pueden compartir
+    el mismo ID_CONFIGURATION (identidad real = ID_CLIENT + ID_CONFIGURATION,
+    ver global_pareto_series). La etiqueta compuesta "<ID_CLIENT>-<ID_CONFIGURATION>"
+    debe distinguir ambas series.
+    """
+    df_a = build_synthetic_client_dataframe()
+    df_a["ID_CLIENT"] = 70001  # global_pareto_series lee ID_CLIENT de la columna del df, no de source.id_client
+    source_a = make_client_source(df_a, 70001, "ClientA")
+    result_a = analyze_client(source_a)
+
+    df_b = build_synthetic_client_dataframe()
+    df_b["ID_CLIENT"] = 70002
+    source_b = make_client_source(df_b, 70002, "ClientB")
+    result_b = analyze_client(source_b)
+
+    pareto = global_pareto_series([result_a, result_b], "6M")
+    group = pareto.improvement
+    assert len(group.table) == 2
+    assert group.table["ID_CONFIGURATION"].nunique() == 1  # colision real de ID_CONFIGURATION
+
+    old_style_labels = group.table["ID_CONFIGURATION"].astype(str).tolist()
+    assert len(set(old_style_labels)) == 1  # con el comportamiento anterior, ambiguo
+
+    new_labels = [pareto_series_chart_label(row) for _, row in group.table.iterrows()]
+    assert len(new_labels) == len(set(new_labels)), f"etiquetas duplicadas: {new_labels}"
+    assert set(new_labels) == {"70001-1001", "70002-1001"}
+
+
+def test_pareto_client_charts_render_without_error_when_clients_share_file_label(tmp_path: Path):
+    """Smoke test end-to-end: la colision de ETIQUETA no rompe la generacion de 03/04."""
+    df_a = build_synthetic_client_dataframe()
+    source_a = make_client_source(df_a, 10001, "SharedLabel")
+    result_a = analyze_client(source_a)
+
+    df_b = build_synthetic_client_dataframe()
+    df_b["ID_CLIENT"] = 10002
+    source_b = make_client_source(df_b, 10002, "SharedLabel")
+    source_b.file_label = source_a.file_label
+    source_b.display_name = source_a.display_name
+    result_b = analyze_client(source_b)
+
+    colliding_result = GlobalAnalysisResult(
+        client_results=[result_a, result_b], invalid_results=[],
+        periods={"6M": build_global_period_result([result_a, result_b], "6M")}, client_period_tables={},
+    )
+    out_dir = tmp_path / "impact_and_risk"
+    generated = generate_impact_and_risk_charts(colliding_result, out_dir)
+
+    assert any(p.endswith("03_pareto_clients_reduction.png") or p.endswith("04_pareto_clients_increase.png") for p in generated)
+    for p in generated:
+        assert Path(p).exists()
+        assert Path(p).stat().st_size > 0
+
+
+def test_global_charts_never_recompute_pareto(monkeypatch, tmp_path: Path):
+    result = build_global_analysis_result()  # Pareto ya calculado dentro de analyze_global
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("global_charts.py no debe recalcular el Pareto")
+
+    monkeypatch.setattr("src.global_analysis.global_pareto_series", _boom)
+    monkeypatch.setattr("src.global_analysis.global_pareto_clients", _boom)
+    monkeypatch.setattr("src.pareto.build_pareto_analysis", _boom)
+
+    generated = generate_global_charts(result, tmp_path / "charts")
+    assert any("03_pareto_clients_reduction.png" in p for p in generated)
+    assert any("05_pareto_series_reduction.png" in p for p in generated)

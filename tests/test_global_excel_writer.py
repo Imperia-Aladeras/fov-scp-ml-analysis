@@ -4,7 +4,12 @@ import openpyxl
 
 from src.client_analysis import analyze_client
 from src.global_analysis import GlobalAnalysisResult
-from src.global_excel_writer import build_global_workbook, data_quality_checks_blocks, readme_blocks
+from src.global_excel_writer import (
+    build_global_workbook,
+    data_quality_checks_blocks,
+    pareto_absolute_impact_blocks,
+    readme_blocks,
+)
 from src.quality_checks import QualityIssue, Severity
 from tests.factories import build_global_analysis_result, build_synthetic_client_dataframe, make_client_source
 
@@ -13,7 +18,7 @@ EXPECTED_SHEETS = [
     "04_first_quarter_by_client", "05_second_quarter_by_client", "06_monthly_by_client",
     "07_global_period_summary", "08_client_improvement_stats", "09_series_improvement_stats",
     "10_winner_distribution", "11_models_and_win_rates", "12_classifications",
-    "13_absolute_impact", "14_exclusions", "15_data_quality_checks",
+    "13_absolute_impact", "14_exclusions", "15_data_quality_checks", "16_pareto_absolute_impact",
 ]
 
 
@@ -94,3 +99,56 @@ def test_data_quality_checks_counts_affected_clients_by_id_not_by_shared_file_la
     shared_detail = detail_df[detail_df["CODIGO"] == "SHARED_TEST_ISSUE"]
     assert set(shared_detail["ID_CLIENT"]) == {10001, 10002}
     assert list(shared_detail.columns[:2]) == ["ID_CLIENT", "CLIENTE"]
+
+
+# --------------------------------------------------------------------------
+# 16_pareto_absolute_impact
+# --------------------------------------------------------------------------
+
+def test_pareto_absolute_impact_blocks_contains_four_groups_and_summary():
+    result = build_global_analysis_result()
+    blocks = pareto_absolute_impact_blocks(result)
+    titles = [t for t, _ in blocks]
+
+    assert any("Pareto series - mejora" in t for t in titles)
+    assert any("Pareto series - deterioro" in t for t in titles)
+    assert any("Pareto clientes - mejora" in t for t in titles)
+    assert any("Pareto clientes - deterioro" in t for t in titles)
+    summary_title = next(t for t in titles if "Resumen de concentracion" in t)
+    summary_table = next(df for t, df in blocks if t == summary_title)
+    assert list(summary_table["GRUPO"]) == [
+        "Series - mejora (ABS_ERROR_REDUCTION > 0)", "Series - deterioro (ABS_ERROR_REDUCTION < 0)",
+        "Clientes - mejora (ABS_ERROR_REDUCTION > 0)", "Clientes - deterioro (ABS_ERROR_REDUCTION < 0)",
+    ]
+
+
+def test_pareto_absolute_impact_blocks_reads_precomputed_pareto_without_recomputing():
+    """
+    Igual que en la hoja individual 14: las tablas devueltas deben ser
+    exactamente los mismos objetos DataFrame ya almacenados en
+    GlobalPeriodResult.pareto_series/.pareto_clients (identidad de objeto,
+    no solo igualdad de contenido).
+    """
+    result = build_global_analysis_result()
+    gp = result.periods["6M"]
+    blocks = {title: df for title, df in pareto_absolute_impact_blocks(result)}
+
+    series_improve_title = next(t for t in blocks if "Pareto series - mejora" in t)
+    series_deteriorate_title = next(t for t in blocks if "Pareto series - deterioro" in t)
+    clients_improve_title = next(t for t in blocks if "Pareto clientes - mejora" in t)
+    clients_deteriorate_title = next(t for t in blocks if "Pareto clientes - deterioro" in t)
+
+    assert blocks[series_improve_title] is gp.pareto_series.improvement.table
+    assert blocks[series_deteriorate_title] is gp.pareto_series.deterioration.table
+    assert blocks[clients_improve_title] is gp.pareto_clients.improvement.table
+    assert blocks[clients_deteriorate_title] is gp.pareto_clients.deterioration.table
+
+
+def test_build_global_workbook_creates_sheet_16(tmp_path: Path):
+    result = build_global_analysis_result()
+    out_path = tmp_path / "global_summary.xlsx"
+    build_global_workbook(result, out_path)
+
+    wb = openpyxl.load_workbook(out_path)
+    assert "16_pareto_absolute_impact" in wb.sheetnames
+    assert wb.sheetnames == EXPECTED_SHEETS

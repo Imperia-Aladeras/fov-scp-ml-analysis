@@ -122,7 +122,30 @@
       <li>Deterioro total absoluto: {{ perspectives.impacto_absoluto.deterioro_total_absoluto }}</li>
       <li>Reducción neta: {{ perspectives.impacto_absoluto.reduccion_neta }}</li>
     </ul>
-    <p class="note">Ver el ranking de clientes por contribución en el Excel y Markdown globales (enlazados en <a href="#ficheros">Ficheros de la ejecución</a>).</p>
+    <p>Concentración del impacto absoluto (Pareto, semestre completo): mejora y deterioro se calculan siempre por separado, cada uno con su propio denominador.</p>
+    <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Grupo</th><th scope="col">N total</th><th scope="col">N para 50%</th>
+          <th scope="col">N para 80%</th><th scope="col">N para 90%</th><th scope="col">Impacto total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in perspectives.impacto_absoluto.pareto_rows %}
+        <tr>
+          <td>{{ row.grupo }}</td><td>{{ row.summary.n_total }}</td><td>{{ row.summary.n_for_50 }}</td>
+          <td>{{ row.summary.n_for_80 }}</td><td>{{ row.summary.n_for_90 }}</td><td>{{ row.summary.total_impact }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p class="note">
+      Series comparables no evaluables para impacto absoluto: {{ perspectives.impacto_absoluto.n_no_evaluables_series }}.
+      Clientes no evaluables: {{ perspectives.impacto_absoluto.n_no_evaluables_clientes }}.
+    </p>
+    <p class="note">Ver el ranking completo de clientes y series por contribución, con el Pareto detallado (rank, % del grupo, % acumulado), en la hoja <code>16_pareto_absolute_impact</code> del Excel global y en la sección 15 del Markdown global (enlazados en <a href="#ficheros">Ficheros de la ejecución</a>).</p>
   </article>
 
   <article id="cobertura">

@@ -1,5 +1,5 @@
 """
-Generacion del Excel individual por cliente (14 pestanas, 00_readme..13_data_quality_checks).
+Generacion del Excel individual por cliente (15 pestanas, 00_readme..14_pareto_absolute_impact).
 
 Formato aplicado (ver docs/analysis_requirements.md, seccion "Formato Excel"):
 freeze panes en la primera fila, encabezados en negrita con relleno discreto,
@@ -409,6 +409,62 @@ def top_percentage_changes_blocks(result: ClientAnalysisResult) -> list[tuple[st
 
 
 # --------------------------------------------------------------------------
+# 14_pareto_absolute_impact
+#
+# Lee PeriodResult.pareto (ya calculado una unica vez en client_analysis.py):
+# esta hoja NUNCA llama a pareto_absolute_impact ni a build_pareto_analysis.
+# Item separado de 11_top_absolute_impact (ranking crudo, sin porcentaje de
+# contribucion): aqui se muestra el Pareto completo (RANK, PCT_OF_GROUP,
+# CUMULATIVE_PCT) de cada grupo de signo, nunca mezclados.
+# --------------------------------------------------------------------------
+
+def _pareto_concentration_summary_table(pareto) -> pd.DataFrame:
+    rows = []
+    for label, group in (
+        ("Mejora (ABS_ERROR_REDUCTION > 0)", pareto.improvement),
+        ("Deterioro (ABS_ERROR_REDUCTION < 0)", pareto.deterioration),
+    ):
+        s = group.summary
+        rows.append({
+            "GRUPO": label, "N_TOTAL": s.n_total,
+            "N_FOR_50": s.n_for_50, "N_FOR_80": s.n_for_80, "N_FOR_90": s.n_for_90,
+            "TOTAL_IMPACT": s.total_impact,
+            # Mismo valor en ambas filas: una serie no evaluable no tiene signo
+            # conocido, no pertenece a un grupo concreto (ver src/pareto.py).
+            "N_NO_EVALUABLES": pareto.n_no_evaluables,
+        })
+    return pd.DataFrame(rows)
+
+
+def pareto_absolute_impact_blocks(result: ClientAnalysisResult) -> list[tuple[str, pd.DataFrame]]:
+    pr = result.periods.get(MODEL_CLASSIFICATION_PERIOD)
+    if pr is None or pr.pareto is None:
+        return [("Sin datos", pd.DataFrame())]
+    pareto = pr.pareto
+    label = visible_label(MODEL_CLASSIFICATION_PERIOD)
+
+    blocks: list[tuple[str, pd.DataFrame]] = [
+        (f"Pareto de impacto absoluto - mejora (ABS_ERROR_REDUCTION > 0) - {label}", pareto.improvement.table),
+        (f"Pareto de impacto absoluto - deterioro (ABS_ERROR_REDUCTION < 0) - {label}", pareto.deterioration.table),
+        (f"Resumen de concentracion - {label}", _pareto_concentration_summary_table(pareto)),
+    ]
+
+    notes = []
+    if pareto.improvement.table.empty:
+        notes.append("Sin series con mejora (ABS_ERROR_REDUCTION > 0) en 6M para este cliente.")
+    if pareto.deterioration.table.empty:
+        notes.append("Sin series con deterioro (ABS_ERROR_REDUCTION < 0) en 6M para este cliente.")
+    if pareto.n_no_evaluables:
+        notes.append(
+            f"{pareto.n_no_evaluables} serie(s) comparable(s) en 6M no son evaluables para impacto absoluto "
+            "(falta SCP_TOTAL_ABS_ERROR_6M o ML_TOTAL_ABS_ERROR_6M): no participan en el Pareto."
+        )
+    if notes:
+        blocks.append(("Nota", pd.DataFrame({"": notes})))
+    return blocks
+
+
+# --------------------------------------------------------------------------
 # 13_data_quality_checks
 # --------------------------------------------------------------------------
 
@@ -447,6 +503,7 @@ def build_client_workbook(result: ClientAnalysisResult, output_path: Path) -> No
         write_blocks(writer, "11_top_absolute_impact", top_absolute_impact_blocks(result))
         write_blocks(writer, "12_top_percentage_changes", top_percentage_changes_blocks(result))
         write_blocks(writer, "13_data_quality_checks", [("Chequeos de calidad", data_quality_checks_table(result))])
+        write_blocks(writer, "14_pareto_absolute_impact", pareto_absolute_impact_blocks(result))
 
         for sheet_name in writer.sheets:
             autosize_columns(writer, sheet_name)

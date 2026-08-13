@@ -196,6 +196,18 @@ def build_perspectives_vm(global_result) -> dict:
             "deterioro_total_absoluto": fmt_num(m6.reduction_totals.get("DETERIORO_TOTAL_ABSOLUTO")),
             "reduccion_neta": fmt_num(m6.reduction_totals.get("REDUCCION_NETA")),
             "pregunta": "¿La mejora está concentrada en pocos clientes de gran volumen?",
+            # Pareto: NUNCA se recalcula aqui -- se lee de GlobalPeriodResult.
+            # pareto_series/.pareto_clients, ya calculados una unica vez en
+            # global_analysis.py. Reutiliza _pareto_group_summary_row_vm, el
+            # mismo helper de formateo que la pagina individual.
+            "pareto_rows": [
+                {"grupo": "Series — mejora", "summary": _pareto_group_summary_row_vm(m6.pareto_series.improvement.summary)},
+                {"grupo": "Series — deterioro", "summary": _pareto_group_summary_row_vm(m6.pareto_series.deterioration.summary)},
+                {"grupo": "Clientes — mejora", "summary": _pareto_group_summary_row_vm(m6.pareto_clients.improvement.summary)},
+                {"grupo": "Clientes — deterioro", "summary": _pareto_group_summary_row_vm(m6.pareto_clients.deterioration.summary)},
+            ],
+            "n_no_evaluables_series": fmt_int(m6.pareto_series.n_no_evaluables),
+            "n_no_evaluables_clientes": fmt_int(m6.pareto_clients.n_no_evaluables),
         },
         "cobertura": {
             "series_candidatas": fmt_int(m6.n_candidates_total),
@@ -383,6 +395,81 @@ def _ranking_table_vm(df, value_col: str, signed: bool = True, top_n: int = 10) 
     return rows
 
 
+def _pareto_rows_vm(table, top_n: int = 20) -> list[dict]:
+    """
+    Formatea las primeras `top_n` filas de un ParetoGroup.table ya calculado
+    (PeriodResult.pareto). top_n es solo un limite de presentacion HTML: el
+    calculo de PCT_OF_GROUP/CUMULATIVE_PCT/umbrales ya viene hecho sobre el
+    grupo completo en `table`, esta funcion no recalcula nada.
+    """
+    if table is None or table.empty:
+        return []
+    rows = []
+    for _, r in table.head(top_n).iterrows():
+        rows.append({
+            "rank": fmt_int(r["RANK"]),
+            "id_configuration": str(r.get("ID_CONFIGURATION", NA_TEXT)),
+            "valor": fmt_num(r["ABS_ERROR_REDUCTION"]),
+            "pct_of_group": fmt_pct_scaled(r["PCT_OF_GROUP"]),
+            "cumulative_pct": fmt_pct_scaled(r["CUMULATIVE_PCT"]),
+        })
+    return rows
+
+
+def _pareto_group_summary_row_vm(summary) -> dict:
+    """
+    Formatea un ParetoGroupSummary SIEMPRE (incluso con n_total == 0): pensado
+    para tablas de resumen compactas donde los 4 grupos (series/clientes x
+    mejora/deterioro) deben aparecer siempre, aunque alguno este vacio (p.ej.
+    la tabla de concentracion del informe global) -- a diferencia de
+    `_pareto_summary_vm`, que decide si mostrar una tabla de filas o un
+    mensaje "sin series...".
+    """
+    return {
+        "n_total": fmt_int(summary.n_total),
+        "n_for_50": fmt_int(summary.n_for_50),
+        "n_for_80": fmt_int(summary.n_for_80),
+        "n_for_90": fmt_int(summary.n_for_90),
+        "total_impact": fmt_num(summary.total_impact),
+    }
+
+
+def _pareto_summary_vm(summary) -> dict | None:
+    """
+    summary es un src.pareto.ParetoGroupSummary ya calculado. Ese dataclass
+    NUNCA es None (un grupo vacio tiene summary.n_total == 0, no ausencia de
+    summary): se devuelve None aqui, a proposito, cuando el grupo esta vacio,
+    para que el template muestre la nota "Sin series..." en vez de un
+    resumen con todo a cero/N-D.
+    """
+    if summary is None or summary.n_total == 0:
+        return None
+    return _pareto_group_summary_row_vm(summary)
+
+
+def _pareto_analysis_vm(pareto) -> dict:
+    """pareto es un src.pareto.ParetoAnalysis ya calculado (PeriodResult.pareto), o None."""
+    if pareto is None:
+        return {
+            "improvement": {"rows": [], "summary": None},
+            "deterioration": {"rows": [], "summary": None},
+            "n_no_evaluables": NA_TEXT,
+            "has_no_evaluables": False,
+        }
+    return {
+        "improvement": {
+            "rows": _pareto_rows_vm(pareto.improvement.table),
+            "summary": _pareto_summary_vm(pareto.improvement.summary),
+        },
+        "deterioration": {
+            "rows": _pareto_rows_vm(pareto.deterioration.table),
+            "summary": _pareto_summary_vm(pareto.deterioration.summary),
+        },
+        "n_no_evaluables": fmt_int(pareto.n_no_evaluables),
+        "has_no_evaluables": pareto.n_no_evaluables > 0,
+    }
+
+
 def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
     """
     prev_client / next_client: dicts con claves etiqueta/display_name/id_client/url,
@@ -479,11 +566,16 @@ def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
         top_reduction, top_increase = top_absolute_impact(df, pcols_6m, mask_6m, n=10)
         vm["top_abs_reductions"] = _ranking_table_vm(top_reduction, "ABS_ERROR_REDUCTION", signed=False)
         vm["top_abs_increases"] = _ranking_table_vm(top_increase, "ABS_ERROR_REDUCTION", signed=False)
+        # Pareto: NUNCA se recalcula aqui (ni pareto_absolute_impact ni
+        # build_pareto_analysis) -- se lee tal cual de PeriodResult.pareto,
+        # ya calculado una unica vez en client_analysis.py.
+        vm["pareto"] = _pareto_analysis_vm(m6.pareto)
     else:
         vm["ml_models"] = vm["scp_models"] = []
         vm["classifications"] = {}
         vm["top_improvements"] = vm["top_deteriorations"] = []
         vm["top_abs_reductions"] = vm["top_abs_increases"] = []
+        vm["pareto"] = _pareto_analysis_vm(None)
 
     n_status_excluded = result.comparison_status_distribution.get("NOT_COMPARABLE_ML_EXCLUDED", 0)
     n_flag_excluded = m6.n_ml_excluded if m6 is not None else 0

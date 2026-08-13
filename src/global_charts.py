@@ -20,6 +20,7 @@ from src.charts import (
     COLOR_TIE,
     _apply_title,
     _new_fig,
+    _pareto_bar_chart,
     _save_close,
 )
 from src.global_analysis import GlobalAnalysisResult, global_category_performance_table, _global_series_improvement_values
@@ -270,6 +271,30 @@ def contribution_colors(values) -> list[str]:
     return [COLOR_ML if v >= 0 else COLOR_SCP for v in values]
 
 
+def pareto_client_chart_label(row) -> str:
+    """
+    Etiqueta de eje para los charts Pareto de clientes globales (03/04):
+    DISPLAY_NAME solo, repetido entre clientes que comparten un mismo CSV
+    fisico multi-cliente (ETIQUETA identica en ese caso), no identifica de
+    forma inequivoca la barra. ID_CLIENT si es unico por construccion: se
+    anade entre parentesis para desambiguar sin dejar de mostrar el nombre.
+    Puramente de renderizado -- no toca group.table ni ninguna tabla de
+    Excel/Markdown/HTML.
+    """
+    return f"{row['DISPLAY_NAME']} ({row['ID_CLIENT']})"
+
+
+def pareto_series_chart_label(row) -> str:
+    """
+    Etiqueta de eje para los charts Pareto de series globales (05/06):
+    ID_CONFIGURATION en solitario puede colisionar entre clientes distintos
+    (identidad real = ID_CLIENT + ID_CONFIGURATION, ver global_pareto_series);
+    formato compacto "<ID_CLIENT>-<ID_CONFIGURATION>" para identificar la
+    barra de forma inequivoca sin saturar el eje. Puramente de renderizado.
+    """
+    return f"{row['ID_CLIENT']}-{row['ID_CONFIGURATION']}"
+
+
 def generate_impact_and_risk_charts(result: GlobalAnalysisResult, out_dir: Path) -> list[str]:
     generated = []
     gp = result.periods[MODEL_CLASSIFICATION_PERIOD]
@@ -313,6 +338,42 @@ def generate_impact_and_risk_charts(result: GlobalAnalysisResult, out_dir: Path)
         ax.set_xlabel("% mejora ML vs SCP (positivo = ML mejor)", color="#52514e", fontsize=9)
         ax.set_ylabel("N series", color="#52514e", fontsize=9)
         generated.append(_save_close(fig, out_dir / "02_global_improvement_distribution.png"))
+
+    # Pareto (aditivo, no sustituye a 01/02 anteriores): lee gp.pareto_clients/
+    # .pareto_series ya calculados en global_analysis.py, nunca los recalcula.
+    # Las etiquetas de eje (label_fn) son puramente de renderizado: no anaden
+    # columnas a group.table (compartida con Excel/Markdown/HTML) ni afectan
+    # a identidad de calculo, desempate o umbrales.
+    period_tag = visible_label(MODEL_CLASSIFICATION_PERIOD)
+    if gp.pareto_clients is not None:
+        path = _pareto_bar_chart(
+            gp.pareto_clients.improvement, "Pareto de clientes - mejora", period_tag, COLOR_ML,
+            out_dir / "03_pareto_clients_reduction.png", top_n=None, unit_label="clientes",
+            label_fn=pareto_client_chart_label,
+        )
+        if path:
+            generated.append(path)
+        path = _pareto_bar_chart(
+            gp.pareto_clients.deterioration, "Pareto de clientes - deterioro", period_tag, COLOR_SCP,
+            out_dir / "04_pareto_clients_increase.png", top_n=None, unit_label="clientes",
+            label_fn=pareto_client_chart_label,
+        )
+        if path:
+            generated.append(path)
+
+    if gp.pareto_series is not None:
+        path = _pareto_bar_chart(
+            gp.pareto_series.improvement, "Pareto de series global - mejora", period_tag, COLOR_ML,
+            out_dir / "05_pareto_series_reduction.png", label_fn=pareto_series_chart_label,
+        )
+        if path:
+            generated.append(path)
+        path = _pareto_bar_chart(
+            gp.pareto_series.deterioration, "Pareto de series global - deterioro", period_tag, COLOR_SCP,
+            out_dir / "06_pareto_series_increase.png", label_fn=pareto_series_chart_label,
+        )
+        if path:
+            generated.append(path)
 
     return generated
 

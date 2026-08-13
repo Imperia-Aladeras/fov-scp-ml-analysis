@@ -199,6 +199,37 @@
   {{ ranking_table(page.top_abs_reductions, "Reducción absoluta") }}
   <h3>Top aumento absoluto de error</h3>
   {{ ranking_table(page.top_abs_increases, "Reducción absoluta") }}
+
+  {% macro pareto_table(group, group_label) %}
+  {% if group.summary %}
+  <p class="note">
+    {{ group.summary.n_total }} serie(s) con {{ group_label }} · reducción total {{ group.summary.total_impact }} ·
+    {{ group.summary.n_for_50 }} explican el 50% · {{ group.summary.n_for_80 }} explican el 80% ·
+    {{ group.summary.n_for_90 }} explican el 90%.
+  </p>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th scope="col">Rank</th><th scope="col">ID_CONFIGURATION</th><th scope="col">Reducción absoluta</th><th scope="col">% del grupo</th><th scope="col">% acumulado</th></tr></thead>
+    <tbody>
+      {% for r in group.rows %}
+      <tr><td>{{ r.rank }}</td><td>{{ r.id_configuration }}</td><td>{{ r.valor }}</td><td>{{ r.pct_of_group }}</td><td>{{ r.cumulative_pct }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="note">Sin series con {{ group_label }} en 6M para este cliente.</p>{% endif %}
+  {% endmacro %}
+
+  <h3>Pareto de impacto absoluto — mejora</h3>
+  {{ pareto_table(page.pareto.improvement, "mejora") }}
+  <h3>Pareto de impacto absoluto — deterioro</h3>
+  {{ pareto_table(page.pareto.deterioration, "deterioro") }}
+  {% if page.pareto.has_no_evaluables %}
+  <p class="note">
+    {{ page.pareto.n_no_evaluables }} serie(s) comparable(s) en 6M no son evaluables para impacto absoluto
+    (falta SCP_TOTAL_ABS_ERROR_6M o ML_TOTAL_ABS_ERROR_6M) y no participan en el Pareto.
+  </p>
+  {% endif %}
 </section>
 
 <section id="limitaciones" aria-labelledby="limitaciones-h">

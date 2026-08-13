@@ -1,5 +1,5 @@
 """
-Generacion del Excel global (16 pestanas, 00_readme..15_data_quality_checks).
+Generacion del Excel global (17 pestanas, 00_readme..16_pareto_absolute_impact).
 Comparativa entre todos los clientes con fichero valido.
 """
 
@@ -267,6 +267,71 @@ def absolute_impact_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.D
 
 
 # --------------------------------------------------------------------------
+# 16_pareto_absolute_impact
+#
+# Lee GlobalPeriodResult.pareto_series / pareto_clients (ya calculados una
+# unica vez en global_analysis.py): esta hoja NUNCA llama a
+# global_pareto_series/global_pareto_clients ni a build_pareto_analysis. No
+# modifica conceptualmente 13_absolute_impact (client_reduction_table/
+# client_deterioration_table siguen exactamente igual, sin tocar).
+# --------------------------------------------------------------------------
+
+def _pareto_concentration_summary_rows(gp) -> pd.DataFrame:
+    rows = []
+    for label, group, n_no_evaluables in (
+        ("Series - mejora (ABS_ERROR_REDUCTION > 0)", gp.pareto_series.improvement, gp.pareto_series.n_no_evaluables),
+        ("Series - deterioro (ABS_ERROR_REDUCTION < 0)", gp.pareto_series.deterioration, gp.pareto_series.n_no_evaluables),
+        ("Clientes - mejora (ABS_ERROR_REDUCTION > 0)", gp.pareto_clients.improvement, gp.pareto_clients.n_no_evaluables),
+        ("Clientes - deterioro (ABS_ERROR_REDUCTION < 0)", gp.pareto_clients.deterioration, gp.pareto_clients.n_no_evaluables),
+    ):
+        s = group.summary
+        rows.append({
+            "GRUPO": label, "N_TOTAL": s.n_total,
+            "N_FOR_50": s.n_for_50, "N_FOR_80": s.n_for_80, "N_FOR_90": s.n_for_90,
+            "TOTAL_IMPACT": s.total_impact, "N_NO_EVALUABLES": n_no_evaluables,
+        })
+    return pd.DataFrame(rows)
+
+
+def pareto_absolute_impact_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.DataFrame]]:
+    gp = result.periods[MODEL_CLASSIFICATION_PERIOD]
+    if gp.pareto_series is None or gp.pareto_clients is None:
+        return [("Sin datos", pd.DataFrame())]
+    label = visible_label(MODEL_CLASSIFICATION_PERIOD)
+
+    blocks: list[tuple[str, pd.DataFrame]] = [
+        (f"Pareto series - mejora - {label} - todos los clientes", gp.pareto_series.improvement.table),
+        (f"Pareto series - deterioro - {label} - todos los clientes", gp.pareto_series.deterioration.table),
+        (f"Pareto clientes - mejora - {label}", gp.pareto_clients.improvement.table),
+        (f"Pareto clientes - deterioro - {label}", gp.pareto_clients.deterioration.table),
+        (f"Resumen de concentracion - {label}", _pareto_concentration_summary_rows(gp)),
+    ]
+
+    notes = []
+    if gp.pareto_series.improvement.table.empty:
+        notes.append("Sin series con mejora en 6M en el conjunto de clientes.")
+    if gp.pareto_series.deterioration.table.empty:
+        notes.append("Sin series con deterioro en 6M en el conjunto de clientes.")
+    if gp.pareto_clients.improvement.table.empty:
+        notes.append("Sin clientes con mejora en 6M.")
+    if gp.pareto_clients.deterioration.table.empty:
+        notes.append("Sin clientes con deterioro en 6M.")
+    if gp.pareto_series.n_no_evaluables:
+        notes.append(
+            f"{gp.pareto_series.n_no_evaluables} serie(s) comparable(s) en 6M no son evaluables para "
+            "impacto absoluto y no participan en el Pareto de series."
+        )
+    if gp.pareto_clients.n_no_evaluables:
+        notes.append(
+            f"{gp.pareto_clients.n_no_evaluables} cliente(s) no son evaluables para impacto absoluto "
+            "en 6M y no participan en el Pareto de clientes."
+        )
+    if notes:
+        blocks.append(("Nota", pd.DataFrame({"": notes})))
+    return blocks
+
+
+# --------------------------------------------------------------------------
 # 14_exclusions
 # --------------------------------------------------------------------------
 
@@ -353,6 +418,7 @@ def build_global_workbook(result: GlobalAnalysisResult, output_path: Path) -> No
         write_blocks(writer, "13_absolute_impact", absolute_impact_blocks(result))
         write_blocks(writer, "14_exclusions", exclusions_blocks(result))
         write_blocks(writer, "15_data_quality_checks", data_quality_checks_blocks(result))
+        write_blocks(writer, "16_pareto_absolute_impact", pareto_absolute_impact_blocks(result))
 
         for sheet_name in writer.sheets:
             autosize_columns(writer, sheet_name)

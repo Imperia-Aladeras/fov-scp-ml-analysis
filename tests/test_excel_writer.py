@@ -8,6 +8,7 @@ from src.excel_writer import (
     _dict_to_df,
     build_client_workbook,
     executive_summary_table,
+    pareto_absolute_impact_blocks,
 )
 from tests.factories import build_synthetic_client_result
 
@@ -15,7 +16,7 @@ EXPECTED_SHEETS = [
     "00_readme", "01_executive_summary", "02_coverage_status", "03_semester", "04_first_quarter",
     "05_second_quarter", "06_monthly_summary", "07_monthly_winners", "08_models_and_win_rates",
     "09_classifications", "10_exclusions", "11_top_absolute_impact", "12_top_percentage_changes",
-    "13_data_quality_checks",
+    "13_data_quality_checks", "14_pareto_absolute_impact",
 ]
 
 
@@ -70,3 +71,61 @@ def test_build_client_workbook_no_comparable_series_does_not_crash(tmp_path: Pat
     ws = wb["01_executive_summary"]
     row_values = [cell.value for cell in ws[3]]  # primera fila de datos (6M)
     assert row_values[3] == 0  # SERIES_COMPARABLES = 0
+
+
+# --------------------------------------------------------------------------
+# 14_pareto_absolute_impact
+# --------------------------------------------------------------------------
+
+def test_pareto_absolute_impact_blocks_basic_content():
+    result = build_synthetic_client_result(with_data=True)
+    blocks = pareto_absolute_impact_blocks(result)
+    titles = [t for t, _ in blocks]
+    assert any("mejora" in t for t in titles)
+    assert any("deterioro" in t for t in titles)
+    assert any("Resumen de concentracion" in t for t in titles)
+
+    improvement_table = next(df for t, df in blocks if "mejora" in t)
+    deterioration_table = next(df for t, df in blocks if "deterioro" in t)
+    assert improvement_table["ID_CONFIGURATION"].tolist() == [1001]
+    assert deterioration_table["ID_CONFIGURATION"].tolist() == [1002]
+
+    summary_table = next(df for t, df in blocks if "Resumen de concentracion" in t)
+    assert summary_table["N_TOTAL"].tolist() == [1, 1]
+    assert summary_table["N_NO_EVALUABLES"].tolist() == [0, 0]
+
+
+def test_pareto_absolute_impact_blocks_reads_precomputed_pareto_without_recomputing():
+    """
+    La hoja 14 nunca debe volver a llamar a pareto_absolute_impact ni a
+    build_pareto_analysis: las tablas devueltas deben ser exactamente los
+    mismos objetos DataFrame ya almacenados en PeriodResult.pareto (una
+    recomputacion produciria un DataFrame distinto, aunque tuviera el mismo
+    contenido).
+    """
+    result = build_synthetic_client_result(with_data=True)
+    pr = result.periods["6M"]
+    blocks = {title: df for title, df in pareto_absolute_impact_blocks(result)}
+
+    improvement_title = next(t for t in blocks if "mejora" in t)
+    deterioration_title = next(t for t in blocks if "deterioro" in t)
+    assert blocks[improvement_title] is pr.pareto.improvement.table
+    assert blocks[deterioration_title] is pr.pareto.deterioration.table
+
+
+def test_pareto_absolute_impact_blocks_all_improvement_client_notes_empty_deterioration(tmp_path: Path):
+    from tests.factories import build_multi_client_results
+
+    all_ml_result = build_multi_client_results()[2]  # 77777_AllMlWins: ambas filas ganan ML en 6M
+    blocks = pareto_absolute_impact_blocks(all_ml_result)
+
+    deterioration_table = next(df for t, df in blocks if "deterioro" in t)
+    assert deterioration_table.empty
+    note_texts = [v for t, df in blocks if t == "Nota" for v in df[""].tolist()]
+    assert any("Sin series con deterioro" in n for n in note_texts)
+
+    out_path = tmp_path / "all_ml.xlsx"
+    build_client_workbook(all_ml_result, out_path)
+    assert out_path.exists()
+    wb = openpyxl.load_workbook(out_path)
+    assert wb.sheetnames == EXPECTED_SHEETS
