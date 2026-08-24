@@ -5,8 +5,10 @@ import pandas as pd
 from src.charts import COLOR_ML, COLOR_SCP
 from src.client_analysis import analyze_client
 from src.global_analysis import GlobalAnalysisResult, build_global_period_result, global_pareto_clients, global_pareto_series
+from src.global_analysis import analyze_global
 from src.global_charts import (
     CHART_SUBFOLDERS,
+    _chart_global_bias_by_volume_bucket,
     contribution_colors,
     generate_global_charts,
     generate_impact_and_risk_charts,
@@ -16,6 +18,8 @@ from src.global_charts import (
 from tests.factories import (
     build_global_analysis_result,
     build_multi_client_results,
+    build_phase8_global_missing_client_results,
+    build_phase8_global_multi_client_analysis_result,
     build_synthetic_client_dataframe,
     make_client_source,
 )
@@ -207,3 +211,67 @@ def test_global_charts_never_recompute_pareto(monkeypatch, tmp_path: Path):
     generated = generate_global_charts(result, tmp_path / "charts")
     assert any("03_pareto_clients_reduction.png" in p for p in generated)
     assert any("05_pareto_series_reduction.png" in p for p in generated)
+
+
+# --------------------------------------------------------------------------
+# 07_global_bias_by_volume_bucket (Fase 8D)
+# --------------------------------------------------------------------------
+
+def test_chart_07_generated_when_phase8_available(tmp_path: Path):
+    result = build_phase8_global_multi_client_analysis_result()
+    out_dir = tmp_path / "impact_and_risk"
+    generated = generate_impact_and_risk_charts(result, out_dir)
+
+    assert any(p.endswith("07_global_bias_by_volume_bucket.png") for p in generated)
+    path = out_dir / "07_global_bias_by_volume_bucket.png"
+    assert path.exists()
+    assert path.stat().st_size > 0
+
+
+def test_chart_07_omitted_when_phase8_none(tmp_path: Path):
+    result = analyze_global(build_phase8_global_missing_client_results())
+    assert result.periods["6M"].phase8 is None
+    out_dir = tmp_path / "impact_and_risk"
+    path = _chart_global_bias_by_volume_bucket(result, out_dir, "07_global_bias_by_volume_bucket.png")
+    assert path is None
+    assert not (out_dir / "07_global_bias_by_volume_bucket.png").exists()
+
+
+def test_chart_07_excludes_non_finite_bucket_without_zeroing_or_dropping_the_chart(tmp_path: Path):
+    """
+    Ningun Bias no finito debe llegar a matplotlib: un bucket con NaN/inf en
+    scp_bias_agg o ml_bias_agg se excluye SOLO del grafico (nunca se
+    sustituye por 0), y el resto de buckets finitos se siguen dibujando.
+    """
+    import numpy as np
+
+    result = build_phase8_global_multi_client_analysis_result()
+    phase8 = result.periods["6M"].phase8
+    volume_table = phase8.volume_table.copy()
+    volume_table.loc[volume_table.index[0], "scp_bias_agg"] = np.nan
+    phase8.volume_table = volume_table
+
+    out_dir = tmp_path / "impact_and_risk"
+    path = _chart_global_bias_by_volume_bucket(result, out_dir, "07_global_bias_by_volume_bucket.png")
+    # Con >=1 bucket finito restante, el chart debe seguir generandose.
+    assert path is not None
+    assert Path(path).exists()
+    assert Path(path).stat().st_size > 0
+    # La tabla fuente (fuera del chart) conserva el NaN tal cual, nunca sustituido por 0.
+    assert np.isnan(phase8.volume_table.loc[phase8.volume_table.index[0], "scp_bias_agg"])
+
+
+def test_chart_07_not_generated_when_no_bucket_is_finite(tmp_path: Path):
+    import numpy as np
+
+    result = build_phase8_global_multi_client_analysis_result()
+    phase8 = result.periods["6M"].phase8
+    volume_table = phase8.volume_table.copy()
+    volume_table["scp_bias_agg"] = np.nan
+    volume_table["ml_bias_agg"] = np.nan
+    phase8.volume_table = volume_table
+
+    out_dir = tmp_path / "impact_and_risk"
+    path = _chart_global_bias_by_volume_bucket(result, out_dir, "07_global_bias_by_volume_bucket.png")
+    assert path is None
+    assert not (out_dir / "07_global_bias_by_volume_bucket.png").exists()

@@ -15,8 +15,10 @@ import numpy as np
 import pandas as pd
 
 from src.charts import (
+    COLOR_AXIS,
     COLOR_ML,
     COLOR_SCP,
+    COLOR_TEXT_SECONDARY,
     COLOR_TIE,
     _apply_title,
     _new_fig,
@@ -25,6 +27,7 @@ from src.charts import (
 )
 from src.global_analysis import GlobalAnalysisResult, global_category_performance_table, _global_series_improvement_values
 from src.periods import MONTHLY_PERIODS, visible_label
+from src.phase8_presentation import sort_volume_table, volume_bucket_label_es
 
 MODEL_CLASSIFICATION_PERIOD = "6M"
 IMPROVEMENT_CLIP_BOUND = 100.0
@@ -295,6 +298,50 @@ def pareto_series_chart_label(row) -> str:
     return f"{row['ID_CLIENT']}-{row['ID_CONFIGURATION']}"
 
 
+def _chart_global_bias_by_volume_bucket(result: GlobalAnalysisResult, out_dir: Path, fname: str) -> str | None:
+    """
+    Unico chart nuevo de Fase 8D: Bias agregado SCP vs ML por bucket de
+    volumen relativo, agregado globalmente (6M). Lee
+    GlobalPeriodResult.phase8.volume_table ya calculado (nunca recalcula
+    Bias ni buckets aqui). Antes de dibujar cada bucket se comprueba
+    finitud de scp_bias_agg/ml_bias_agg por separado: un bucket con algun
+    valor no finito (NaN/inf) se excluye SOLO de este chart -- nunca se
+    sustituye por 0 y nunca se elimina de volume_table (Excel/Markdown/HTML
+    siguen mostrando la fila tal cual la entrega el nucleo). Si ningun
+    bucket queda con ambos valores finitos, no se genera el fichero.
+    """
+    phase8 = result.periods[MODEL_CLASSIFICATION_PERIOD].phase8
+    if phase8 is None:
+        return None
+    table = sort_volume_table(phase8.volume_table)
+    if table is None or table.empty:
+        return None
+
+    plottable = table[np.isfinite(table["scp_bias_agg"]) & np.isfinite(table["ml_bias_agg"])]
+    if plottable.empty:
+        return None
+
+    labels = [volume_bucket_label_es(v) for v in plottable["category"]]
+    scp_vals = (plottable["scp_bias_agg"] * 100).tolist()
+    ml_vals = (plottable["ml_bias_agg"] * 100).tolist()
+
+    fig, ax = _new_fig((7.5, 4.5))
+    x = np.arange(len(labels))
+    width = 0.35
+    ax.bar(x - width / 2, scp_vals, width=width, color=COLOR_SCP, label="SCP")
+    ax.bar(x + width / 2, ml_vals, width=width, color=COLOR_ML, label="ML")
+    ax.axhline(0, color=COLOR_AXIS, linewidth=1)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    ax.set_ylabel("Bias agregado (%)", color=COLOR_TEXT_SECONDARY, fontsize=9)
+    ax.legend(frameon=False, fontsize=8)
+    _apply_title(
+        ax, "Bias agregado SCP vs ML por volumen relativo (global)",
+        f"{visible_label(MODEL_CLASSIFICATION_PERIOD)} | todos los clientes | buckets RELATIVOS a cada cliente",
+    )
+    return _save_close(fig, out_dir / fname)
+
+
 def generate_impact_and_risk_charts(result: GlobalAnalysisResult, out_dir: Path) -> list[str]:
     generated = []
     gp = result.periods[MODEL_CLASSIFICATION_PERIOD]
@@ -374,6 +421,10 @@ def generate_impact_and_risk_charts(result: GlobalAnalysisResult, out_dir: Path)
         )
         if path:
             generated.append(path)
+
+    path = _chart_global_bias_by_volume_bucket(result, out_dir, "07_global_bias_by_volume_bucket.png")
+    if path:
+        generated.append(path)
 
     return generated
 

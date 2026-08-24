@@ -3,15 +3,24 @@ from pathlib import Path
 import openpyxl
 
 from src.client_analysis import analyze_client
-from src.global_analysis import GlobalAnalysisResult
+from src.global_analysis import GlobalAnalysisResult, analyze_global
 from src.global_excel_writer import (
     build_global_workbook,
+    classifications_blocks,
     data_quality_checks_blocks,
+    models_and_win_rates_blocks,
     pareto_absolute_impact_blocks,
+    phase8_global_blocks,
     readme_blocks,
 )
 from src.quality_checks import QualityIssue, Severity
-from tests.factories import build_global_analysis_result, build_synthetic_client_dataframe, make_client_source
+from tests.factories import (
+    build_global_analysis_result,
+    build_phase8_global_missing_client_results,
+    build_phase8_global_multi_client_analysis_result,
+    build_synthetic_client_dataframe,
+    make_client_source,
+)
 
 EXPECTED_SHEETS = [
     "00_readme", "01_executive_summary", "02_client_coverage", "03_semester_by_client",
@@ -19,6 +28,7 @@ EXPECTED_SHEETS = [
     "07_global_period_summary", "08_client_improvement_stats", "09_series_improvement_stats",
     "10_winner_distribution", "11_models_and_win_rates", "12_classifications",
     "13_absolute_impact", "14_exclusions", "15_data_quality_checks", "16_pareto_absolute_impact",
+    "17_phase8_global",
 ]
 
 
@@ -152,3 +162,83 @@ def test_build_global_workbook_creates_sheet_16(tmp_path: Path):
     wb = openpyxl.load_workbook(out_path)
     assert "16_pareto_absolute_impact" in wb.sheetnames
     assert wb.sheetnames == EXPECTED_SHEETS
+
+
+# --------------------------------------------------------------------------
+# 17_phase8_global (Fase 8D)
+# --------------------------------------------------------------------------
+
+def test_build_global_workbook_creates_sheet_17(tmp_path: Path):
+    result = build_phase8_global_multi_client_analysis_result()
+    out_path = tmp_path / "global_summary.xlsx"
+    build_global_workbook(result, out_path)
+
+    wb = openpyxl.load_workbook(out_path)
+    assert "17_phase8_global" in wb.sheetnames
+    assert wb.sheetnames == EXPECTED_SHEETS
+
+
+def test_phase8_global_blocks_contains_bias_volume_cross_and_not_assignable_count():
+    result = build_phase8_global_multi_client_analysis_result()
+    blocks = phase8_global_blocks(result)
+    titles = [t for t, _ in blocks]
+
+    assert any("Bias agregado global" in t for t in titles)
+    assert any("Volumen relativo global" in t for t in titles)
+    assert any("SERIES_CLASSIFICATION x VOLUME_BUCKET" in t for t in titles)
+    assert any("NOT_ASSIGNABLE" in t for t in titles)
+
+    not_assignable_title = next(t for t in titles if "NOT_ASSIGNABLE" in t)
+    not_assignable_table = next(df for t, df in blocks if t == not_assignable_title)
+    assert not_assignable_table["N_CLIENTES_VOLUMEN_NOT_ASSIGNABLE"].iloc[0] == 1
+
+
+def test_phase8_global_volume_block_never_has_n_clients_column():
+    """
+    Contrato del nucleo (src.global_analysis.build_phase8_global_diagnostics):
+    volume_table global NUNCA lleva columna n_clients (a diferencia de
+    model_tables/classification_tables/classification_volume_cross, que si
+    la llevan). La hoja 17 no debe fabricarla.
+    """
+    result = build_phase8_global_multi_client_analysis_result()
+    blocks = phase8_global_blocks(result)
+    volume_title = next(t for t, _ in blocks if "Volumen relativo global" in t)
+    volume_table = next(df for t, df in blocks if t == volume_title)
+    assert "n_clients" not in {c.lower() for c in volume_table.columns}
+
+
+def test_phase8_global_cross_table_includes_not_assignable_row():
+    """El cruce global debe conservar filas SERIES_CLASSIFICATION x NOT_ASSIGNABLE tal cual las entrega el nucleo."""
+    result = build_phase8_global_multi_client_analysis_result()
+    blocks = phase8_global_blocks(result)
+    cross_title = next(t for t, _ in blocks if "SERIES_CLASSIFICATION x VOLUME_BUCKET" in t)
+    cross_table = next(df for t, df in blocks if t == cross_title)
+    assert (cross_table["VOLUME_BUCKET"] == "No asignable").any()
+
+
+def test_phase8_global_blocks_none_when_phase8_unavailable():
+    result = analyze_global(build_phase8_global_missing_client_results())
+    assert result.periods["6M"].phase8 is None
+    blocks = phase8_global_blocks(result)
+    assert len(blocks) == 1
+    assert "no disponible" in blocks[0][1][""].iloc[0]
+
+
+def test_models_and_classifications_blocks_include_bias_when_phase8_available():
+    result = build_phase8_global_multi_client_analysis_result()
+    ml_blocks = models_and_win_rates_blocks(result)
+    ml_models_table = ml_blocks[0][1]
+    assert "scp_bias_agg" in ml_models_table.columns
+    assert "n_clients" in ml_models_table.columns
+
+    class_blocks = classifications_blocks(result)
+    series_class_table = next(df for t, df in class_blocks if t.startswith("SERIES_CLASSIFICATION"))
+    assert "scp_bias_agg" in series_class_table.columns
+
+
+def test_models_and_classifications_blocks_fall_back_without_bias_when_phase8_none():
+    result = analyze_global(build_phase8_global_missing_client_results())
+    assert result.periods["6M"].phase8 is None
+    ml_blocks = models_and_win_rates_blocks(result)
+    ml_models_table = ml_blocks[0][1]
+    assert "scp_bias_agg" not in ml_models_table.columns

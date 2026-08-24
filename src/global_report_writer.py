@@ -16,10 +16,21 @@ import pandas as pd
 
 from src.global_analysis import GlobalAnalysisResult, global_category_performance_table
 from src.periods import ALL_PERIODS, MONTHLY_PERIODS, visible_label
+from src.phase8_presentation import (
+    BIAS_METHODOLOGY_NOTE,
+    PHASE8_NO_ROUTING_NOTE,
+    PHASE8_ONLY_6M_NOTE,
+    PHASE8_SMALL_SAMPLE_NOTE,
+    VOLUME_METHODOLOGY_NOTE_GLOBAL,
+    direction_label_es,
+    sort_volume_table,
+    volume_bucket_label_es,
+)
 from src.report_writer import (
     _fmt_num,
     _fmt_pct_fraction,
     _fmt_pct_scaled,
+    _fmt_signed_pct_fraction,
     _fmt_signed_pct_scaled,
     _pareto_concentration_line,
     _pareto_table_lines,
@@ -27,6 +38,107 @@ from src.report_writer import (
 )
 
 MODEL_CLASSIFICATION_PERIOD = "6M"
+
+# Contrato completo de columnas Phase8 (src.phase8.category_performance_table_with_bias):
+# se conservan TODAS las senales presentes en la tabla fuente, no solo Bias.
+_PHASE8_BASE_HEADERS = [
+    "Categoria", "N comparable", "N gana ML", "N gana SCP", "N empate", "Tasa victoria ML",
+    "WAPE SCP", "WAPE ML", "Mejora agregada", "Mediana mejora", "Reduccion absoluta",
+    "% volumen historico", "Muestra pequena",
+]
+_PHASE8_BIAS_HEADERS = ["Bias SCP", "Direccion SCP", "Bias ML", "Direccion ML"]
+_CROSS_TABLE_TOP_N = 30
+
+
+def _phase8_category_table_lines(table: pd.DataFrame, category_label: str = "Categoria", top_n: int = 10) -> list[str]:
+    """
+    Formatea una tabla ya calculada de src.phase8 (model_tables/classification_tables/
+    volume_table/classification_volume_cross, PeriodResult.phase8 global, nunca
+    recalculada aqui) conservando TODAS las senales disponibles en la tabla fuente
+    -- no solo las 4 columnas de Bias. `n_clients` se muestra unicamente cuando la
+    columna existe realmente en `table` (volume_table global NO la tiene: no se
+    fabrica ni se recalcula).
+    """
+    if table is None or table.empty:
+        return ["_Sin datos (sin series comparables)._"]
+    has_n_clients = "n_clients" in table.columns
+    headers = list(_PHASE8_BASE_HEADERS)
+    headers[0] = category_label
+    if has_n_clients:
+        headers.insert(1, "N clientes")
+    headers += _PHASE8_BIAS_HEADERS
+    rows = []
+    for _, r in table.head(top_n).iterrows():
+        row = [str(r["category"])]
+        if has_n_clients:
+            row.append(_fmt_num(r["n_clients"]))
+        row += [
+            _fmt_num(r["n_comparable"]),
+            _fmt_num(r["n_win_ml"]), _fmt_num(r["n_win_scp"]), _fmt_num(r["n_tie"]),
+            _fmt_pct_scaled(r["win_rate_ml_pct"]), _fmt_pct_fraction(r["scp_wape_agg"]),
+            _fmt_pct_fraction(r["ml_wape_agg"]), _fmt_signed_pct_scaled(r["improvement_agg_pct"]),
+            _fmt_signed_pct_scaled(r["median_improvement_pct"]),
+            _fmt_num(r["abs_error_reduction"]), _fmt_pct_scaled(r["pct_of_history_volume"]),
+            "si" if r["small_sample"] else "no",
+            _fmt_signed_pct_fraction(r["scp_bias_agg"]), direction_label_es(r["scp_direction"]),
+            _fmt_signed_pct_fraction(r["ml_bias_agg"]), direction_label_es(r["ml_direction"]),
+        ]
+        rows.append(row)
+    return _table_from_rows(headers, rows)
+
+
+def _phase8_cross_truncation_note(table: pd.DataFrame, top_n: int = _CROSS_TABLE_TOP_N) -> str | None:
+    """
+    Nunca truncar en silencio: si `table` (classification_volume_cross, ya
+    calculada por el nucleo) tiene mas filas que las mostradas por
+    `_phase8_cross_table_lines`, deja explicito cuantas se muestran frente al
+    total real. No recorta ni filtra `table`: solo informa. Devuelve None
+    cuando se muestran todas las filas (nada que avisar).
+    """
+    if table is None or table.empty or len(table) <= top_n:
+        return None
+    return (
+        f"_Mostrando {top_n} de {len(table)} combinaciones "
+        f"(el Excel global, hoja `17_phase8_global`, conserva el listado completo)._"
+    )
+
+
+def _phase8_cross_table_lines(table: pd.DataFrame, top_n: int = _CROSS_TABLE_TOP_N) -> list[str]:
+    """
+    Como `_phase8_category_table_lines`, pero para classification_volume_cross
+    (columnas SERIES_CLASSIFICATION + VOLUME_BUCKET en vez de una unica
+    `category`). Renderiza EXACTAMENTE las filas que entrega el nucleo -- incluye
+    filas SERIES_CLASSIFICATION x NOT_ASSIGNABLE si estan presentes, nunca se
+    filtran ni se inventan.
+    """
+    if table is None or table.empty:
+        return ["_Sin datos (sin series comparables)._"]
+    has_n_clients = "n_clients" in table.columns
+    headers = ["Clasificacion", "Volumen relativo", "N comparable"]
+    if has_n_clients:
+        headers.append("N clientes")
+    headers += [
+        "N gana ML", "N gana SCP", "N empate", "Tasa victoria ML", "WAPE SCP", "WAPE ML",
+        "Mejora agregada", "Mediana mejora", "Reduccion absoluta", "% volumen historico",
+        "Muestra pequena",
+    ] + _PHASE8_BIAS_HEADERS
+    rows = []
+    for _, r in table.head(top_n).iterrows():
+        row = [str(r["SERIES_CLASSIFICATION"]), volume_bucket_label_es(r["VOLUME_BUCKET"]), _fmt_num(r["n_comparable"])]
+        if has_n_clients:
+            row.append(_fmt_num(r["n_clients"]))
+        row += [
+            _fmt_num(r["n_win_ml"]), _fmt_num(r["n_win_scp"]), _fmt_num(r["n_tie"]),
+            _fmt_pct_scaled(r["win_rate_ml_pct"]), _fmt_pct_fraction(r["scp_wape_agg"]),
+            _fmt_pct_fraction(r["ml_wape_agg"]), _fmt_signed_pct_scaled(r["improvement_agg_pct"]),
+            _fmt_signed_pct_scaled(r["median_improvement_pct"]),
+            _fmt_num(r["abs_error_reduction"]), _fmt_pct_scaled(r["pct_of_history_volume"]),
+            "si" if r["small_sample"] else "no",
+            _fmt_signed_pct_fraction(r["scp_bias_agg"]), direction_label_es(r["scp_direction"]),
+            _fmt_signed_pct_fraction(r["ml_bias_agg"]), direction_label_es(r["ml_direction"]),
+        ]
+        rows.append(row)
+    return _table_from_rows(headers, rows)
 
 
 def _period_summary_line(result: GlobalAnalysisResult, period: str) -> str:
@@ -433,12 +545,31 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     # 16. Modelos que mas aportan
     a("## 16. Modelos que mas aportan")
     a("")
-    ml_models = global_category_performance_table(result.client_results, MODEL_CLASSIFICATION_PERIOD, "ML_BEST_MODEL")
+    has_phase8_global = m6.phase8 is not None
+    if has_phase8_global:
+        ml_models = m6.phase8.model_tables.get("ML_BEST_MODEL", pd.DataFrame())
+        model_table_lines = _phase8_category_table_lines(ml_models, category_label="Modelo")
+    else:
+        ml_models = global_category_performance_table(result.client_results, MODEL_CLASSIFICATION_PERIOD, "ML_BEST_MODEL")
+        model_table_lines = _category_table_lines(ml_models)
     a(f"Modelos ML por frecuencia y tasa de victoria en {visible_label(MODEL_CLASSIFICATION_PERIOD)} (todos los clientes):")
     a("")
-    a("\n".join(_category_table_lines(ml_models)))
+    a("\n".join(model_table_lines))
     a("")
+    # Modelos SCP (SCP_BEST_MODEL): la segunda perspectiva de modelo del
+    # diagnostico Fase 8 (phase8.model_tables), mostrada aqui -- junto a ML,
+    # en la seccion que ya existia para "modelos" -- en vez de duplicarla en
+    # la seccion 22, que no tenia tablas de modelo.
+    if has_phase8_global:
+        scp_models = m6.phase8.model_tables.get("SCP_BEST_MODEL", pd.DataFrame())
+        a(f"Modelos SCP (SCP_BEST_MODEL) por frecuencia y tasa de victoria en {visible_label(MODEL_CLASSIFICATION_PERIOD)} (todos los clientes):")
+        a("")
+        a("\n".join(_phase8_category_table_lines(scp_models, category_label="Modelo")))
+        a("")
     a("La frecuencia de seleccion no implica mayor aportacion de valor: comparar tasa de victoria y mejora agregada.")
+    if has_phase8_global:
+        a("")
+        a(BIAS_METHODOLOGY_NOTE)
     a("")
     a("---")
     a("")
@@ -446,11 +577,14 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     # 17. Clasificaciones donde funciona mejor ML
     a("## 17. Clasificaciones donde funciona mejor ML")
     a("")
-    series_class = global_category_performance_table(result.client_results, MODEL_CLASSIFICATION_PERIOD, "SERIES_CLASSIFICATION")
+    if has_phase8_global:
+        series_class = m6.phase8.classification_tables.get("SERIES_CLASSIFICATION", pd.DataFrame())
+    else:
+        series_class = global_category_performance_table(result.client_results, MODEL_CLASSIFICATION_PERIOD, "SERIES_CLASSIFICATION")
     best = series_class[series_class["n_comparable"] >= 10].sort_values("win_rate_ml_pct", ascending=False).head(5) if not series_class.empty else series_class
     a("Tipologias (SERIES_CLASSIFICATION) con mayor tasa de victoria ML (muestra >= 10 series):")
     a("")
-    a("\n".join(_category_table_lines(best)))
+    a("\n".join(_phase8_category_table_lines(best, category_label="Clasificacion") if has_phase8_global else _category_table_lines(best)))
     a("")
     a("---")
     a("")
@@ -461,7 +595,7 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     worst = series_class[series_class["n_comparable"] >= 10].sort_values("win_rate_ml_pct", ascending=True).head(5) if not series_class.empty else series_class
     a("Tipologias (SERIES_CLASSIFICATION) con menor tasa de victoria ML (muestra >= 10 series):")
     a("")
-    a("\n".join(_category_table_lines(worst)))
+    a("\n".join(_phase8_category_table_lines(worst, category_label="Clasificacion") if has_phase8_global else _category_table_lines(worst)))
     a("")
     a("---")
     a("")
@@ -531,6 +665,74 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
         "cobertura y concentracion) se han mantenido deliberadamente separadas a lo largo de este informe: "
         "una lectura favorable en una de ellas no implica que las demas lo sean en la misma medida."
     )
+    a("")
+    a("---")
+    a("")
+
+    # 22. Diagnostico global Fase 8 -- Bias y volumen relativo
+    a("## 22. Diagnóstico global Fase 8 — Bias y volumen relativo")
+    a("")
+    if m6.phase8 is not None:
+        phase8 = m6.phase8
+        bt = phase8.bias_total
+        a(
+            f"**Bias agregado SCP:** {_fmt_signed_pct_fraction(bt.scp_bias_agg)} ({direction_label_es(bt.scp_direction)}). "
+            f"**Bias agregado ML:** {_fmt_signed_pct_fraction(bt.ml_bias_agg)} ({direction_label_es(bt.ml_direction)})."
+        )
+        a("")
+        a(BIAS_METHODOLOGY_NOTE)
+        a("")
+        a("**Volumen relativo global (VOLUME_BUCKET).**")
+        a("")
+        a(VOLUME_METHODOLOGY_NOTE_GLOBAL)
+        a("")
+        volume_table = sort_volume_table(phase8.volume_table)
+        if volume_table is not None and not volume_table.empty:
+            volume_table = volume_table.copy()
+            volume_table["category"] = volume_table["category"].map(volume_bucket_label_es)
+        a("\n".join(_phase8_category_table_lines(volume_table, category_label="Volumen relativo")))
+        a("")
+        a(
+            f"**Clientes con volumen relativo no asignable (NOT_ASSIGNABLE):** "
+            f"{_fmt_num(phase8.n_clients_with_not_assignable_volume)}."
+        )
+        a("")
+        # Clasificaciones completas (las 4 dimensiones, tablas ya calculadas en
+        # phase8.classification_tables, con Bias y n_clients cuando exista). Esta
+        # es la unica seccion donde aparecen ML_CLASSIFICATION/ML_TYPE/SCP_CLASSIFICATION
+        # y la SERIES_CLASSIFICATION COMPLETA (no filtrada): la seccion 17/18 ya
+        # muestra SERIES_CLASSIFICATION, pero solo un ranking filtrado (mejor/peor
+        # 5 con >=10 series), un proposito distinto de "la tabla completa", asi
+        # que no hay duplicacion de contenido entre ambas.
+        a("**Clasificaciones completas (ML_CLASSIFICATION, ML_TYPE, SERIES_CLASSIFICATION, SCP_CLASSIFICATION).**")
+        a("")
+        for col, label in (
+            ("ML_CLASSIFICATION", "ML_CLASSIFICATION"),
+            ("ML_TYPE", "ML_TYPE"),
+            ("SERIES_CLASSIFICATION", "SERIES_CLASSIFICATION"),
+            ("SCP_CLASSIFICATION", "SCP_CLASSIFICATION"),
+        ):
+            a(f"_{label}_")
+            a("")
+            a("\n".join(_phase8_category_table_lines(phase8.classification_tables.get(col, pd.DataFrame()), category_label="Clasificacion")))
+            a("")
+        a("**Clasificación de series x volumen relativo (SERIES_CLASSIFICATION x VOLUME_BUCKET, exclusivo del reporting global).**")
+        a("")
+        a("\n".join(_phase8_cross_table_lines(phase8.classification_volume_cross)))
+        cross_note = _phase8_cross_truncation_note(phase8.classification_volume_cross)
+        if cross_note:
+            a("")
+            a(cross_note)
+        a("")
+        a(f"- {PHASE8_ONLY_6M_NOTE}")
+        a(f"- {PHASE8_SMALL_SAMPLE_NOTE}")
+        a(f"- {PHASE8_NO_ROUTING_NOTE}")
+    else:
+        a(
+            "Diagnóstico global Fase 8 (Bias, volumen relativo y clasificación x volumen) no disponible: "
+            "al menos un cliente participante no tiene el diagnóstico Fase 8 calculado para 6M "
+            "(backend COMPARISON_STATUS ausente)."
+        )
     a("")
 
     return "\n".join(lines)

@@ -20,7 +20,13 @@ from src import html_formatters as fmt
 from src import html_view_models as vm
 from src.html_report import extract_local_links, generate_html_report, validate_run_links
 from src.periods import ALL_PERIODS, period_columns
-from tests.factories import build_global_analysis_result, build_synthetic_client_result, build_volume_bucket_client_result
+from tests.factories import (
+    build_global_analysis_result,
+    build_phase8_global_missing_client_results,
+    build_phase8_global_multi_client_analysis_result,
+    build_synthetic_client_result,
+    build_volume_bucket_client_result,
+)
 
 # --------------------------------------------------------------------------
 # Fixtures de CSV (independientes de data/): un unico generador parametrizado
@@ -1120,6 +1126,122 @@ def test_build_perspectives_vm_pareto_shows_zero_row_for_empty_group():
     assert rows["Clientes — deterioro"]["n_total"] == "0"
     assert rows["Clientes — deterioro"]["n_for_50"] == "N/D"
     assert rows["Series — deterioro"]["n_total"] == "0"
+
+
+# --------------------------------------------------------------------------
+# Fase 8D: diagnostico GLOBAL de Bias, volumen y clasificacion x volumen
+# --------------------------------------------------------------------------
+
+def _render_global_html_for(global_result, tmp_path: Path, run_name: str):
+    """
+    Renderiza el index.html global real (no solo el view-model) para un
+    GlobalAnalysisResult ya construido en memoria, reutilizando
+    generate_html_report directamente -- mismo patron que
+    test_execution_summary_and_html_header_count_only_real_clients_not_physical_records
+    para escenarios no alcanzables end-to-end via pipeline.main() (aqui:
+    control total sobre el fixture Phase8 sin pasar por CSV en disco).
+    Devuelve (html_text, run_dir_temp): las paginas de cliente se escriben
+    bajo run_dir_temp/clients/<folder_name>/index.html, no bajo
+    output_root/run_name (eso solo existe tras el publish real del pipeline).
+    """
+    from datetime import datetime
+
+    run_config = pipeline.build_run_config(
+        pipeline.build_arg_parser(tmp_path).parse_args([
+            "--input-dir", str(tmp_path / "data"), "--output-root", str(tmp_path / "runs"), "--run-name", run_name,
+        ]),
+        tmp_path,
+    )
+    now = datetime.now().astimezone()
+    generate_html_report(
+        run_config=run_config, results=global_result.client_results, global_result=global_result,
+        all_outputs={}, global_outputs=[], execution_records=[],
+        started_at=now, finished_at=now, status="OK",
+        git_commit=None, git_worktree_dirty=None,
+    )
+    html = (run_config.run_dir_temp / "index.html").read_text(encoding="utf-8")
+    return html, run_config.run_dir_temp
+
+
+def test_build_phase8_global_vm_available_case_has_full_contract():
+    result = build_phase8_global_multi_client_analysis_result()
+    phase8_global = vm.build_phase8_global_vm(result.periods["6M"].phase8)
+
+    assert phase8_global["available"] is True
+    assert phase8_global["n_clients_not_assignable"] == "1"
+    assert phase8_global["volume"]["rows"], "volume_table global deberia tener filas"
+    for row in phase8_global["volume"]["rows"]:
+        assert "n_clients" not in row  # volume_table global no lleva n_clients
+    ml_model_rows = phase8_global["model_tables"]["ML_BEST_MODEL"]
+    assert ml_model_rows and all("n_clients" in r for r in ml_model_rows)
+    cross_rows = phase8_global["classification_volume_cross"]
+    assert cross_rows and all("n_clients" in r for r in cross_rows)
+    assert any(r["bucket"] == "No asignable" for r in cross_rows)
+
+
+def test_build_phase8_global_vm_none_is_safe():
+    assert vm.build_phase8_global_vm(None) == {"available": False}
+
+
+def test_build_phase8_global_vm_never_recomputes(monkeypatch):
+    result = build_phase8_global_multi_client_analysis_result()  # Fase 8 global ya calculada en analyze_global
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("html_view_models no debe recalcular Fase 8 global")
+
+    monkeypatch.setattr("src.global_analysis.build_phase8_global_diagnostics", _boom)
+    monkeypatch.setattr("src.phase8.bias_aggregate", _boom)
+    monkeypatch.setattr("src.phase8.compute_volume_buckets", _boom)
+    monkeypatch.setattr("src.phase8.classification_volume_cross_table", _boom)
+
+    phase8_global = vm.build_phase8_global_vm(result.periods["6M"].phase8)
+    assert phase8_global["available"] is True
+
+
+def test_global_page_renders_fase8_global_section_with_real_content(tmp_path: Path):
+    result = build_phase8_global_multi_client_analysis_result()
+    html, _run_dir_temp = _render_global_html_for(result, tmp_path, "phase8_global_run")
+
+    assert 'id="fase8-global"' in html
+    assert 'href="#fase8-global"' in html
+    assert "Diagnóstico global Fase 8" in html
+    assert "Clientes con volumen relativo NOT_ASSIGNABLE" in html or "NOT_ASSIGNABLE" in html
+    assert "No asignable" in html  # bucket traducido en el cruce
+
+    # Sin nan/inf ni codigos machine-readable dentro de la seccion.
+    section = html.split('id="fase8-global"')[1].split("</section>")[0]
+    for code in ("RELATIVE_LOW", "RELATIVE_MEDIUM", "RELATIVE_HIGH", "POSITIVE", "NEGATIVE", "NOT_EVALUABLE"):
+        assert code not in section
+    assert "nan" not in section.lower()
+    assert ">inf<" not in section.lower()
+
+
+def test_global_page_renders_short_note_when_phase8_none(tmp_path: Path):
+    from src.global_analysis import analyze_global
+
+    result = analyze_global(build_phase8_global_missing_client_results())
+    assert result.periods["6M"].phase8 is None
+    html, _run_dir_temp = _render_global_html_for(result, tmp_path, "phase8_global_none_run")
+
+    section = html.split('id="fase8-global"')[1].split("</section>")[0]
+    assert "no disponible" in section
+    assert "Bias agregado global SCP" not in section
+
+
+def test_individual_client_pages_never_show_classification_volume_cross(tmp_path: Path):
+    """
+    El cruce SERIES_CLASSIFICATION x VOLUME_BUCKET es exclusivo del reporting
+    global (8D): ninguna pagina individual ya existente (8C, sin modificar)
+    debe mostrarlo.
+    """
+    result = build_phase8_global_multi_client_analysis_result()
+    _html, run_dir_temp = _render_global_html_for(result, tmp_path, "phase8_no_cross_run")
+
+    for client_result in result.client_results:
+        client_html = (run_dir_temp / "clients" / client_result.source.folder_name / "index.html").read_text(encoding="utf-8")
+        assert "VOLUME_BUCKET" not in client_html or "SERIES_CLASSIFICATION" not in client_html.split("VOLUME_BUCKET")[0][-500:]
+        # Comprobacion directa: ninguna cabecera de tabla combina ambas columnas.
+        assert "Clasificación</th><th scope=\"col\">Volumen relativo" not in client_html
 
 
 def test_global_page_renders_pareto_table_and_sheet_reference(tmp_path: Path):

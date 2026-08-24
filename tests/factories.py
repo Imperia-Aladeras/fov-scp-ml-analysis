@@ -344,3 +344,149 @@ def build_negative_net_multi_client_results() -> list:
     negative = analyze_client(make_client_source(negative_df, 55502, "NegativeClient"))
 
     return [positive, negative]
+
+
+def _build_phase8_not_assignable_dataframe(id_client: int, classification: str) -> pd.DataFrame:
+    """
+    2 filas comparables en 6M (COMPARISON_STATUS == COMPARABLE): menos de 3
+    series comparables -> volumen NOT_ASSIGNABLE (REASON_N_LT_3, ver
+    src.phase8.compute_volume_buckets), a diferencia de
+    build_volume_bucket_client_dataframe (9 filas, terciles limpios). Usada
+    por build_phase8_global_multi_client_results (Fase 8D) para forzar
+    n_clients_with_not_assignable_volume >= 1 en el fixture global.
+    """
+    df = pd.DataFrame({
+        "HAS_BASE_CANDIDATE": [1, 1],
+        "ID_CLIENT": [id_client, id_client],
+        "ID_CONFIGURATION": [5001, 5002],
+        "VALUE_LEVEL_1": ["Cat A", "Cat B"],
+        "VALUE_LEVEL_2": [None, None], "VALUE_LEVEL_3": [None, None],
+        "VALUE_LEVEL_4": [None, None], "VALUE_LEVEL_5": [None, None],
+        "ML_BEST_MODEL": ["AutoETS", "AutoARIMA"], "SCP_BEST_MODEL": ["x11 seasonal", "SeasonalNaive"],
+        "ML_CLASSIFICATION": [classification, classification], "ML_TYPE": [classification, classification],
+        "SERIES_CLASSIFICATION": [classification, classification], "SCP_CLASSIFICATION": [classification, classification],
+        "COMPARISON_STATUS": ["COMPARABLE", "COMPARABLE"],
+    })
+    for period in [f"M{i}" for i in range(1, 7)] + ["RECENT_3M", "OLDER_3M", "6M"]:
+        set_period(
+            df, period,
+            total_history=[100.0, 200.0], scp_forecast=[120.0, 180.0], scp_abs_error=[20.0, 20.0], scp_wape=[0.2, 0.1],
+            ml_forecast=[110.0, 220.0], ml_abs_error=[10.0, 20.0], ml_wape=[0.1, 0.1],
+            winner_method=["ML", "SCP"],
+        )
+    return df
+
+
+def build_phase8_global_multi_client_results() -> list:
+    """
+    Fixture global de Fase 8D (reporting de GlobalAnalysisResult.periods["6M"].phase8):
+    3 clientes disenados para ejercitar Phase8GlobalDiagnostics con variedad
+    real, no un unico caso degenerado:
+      - 91001_VolumeA: mismo patron que build_volume_bucket_client_dataframe
+        (9 filas comparables, terciles limpios LOW/MEDIUM/HIGH por cliente,
+        Bias con signo alternado dentro de cada bucket via forecast por
+        encima/debajo del historico en filas pares/impares),
+        SERIES_CLASSIFICATION smooth/erratic.
+      - 91002_VolumeB: mismo patron de volumen (mismos TOTAL_HISTORY_6M,
+        buckets propios de ESTE cliente -- nunca comparables en magnitud con
+        los de VolumeA), pero SERIES_CLASSIFICATION smooth/intermittent: al
+        agregar globalmente, cada VOLUME_BUCKET recibe series de mas de una
+        clasificacion (classification_volume_cross con variedad real).
+      - 91003_NotAssignable: solo 2 filas comparables en 6M -> volumen
+        NOT_ASSIGNABLE para todo el cliente (REASON_N_LT_3), para que
+        n_clients_with_not_assignable_volume >= 1 y aparezca una fila
+        SERIES_CLASSIFICATION x NOT_ASSIGNABLE en el cruce global.
+    Todos los grupos resultantes tienen pocas series (n_comparable < 10):
+    small_sample=True es el caso tipico de este fixture, no la excepcion.
+    """
+    from src.client_analysis import analyze_client
+
+    df_a = build_volume_bucket_client_dataframe().copy()
+    df_a["ID_CLIENT"] = 91001
+    client_a = analyze_client(make_client_source(df_a, 91001, "VolumeA"))
+
+    df_b = build_volume_bucket_client_dataframe().copy()
+    df_b["ID_CLIENT"] = 91002
+    classifications_b = ["smooth", "intermittent"]
+    n = len(df_b)
+    for col in ("ML_CLASSIFICATION", "ML_TYPE", "SERIES_CLASSIFICATION", "SCP_CLASSIFICATION"):
+        df_b[col] = [classifications_b[i % 2] for i in range(n)]
+    client_b = analyze_client(make_client_source(df_b, 91002, "VolumeB"))
+
+    df_c = _build_phase8_not_assignable_dataframe(id_client=91003, classification="lumpy")
+    client_c = analyze_client(make_client_source(df_c, 91003, "NotAssignable"))
+
+    return [client_a, client_b, client_c]
+
+
+def build_phase8_global_multi_client_analysis_result():
+    from src.global_analysis import analyze_global
+
+    return analyze_global(build_phase8_global_multi_client_results())
+
+
+def build_phase8_global_missing_client_results() -> list:
+    """
+    2 clientes para probar que basta con que UN cliente participante no
+    tenga PeriodResult.phase8 (is_backend_6m False -- sin columna
+    COMPARISON_STATUS en 6M) para que GlobalPeriodResult.phase8 sea None,
+    independientemente del resto (ver
+    src.global_analysis._build_phase8_global_if_all_clients_ready). Caso
+    DISTINTO de una lista global vacia (que produce Phase8 PRESENTE pero
+    vacio, no None, por la evaluacion vacua de `all(...)` sobre lista vacia):
+    aqui SI hay clientes participantes, solo que uno de ellos no calculo
+    Fase 8 individual.
+    """
+    from src.client_analysis import analyze_client
+
+    with_backend = analyze_client(make_client_source(build_synthetic_client_dataframe(), 99999, "Synthetic"))
+
+    df_no_backend = build_synthetic_client_dataframe().drop(columns=["COMPARISON_STATUS"])
+    df_no_backend["ID_CLIENT"] = 77779
+    without_backend = analyze_client(make_client_source(df_no_backend, 77779, "NoBackend"))
+
+    return [with_backend, without_backend]
+
+
+def build_phase8_global_null_classification_results() -> list:
+    """
+    1 cliente, 3 filas comparables en 6M, con SERIES_CLASSIFICATION (y
+    ML_CLASSIFICATION/ML_TYPE/SCP_CLASSIFICATION) nula en 1 de las 3 filas.
+    El nucleo (src.phase8.category_performance_table_with_bias /
+    classification_volume_cross_table, via MISSING_CATEGORY_LABEL de
+    src.models.category_performance_table) ya normaliza esa fila a la
+    categoria "(sin clasificar)" -- NUNCA "nan"/"None", NUNCA una fila
+    aparte por posicion, siempre agrupada bajo esa unica etiqueta. Este
+    fixture existe para que el reporting GLOBAL (Markdown/Excel/HTML) tenga
+    cobertura explicita de ese caso, sin tocar el nucleo.
+    """
+    from src.client_analysis import analyze_client
+
+    df = pd.DataFrame({
+        "HAS_BASE_CANDIDATE": [1, 1, 1],
+        "ID_CLIENT": [92001, 92001, 92001],
+        "ID_CONFIGURATION": [6001, 6002, 6003],
+        "VALUE_LEVEL_1": ["Cat A", "Cat B", "Cat C"],
+        "VALUE_LEVEL_2": [None, None, None], "VALUE_LEVEL_3": [None, None, None],
+        "VALUE_LEVEL_4": [None, None, None], "VALUE_LEVEL_5": [None, None, None],
+        "ML_BEST_MODEL": ["AutoETS", "AutoETS", "AutoETS"], "SCP_BEST_MODEL": ["x11 seasonal"] * 3,
+        "ML_CLASSIFICATION": ["smooth", None, "smooth"], "ML_TYPE": ["smooth_ok", None, "smooth_ok"],
+        "SERIES_CLASSIFICATION": ["smooth", None, "smooth"], "SCP_CLASSIFICATION": ["smooth", None, "smooth"],
+        "COMPARISON_STATUS": ["COMPARABLE", "COMPARABLE", "COMPARABLE"],
+    })
+    for period in [f"M{i}" for i in range(1, 7)] + ["RECENT_3M", "OLDER_3M", "6M"]:
+        set_period(
+            df, period,
+            total_history=[100.0, 100.0, 100.0], scp_forecast=[120.0, 120.0, 120.0],
+            scp_abs_error=[20.0, 20.0, 20.0], scp_wape=[0.2, 0.2, 0.2],
+            ml_forecast=[110.0, 110.0, 110.0], ml_abs_error=[10.0, 10.0, 10.0], ml_wape=[0.1, 0.1, 0.1],
+            winner_method=["ML", "ML", "ML"],
+        )
+    client = analyze_client(make_client_source(df, 92001, "NullClass"))
+    return [client]
+
+
+def build_phase8_global_null_classification_analysis_result():
+    from src.global_analysis import analyze_global
+
+    return analyze_global(build_phase8_global_null_classification_results())

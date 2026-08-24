@@ -8,6 +8,8 @@ from src.metrics import (
 )
 from src.phase8 import NOT_ASSIGNABLE, REASON_N_LT_3, RELATIVE_HIGH, RELATIVE_LOW, RELATIVE_MEDIUM
 from src.phase8_presentation import (
+    VOLUME_METHODOLOGY_NOTE,
+    VOLUME_METHODOLOGY_NOTE_GLOBAL,
     direction_label_es,
     has_bias_columns,
     sort_volume_table,
@@ -74,3 +76,16 @@ def test_has_bias_columns_false_when_missing_or_empty():
     assert has_bias_columns(pd.DataFrame({"category": ["A"]})) is False
     assert has_bias_columns(pd.DataFrame()) is False
     assert has_bias_columns(None) is False
+
+
+def test_volume_methodology_note_global_is_distinct_from_individual_note():
+    assert VOLUME_METHODOLOGY_NOTE_GLOBAL != VOLUME_METHODOLOGY_NOTE
+    assert "de este cliente" in VOLUME_METHODOLOGY_NOTE
+    assert "de este cliente" not in VOLUME_METHODOLOGY_NOTE_GLOBAL
+
+
+def test_volume_methodology_note_global_explains_per_client_aggregation():
+    text = VOLUME_METHODOLOGY_NOTE_GLOBAL.lower()
+    assert "propio cliente" in text
+    assert "no se recalculan terciles" in text
+    assert "global" in text

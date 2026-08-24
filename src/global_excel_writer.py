@@ -1,5 +1,5 @@
 """
-Generacion del Excel global (17 pestanas, 00_readme..16_pareto_absolute_impact).
+Generacion del Excel global (18 pestanas, 00_readme..17_phase8_global).
 Comparativa entre todos los clientes con fichero valido.
 """
 
@@ -13,9 +13,37 @@ from openpyxl.utils import get_column_letter
 from src.excel_writer import _dict_to_df, _stats_dict_to_df, autosize_columns, write_blocks
 from src.global_analysis import GlobalAnalysisResult, global_category_performance_table
 from src.periods import ALL_PERIODS, MONTHLY_PERIODS, visible_label
+from src.phase8_presentation import (
+    BIAS_METHODOLOGY_NOTE,
+    PHASE8_NO_ROUTING_NOTE,
+    PHASE8_ONLY_6M_NOTE,
+    PHASE8_SMALL_SAMPLE_NOTE,
+    VOLUME_METHODOLOGY_NOTE_GLOBAL,
+    direction_label_es,
+    has_bias_columns,
+    sort_volume_table,
+    volume_bucket_label_es,
+)
 
 MODEL_CLASSIFICATION_PERIOD = "6M"
 _SINGLE_TABLE_SHEETS = ("15_data_quality_checks",)
+
+
+def _translate_bias_directions(table: pd.DataFrame) -> pd.DataFrame:
+    """
+    Traduce scp_direction/ml_direction (POSITIVE/NEGATIVE/ZERO/NOT_EVALUABLE)
+    a copy en castellano SOLO en una copia de presentacion; nunca toca las
+    tablas de GlobalPeriodResult.phase8 ni recalcula ninguna columna. Mismo
+    patron que src.excel_writer._translate_bias_directions (per-client), no
+    importado desde alli porque los writers globales no dependen de
+    excel_writer.py.
+    """
+    if not has_bias_columns(table):
+        return table
+    table = table.copy()
+    table["scp_direction"] = table["scp_direction"].map(direction_label_es)
+    table["ml_direction"] = table["ml_direction"].map(direction_label_es)
+    return table
 
 
 # --------------------------------------------------------------------------
@@ -207,21 +235,39 @@ def winner_distribution_table(result: GlobalAnalysisResult) -> pd.DataFrame:
 # --------------------------------------------------------------------------
 
 def models_and_win_rates_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.DataFrame]]:
-    ml_models = global_category_performance_table(result.client_results, MODEL_CLASSIFICATION_PERIOD, "ML_BEST_MODEL")
-    scp_models = global_category_performance_table(result.client_results, MODEL_CLASSIFICATION_PERIOD, "SCP_BEST_MODEL")
+    # GlobalPeriodResult.phase8 (calculado una unica vez en global_analysis.py)
+    # es la fuente preferida -- ya incluye Bias y n_clients. Si es None (algun
+    # cliente sin backend COMPARISON_STATUS en 6M), se mantiene el
+    # comportamiento anterior a 8D, sin Bias.
+    phase8 = result.periods[MODEL_CLASSIFICATION_PERIOD].phase8
     label = visible_label(MODEL_CLASSIFICATION_PERIOD)
-    return [
+    if phase8 is not None:
+        ml_models = _translate_bias_directions(phase8.model_tables.get("ML_BEST_MODEL", pd.DataFrame()))
+        scp_models = _translate_bias_directions(phase8.model_tables.get("SCP_BEST_MODEL", pd.DataFrame()))
+    else:
+        ml_models = global_category_performance_table(result.client_results, MODEL_CLASSIFICATION_PERIOD, "ML_BEST_MODEL")
+        scp_models = global_category_performance_table(result.client_results, MODEL_CLASSIFICATION_PERIOD, "SCP_BEST_MODEL")
+    blocks = [
         (f"Modelos ML (ML_BEST_MODEL) - {label} - todos los clientes", ml_models),
         (f"Modelos SCP (SCP_BEST_MODEL) - {label} - todos los clientes", scp_models),
     ]
+    if phase8 is not None:
+        blocks.append(("Nota metodologica - Bias", pd.DataFrame({"": [BIAS_METHODOLOGY_NOTE]})))
+    return blocks
 
 
 def classifications_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.DataFrame]]:
+    phase8 = result.periods[MODEL_CLASSIFICATION_PERIOD].phase8
     label = visible_label(MODEL_CLASSIFICATION_PERIOD)
     blocks = []
     for col in ("ML_CLASSIFICATION", "ML_TYPE", "SERIES_CLASSIFICATION", "SCP_CLASSIFICATION"):
-        table = global_category_performance_table(result.client_results, MODEL_CLASSIFICATION_PERIOD, col)
+        if phase8 is not None:
+            table = _translate_bias_directions(phase8.classification_tables.get(col, pd.DataFrame()))
+        else:
+            table = global_category_performance_table(result.client_results, MODEL_CLASSIFICATION_PERIOD, col)
         blocks.append((f"{col} - {label} - todos los clientes", table))
+    if phase8 is not None:
+        blocks.append(("Nota metodologica - Bias", pd.DataFrame({"": [BIAS_METHODOLOGY_NOTE]})))
     return blocks
 
 
@@ -332,6 +378,69 @@ def pareto_absolute_impact_blocks(result: GlobalAnalysisResult) -> list[tuple[st
 
 
 # --------------------------------------------------------------------------
+# 17_phase8_global
+#
+# Lee GlobalPeriodResult.phase8 (ya calculado una unica vez en
+# global_analysis.py): esta hoja NUNCA llama a build_phase8_global_diagnostics/
+# bias_aggregate/compute_volume_buckets/classification_volume_cross_table. Las
+# tablas se escriben tal cual las entrega el nucleo (incluye filas
+# SERIES_CLASSIFICATION x NOT_ASSIGNABLE en el cruce si el nucleo las
+# produce): no se filtran ni se inventan filas. volume_table NO tiene columna
+# n_clients en el nucleo -- nunca se fabrica aqui.
+# --------------------------------------------------------------------------
+
+def _bias_total_table_global(bias_total) -> pd.DataFrame:
+    return pd.DataFrame([
+        {"METODO": "SCP", "BIAS_AGREGADO": bias_total.scp_bias_agg, "DIRECCION": direction_label_es(bias_total.scp_direction)},
+        {"METODO": "ML", "BIAS_AGREGADO": bias_total.ml_bias_agg, "DIRECCION": direction_label_es(bias_total.ml_direction)},
+    ])
+
+
+def phase8_global_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.DataFrame]]:
+    phase8 = result.periods[MODEL_CLASSIFICATION_PERIOD].phase8
+    if phase8 is None:
+        return [("Nota", pd.DataFrame({
+            "": ["Diagnostico global Fase 8 (Bias/volumen) no disponible: al menos un cliente participante "
+                 "no tiene el backend 6M (COMPARISON_STATUS) calculado."]
+        }))]
+
+    label = visible_label(MODEL_CLASSIFICATION_PERIOD)
+    blocks: list[tuple[str, pd.DataFrame]] = [
+        (f"Bias agregado global - {label}", _bias_total_table_global(phase8.bias_total)),
+        ("Nota metodologica - Bias", pd.DataFrame({"": [BIAS_METHODOLOGY_NOTE]})),
+    ]
+
+    volume_table = _translate_bias_directions(sort_volume_table(phase8.volume_table))
+    if volume_table is not None and not volume_table.empty:
+        volume_table = volume_table.copy()
+        volume_table["category"] = volume_table["category"].map(volume_bucket_label_es)
+        volume_table = volume_table.rename(columns={"category": "VOLUME_BUCKET"})
+    blocks.append((f"Volumen relativo global (VOLUME_BUCKET) - {label}", volume_table))
+
+    cross_table = _translate_bias_directions(phase8.classification_volume_cross)
+    if cross_table is not None and not cross_table.empty:
+        cross_table = cross_table.copy()
+        cross_table["VOLUME_BUCKET"] = cross_table["VOLUME_BUCKET"].map(volume_bucket_label_es)
+        # Reordena columnas SOLO por legibilidad (SERIES_CLASSIFICATION/VOLUME_BUCKET/n_clients
+        # primero): mismos valores, mismas columnas, nunca se recalcula ni se descarta ninguna.
+        front_cols = [c for c in ("SERIES_CLASSIFICATION", "VOLUME_BUCKET", "n_clients") if c in cross_table.columns]
+        cross_table = cross_table[front_cols + [c for c in cross_table.columns if c not in front_cols]]
+    blocks.append((
+        f"SERIES_CLASSIFICATION x VOLUME_BUCKET - {label} - exclusivo global",
+        cross_table,
+    ))
+
+    blocks.append((
+        "Clientes con volumen NOT_ASSIGNABLE",
+        pd.DataFrame({"N_CLIENTES_VOLUMEN_NOT_ASSIGNABLE": [phase8.n_clients_with_not_assignable_volume]}),
+    ))
+
+    notes = [VOLUME_METHODOLOGY_NOTE_GLOBAL, PHASE8_ONLY_6M_NOTE, PHASE8_SMALL_SAMPLE_NOTE, PHASE8_NO_ROUTING_NOTE]
+    blocks.append(("Notas metodologicas - Fase 8 global", pd.DataFrame({"": notes})))
+    return blocks
+
+
+# --------------------------------------------------------------------------
 # 14_exclusions
 # --------------------------------------------------------------------------
 
@@ -419,6 +528,7 @@ def build_global_workbook(result: GlobalAnalysisResult, output_path: Path) -> No
         write_blocks(writer, "14_exclusions", exclusions_blocks(result))
         write_blocks(writer, "15_data_quality_checks", data_quality_checks_blocks(result))
         write_blocks(writer, "16_pareto_absolute_impact", pareto_absolute_impact_blocks(result))
+        write_blocks(writer, "17_phase8_global", phase8_global_blocks(result))
 
         for sheet_name in writer.sheets:
             autosize_columns(writer, sheet_name)

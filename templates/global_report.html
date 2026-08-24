@@ -39,6 +39,7 @@
     <li><a href="#trimestres">Trimestres</a></li>
     <li><a href="#evolucion-mensual">Evolución mensual</a></li>
     <li><a href="#graficos">Modelos, clasificaciones e impacto/riesgos (gráficos)</a></li>
+    <li><a href="#fase8-global">Diagnóstico Fase 8 global: Bias y volumen relativo</a></li>
     <li><a href="#clientes">Clientes</a></li>
     <li><a href="#metodologia">Metodología y limitaciones</a></li>
     <li><a href="#ficheros">Ficheros de la ejecución</a></li>
@@ -192,6 +193,120 @@
 <section id="graficos" aria-labelledby="graficos-h">
   <h2 id="graficos-h">Modelos, clasificaciones e impacto/riesgos</h2>
   {{ gallery.render(chart_groups) }}
+</section>
+
+{% macro phase8_table(rows) %}
+<div class="table-scroll">
+<table>
+  <thead>
+    <tr>
+      <th scope="col">Categoría</th>{% if rows and rows[0].n_clients is defined %}<th scope="col">N clientes</th>{% endif %}
+      <th scope="col">N</th><th scope="col">N gana ML</th><th scope="col">N gana SCP</th><th scope="col">N empate</th>
+      <th scope="col">% victoria ML</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th>
+      <th scope="col">Mejora agregada</th><th scope="col">Mediana mejora</th><th scope="col">Reducción absoluta</th>
+      <th scope="col">% volumen histórico</th><th scope="col">Bias SCP</th><th scope="col">Bias ML</th><th scope="col">Muestra pequeña</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.categoria if r.categoria is defined else r.bucket }}</td>{% if r.n_clients is defined %}<td>{{ r.n_clients }}</td>{% endif %}
+      <td>{{ r.n }}</td><td>{{ r.n_win_ml }}</td><td>{{ r.n_win_scp }}</td><td>{{ r.n_tie }}</td>
+      <td>{{ r.tasa_victoria_ml }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td>
+      <td>{{ r.mejora_agregada }}</td><td>{{ r.mediana_mejora }}</td><td>{{ r.abs_error_reduction }}</td>
+      <td>{{ r.pct_of_history_volume }}</td>
+      <td>{% if r.scp_bias is defined %}{{ r.scp_bias }} ({{ r.scp_direction }}){% else %}—{% endif %}</td>
+      <td>{% if r.ml_bias is defined %}{{ r.ml_bias }} ({{ r.ml_direction }}){% else %}—{% endif %}</td>
+      <td>{{ "Sí" if r.muestra_pequena else "No" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endmacro %}
+
+<section id="fase8-global" aria-labelledby="fase8-global-h">
+  <h2 id="fase8-global-h">Diagnóstico global Fase 8 (6M): Bias y volumen relativo</h2>
+  {% if phase8_global and phase8_global.available %}
+  <table class="kv-table">
+    <tbody>
+      <tr><th scope="row">Bias agregado global SCP</th><td>{{ phase8_global.bias_total.scp_bias }} ({{ phase8_global.bias_total.scp_direction }})</td></tr>
+      <tr><th scope="row">Bias agregado global ML</th><td>{{ phase8_global.bias_total.ml_bias }} ({{ phase8_global.bias_total.ml_direction }})</td></tr>
+      <tr><th scope="row">Clientes con volumen relativo NOT_ASSIGNABLE</th><td>{{ phase8_global.n_clients_not_assignable }}</td></tr>
+    </tbody>
+  </table>
+  <p class="note">{{ phase8_global.bias_note }}</p>
+
+  <h3>Volumen relativo global (VOLUME_BUCKET)</h3>
+  <p class="note">{{ phase8_global.volume_note }}</p>
+  {% if phase8_global.volume.rows %}
+  {{ phase8_table(phase8_global.volume.rows) }}
+  {% else %}<p class="note">Sin datos de volumen relativo para el universo comparable global.</p>{% endif %}
+  <p class="note">Ver el gráfico "Bias agregado SCP vs ML por volumen relativo (global)" en la sección <a href="#graficos">Modelos, clasificaciones e impacto/riesgos</a> (cuando exista: un bucket sin Bias finito en algún método no se representa en el gráfico, pero sí en esta tabla).</p>
+
+  <h3>Modelos (ML_BEST_MODEL / SCP_BEST_MODEL)</h3>
+  {% if phase8_global.model_tables.ML_BEST_MODEL %}
+  <p>Modelos ML:</p>
+  {{ phase8_table(phase8_global.model_tables.ML_BEST_MODEL) }}
+  {% endif %}
+  {% if phase8_global.model_tables.SCP_BEST_MODEL %}
+  <p>Modelos SCP:</p>
+  {{ phase8_table(phase8_global.model_tables.SCP_BEST_MODEL) }}
+  {% endif %}
+  {% if not phase8_global.model_tables.ML_BEST_MODEL and not phase8_global.model_tables.SCP_BEST_MODEL %}
+  <p class="note">Sin datos de modelo para el universo comparable global.</p>
+  {% endif %}
+
+  <h3>Clasificaciones</h3>
+  {% set any_classification = (phase8_global.classification_tables.ML_CLASSIFICATION or phase8_global.classification_tables.ML_TYPE or phase8_global.classification_tables.SERIES_CLASSIFICATION or phase8_global.classification_tables.SCP_CLASSIFICATION) %}
+  {% for col in ["ML_CLASSIFICATION", "ML_TYPE", "SERIES_CLASSIFICATION", "SCP_CLASSIFICATION"] %}
+  {% if phase8_global.classification_tables[col] %}
+  <p>{{ col }}:</p>
+  {{ phase8_table(phase8_global.classification_tables[col]) }}
+  {% endif %}
+  {% endfor %}
+  {% if not any_classification %}<p class="note">Sin datos de clasificación para el universo comparable global.</p>{% endif %}
+
+  <h3>SERIES_CLASSIFICATION × VOLUME_BUCKET (exclusivo del reporting global)</h3>
+  {% if phase8_global.classification_volume_cross %}
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Clasificación</th><th scope="col">Volumen relativo</th>{% if phase8_global.classification_volume_cross[0].n_clients is defined %}<th scope="col">N clientes</th>{% endif %}
+        <th scope="col">N</th><th scope="col">N gana ML</th><th scope="col">N gana SCP</th><th scope="col">N empate</th>
+        <th scope="col">% victoria ML</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th>
+        <th scope="col">Mejora agregada</th><th scope="col">Mediana mejora</th><th scope="col">Reducción absoluta</th>
+        <th scope="col">% volumen histórico</th><th scope="col">Bias SCP</th><th scope="col">Bias ML</th><th scope="col">Muestra pequeña</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in phase8_global.classification_volume_cross %}
+      <tr>
+        <td>{{ r.clasificacion }}</td><td>{{ r.bucket }}</td>{% if r.n_clients is defined %}<td>{{ r.n_clients }}</td>{% endif %}
+        <td>{{ r.n }}</td><td>{{ r.n_win_ml }}</td><td>{{ r.n_win_scp }}</td><td>{{ r.n_tie }}</td>
+        <td>{{ r.tasa_victoria_ml }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td>
+        <td>{{ r.mejora_agregada }}</td><td>{{ r.mediana_mejora }}</td><td>{{ r.abs_error_reduction }}</td>
+        <td>{{ r.pct_of_history_volume }}</td>
+        <td>{% if r.scp_bias is defined %}{{ r.scp_bias }} ({{ r.scp_direction }}){% else %}—{% endif %}</td>
+        <td>{% if r.ml_bias is defined %}{{ r.ml_bias }} ({{ r.ml_direction }}){% else %}—{% endif %}</td>
+        <td>{{ "Sí" if r.muestra_pequena else "No" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if phase8_global.classification_volume_cross_total > (phase8_global.classification_volume_cross | length) %}
+  <p class="note">Mostrando {{ phase8_global.classification_volume_cross | length }} de {{ phase8_global.classification_volume_cross_total }} combinaciones (el Excel global, hoja <code>17_phase8_global</code>, conserva el listado completo).</p>
+  {% endif %}
+  {% else %}<p class="note">Sin datos de cruce clasificación × volumen para el universo comparable global.</p>{% endif %}
+
+  <ul>
+    {% for note in phase8_global.methodology_notes %}<li>{{ note }}</li>{% endfor %}
+  </ul>
+  {% else %}
+  <p class="note">Diagnóstico global Fase 8 (Bias, volumen relativo y clasificación × volumen) no disponible: al menos un cliente participante no tiene el diagnóstico Fase 8 calculado para 6M (backend COMPARISON_STATUS ausente).</p>
+  {% endif %}
 </section>
 
 <section id="clientes" aria-labelledby="clientes-h">

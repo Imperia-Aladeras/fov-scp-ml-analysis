@@ -76,6 +76,18 @@ VOLUME_METHODOLOGY_NOTE = (
     "comparables en magnitud con los buckets de otro cliente."
 )
 
+# Copy especifico para reporting GLOBAL (8D): a diferencia de VOLUME_METHODOLOGY_NOTE
+# (individual, "de este cliente"), este texto deja explicito que el reporting global
+# unicamente AGREGA etiquetas VOLUME_BUCKET ya asignadas por cliente -- nunca recalcula
+# terciles sobre el pool global de series. No reemplaza ni cambia el significado de
+# VOLUME_METHODOLOGY_NOTE, que sigue siendo el copy correcto para el reporting individual.
+VOLUME_METHODOLOGY_NOTE_GLOBAL = (
+    "Cada VOLUME_BUCKET se asigno dentro de la poblacion comparable de su propio cliente; este "
+    "reporting global unicamente agrega despues esas etiquetas ya calculadas. No se recalculan "
+    "terciles sobre el conjunto global de series: los buckets no son umbrales absolutos comunes "
+    "entre clientes ni son comparables en magnitud entre si."
+)
+
 PHASE8_ONLY_6M_NOTE = "Este diagnostico (Bias y volumen relativo) se calcula unicamente para el semestre completo (6M)."
 
 PHASE8_SMALL_SAMPLE_NOTE = "Los grupos con menos de 10 series comparables se marcan como muestra pequena (small_sample): no se deben extraer conclusiones fuertes de ellos."

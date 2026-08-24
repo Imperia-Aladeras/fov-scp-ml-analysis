@@ -193,6 +193,8 @@ def generate_html_report(
         {"label": "Log de ejecución", "url": "execution.log"},
     ]
 
+    phase8_global = vm.build_phase8_global_vm(global_result.periods["6M"].phase8)
+
     global_context = {
         "run_name": run_config.run_name_effective,
         "css_url": _rel_url("index.html", "assets/styles.css"),
@@ -201,6 +203,7 @@ def generate_html_report(
         "clients": client_rows, "inventory": inventory_rows,
         "methodology": vm.METHODOLOGY_NOTES,
         "chart_groups": global_chart_groups,
+        "phase8_global": phase8_global,
         "global_excel_url": global_excel_url, "global_md_url": global_md_url,
         "exec_files": exec_files,
     }

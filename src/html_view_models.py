@@ -39,6 +39,7 @@ from src.phase8_presentation import (
     PHASE8_ONLY_6M_NOTE,
     PHASE8_SMALL_SAMPLE_NOTE,
     VOLUME_METHODOLOGY_NOTE,
+    VOLUME_METHODOLOGY_NOTE_GLOBAL,
     direction_label_es,
     has_bias_columns,
     sort_volume_table,
@@ -549,6 +550,138 @@ def _phase8_vm(phase8) -> dict:
         "volume": _phase8_volume_vm(phase8.volume, phase8.volume_table),
         "bias_note": BIAS_METHODOLOGY_NOTE,
         "volume_note": VOLUME_METHODOLOGY_NOTE,
+        "methodology_notes": [PHASE8_ONLY_6M_NOTE, PHASE8_SMALL_SAMPLE_NOTE, PHASE8_NO_ROUTING_NOTE],
+    }
+
+
+# --------------------------------------------------------------------------
+# Fase 8D -- diagnostico GLOBAL (GlobalAnalysisResult.periods["6M"].phase8,
+# src.phase8.Phase8GlobalDiagnostics). Formateadores dedicados: a diferencia
+# de _category_table_vm (per-client, 8C, no se toca), estos conservan TODAS
+# las senales de la tabla fuente (n_win_ml/n_win_scp/n_tie incluidos, no solo
+# Bias) y muestran n_clients unicamente cuando la columna existe realmente
+# (volume_table global NO la tiene -- nunca se fabrica).
+# --------------------------------------------------------------------------
+
+_PHASE8_GLOBAL_CROSS_TOP_N = 30
+
+
+def _phase8_global_category_table_vm(table, top_n: int = 10) -> list[dict]:
+    if table is None or table.empty:
+        return []
+    has_bias = has_bias_columns(table)
+    has_n_clients = "n_clients" in table.columns
+    rows = []
+    for _, r in table.head(top_n).iterrows():
+        row = {
+            "categoria": str(r["category"]),
+            "n": fmt_int(r["n_comparable"]),
+            "n_win_ml": fmt_int(r["n_win_ml"]),
+            "n_win_scp": fmt_int(r["n_win_scp"]),
+            "n_tie": fmt_int(r["n_tie"]),
+            "tasa_victoria_ml": fmt_pct_scaled(r["win_rate_ml_pct"]),
+            "wape_scp": fmt_pct_fraction(r["scp_wape_agg"]),
+            "wape_ml": fmt_pct_fraction(r["ml_wape_agg"]),
+            "mejora_agregada": fmt_signed_pct(r["improvement_agg_pct"]),
+            "mediana_mejora": fmt_signed_pct(r["median_improvement_pct"]),
+            "abs_error_reduction": fmt_num(r["abs_error_reduction"]),
+            "pct_of_history_volume": fmt_pct_scaled(r["pct_of_history_volume"]),
+            "muestra_pequena": bool(r["small_sample"]),
+        }
+        if has_n_clients:
+            row["n_clients"] = fmt_int(r["n_clients"])
+        if has_bias:
+            row.update({
+                "scp_bias": fmt_signed_pct_fraction(r["scp_bias_agg"]),
+                "scp_direction": direction_label_es(r["scp_direction"]),
+                "ml_bias": fmt_signed_pct_fraction(r["ml_bias_agg"]),
+                "ml_direction": direction_label_es(r["ml_direction"]),
+            })
+        rows.append(row)
+    return rows
+
+
+def _phase8_global_cross_table_vm(table, top_n: int = _PHASE8_GLOBAL_CROSS_TOP_N) -> list[dict]:
+    """
+    Formatea classification_volume_cross (SERIES_CLASSIFICATION + VOLUME_BUCKET
+    en vez de una unica `category`). Renderiza exactamente las filas que
+    entrega el nucleo -- incluye SERIES_CLASSIFICATION x NOT_ASSIGNABLE si el
+    nucleo las produce, nunca se filtran ni se inventan.
+    """
+    if table is None or table.empty:
+        return []
+    has_bias = has_bias_columns(table)
+    has_n_clients = "n_clients" in table.columns
+    rows = []
+    for _, r in table.head(top_n).iterrows():
+        row = {
+            "clasificacion": str(r["SERIES_CLASSIFICATION"]),
+            "bucket": volume_bucket_label_es(r["VOLUME_BUCKET"]),
+            "n": fmt_int(r["n_comparable"]),
+            "n_win_ml": fmt_int(r["n_win_ml"]),
+            "n_win_scp": fmt_int(r["n_win_scp"]),
+            "n_tie": fmt_int(r["n_tie"]),
+            "tasa_victoria_ml": fmt_pct_scaled(r["win_rate_ml_pct"]),
+            "wape_scp": fmt_pct_fraction(r["scp_wape_agg"]),
+            "wape_ml": fmt_pct_fraction(r["ml_wape_agg"]),
+            "mejora_agregada": fmt_signed_pct(r["improvement_agg_pct"]),
+            "mediana_mejora": fmt_signed_pct(r["median_improvement_pct"]),
+            "abs_error_reduction": fmt_num(r["abs_error_reduction"]),
+            "pct_of_history_volume": fmt_pct_scaled(r["pct_of_history_volume"]),
+            "muestra_pequena": bool(r["small_sample"]),
+        }
+        if has_n_clients:
+            row["n_clients"] = fmt_int(r["n_clients"])
+        if has_bias:
+            row.update({
+                "scp_bias": fmt_signed_pct_fraction(r["scp_bias_agg"]),
+                "scp_direction": direction_label_es(r["scp_direction"]),
+                "ml_bias": fmt_signed_pct_fraction(r["ml_bias_agg"]),
+                "ml_direction": direction_label_es(r["ml_direction"]),
+            })
+        rows.append(row)
+    return rows
+
+
+def build_phase8_global_vm(phase8) -> dict:
+    """
+    phase8 es un src.phase8.Phase8GlobalDiagnostics ya calculado
+    (GlobalAnalysisResult.periods["6M"].phase8), o None. No reutiliza
+    _phase8_volume_vm (depende de VolumeBucketResult.status, campo que solo
+    existe a nivel de cliente): el volumen global se formatea directamente
+    desde volume_table via _phase8_global_category_table_vm.
+    """
+    if phase8 is None:
+        return {"available": False}
+    volume_table = sort_volume_table(phase8.volume_table)
+    volume_rows = []
+    for row in _phase8_global_category_table_vm(volume_table, top_n=len(volume_table) if volume_table is not None else 0):
+        row = dict(row)
+        row["bucket"] = volume_bucket_label_es(row.pop("categoria"))
+        volume_rows.append(row)
+    return {
+        "available": True,
+        "bias_total": _phase8_bias_total_vm(phase8.bias_total),
+        "volume": {"rows": volume_rows},
+        "n_clients_not_assignable": fmt_int(phase8.n_clients_with_not_assignable_volume),
+        "model_tables": {
+            col: _phase8_global_category_table_vm(phase8.model_tables.get(col))
+            for col in ("ML_BEST_MODEL", "SCP_BEST_MODEL")
+        },
+        "classification_tables": {
+            col: _phase8_global_category_table_vm(phase8.classification_tables.get(col))
+            for col in ("ML_CLASSIFICATION", "ML_TYPE", "SERIES_CLASSIFICATION", "SCP_CLASSIFICATION")
+        },
+        "classification_volume_cross": _phase8_global_cross_table_vm(phase8.classification_volume_cross),
+        # Nunca truncar en silencio (ver _phase8_global_cross_table_vm, top_n=30):
+        # el total real de combinaciones, para que la plantilla pueda avisar
+        # cuando se muestran menos filas de las que existen. No recorta
+        # phase8.classification_volume_cross, solo informa de su longitud real.
+        "classification_volume_cross_total": (
+            len(phase8.classification_volume_cross) if phase8.classification_volume_cross is not None else 0
+        ),
+        "bias_note": BIAS_METHODOLOGY_NOTE,
+        "volume_note": VOLUME_METHODOLOGY_NOTE_GLOBAL,
         "methodology_notes": [PHASE8_ONLY_6M_NOTE, PHASE8_SMALL_SAMPLE_NOTE, PHASE8_NO_ROUTING_NOTE],
     }
 
