@@ -1205,7 +1205,10 @@ def test_global_page_renders_fase8_global_section_with_real_content(tmp_path: Pa
     assert 'id="fase8-global"' in html
     assert 'href="#fase8-global"' in html
     assert "Diagnóstico global Fase 8" in html
-    assert "Clientes con volumen relativo NOT_ASSIGNABLE" in html or "NOT_ASSIGNABLE" in html
+    # El codigo machine-readable NOT_ASSIGNABLE solo debe aparecer como gloss
+    # tras la traduccion en castellano ("no asignable"), nunca como unica
+    # etiqueta visible (Fase 8E: encontrado y corregido en templates/global_report.html).
+    assert "Clientes con volumen relativo no asignable (NOT_ASSIGNABLE)" in html
     assert "No asignable" in html  # bucket traducido en el cruce
 
     # Sin nan/inf ni codigos machine-readable dentro de la seccion.
