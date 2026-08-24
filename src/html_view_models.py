@@ -15,6 +15,8 @@ numeros directamente.
 
 from __future__ import annotations
 
+import pandas as pd
+
 from src.html_formatters import (
     NA_TEXT,
     fmt_bool_si_no,
@@ -26,9 +28,23 @@ from src.html_formatters import (
     fmt_pct_fraction,
     fmt_pct_scaled,
     fmt_signed_pct,
+    fmt_signed_pct_fraction,
     is_missing,
 )
 from src.periods import MONTHLY_PERIODS
+from src.phase8 import NOT_ASSIGNABLE
+from src.phase8_presentation import (
+    BIAS_METHODOLOGY_NOTE,
+    PHASE8_NO_ROUTING_NOTE,
+    PHASE8_ONLY_6M_NOTE,
+    PHASE8_SMALL_SAMPLE_NOTE,
+    VOLUME_METHODOLOGY_NOTE,
+    direction_label_es,
+    has_bias_columns,
+    sort_volume_table,
+    volume_bucket_label_es,
+    volume_not_assignable_reason_es,
+)
 
 MODEL_CLASSIFICATION_PERIOD = "6M"
 
@@ -356,11 +372,18 @@ def _period_block_vm(pr, label: str) -> dict:
 
 
 def _category_table_vm(table, top_n: int = 10) -> list[dict]:
+    """
+    Tabla de categoria (modelo, clasificacion o VOLUME_BUCKET). Cuando
+    `table` trae las columnas de Bias de
+    src.phase8.category_performance_table_with_bias (PeriodResult.phase8.*,
+    nunca recalculadas aqui), anade Bias SCP/ML y su direccion ya traducida.
+    """
     if table is None or table.empty:
         return []
+    has_bias = has_bias_columns(table)
     rows = []
     for _, r in table.head(top_n).iterrows():
-        rows.append({
+        row = {
             "categoria": str(r["category"]),
             "n": fmt_int(r["n_comparable"]),
             "tasa_victoria_ml": fmt_pct_scaled(r["win_rate_ml_pct"]),
@@ -368,8 +391,18 @@ def _category_table_vm(table, top_n: int = 10) -> list[dict]:
             "wape_ml": fmt_pct_fraction(r["ml_wape_agg"]),
             "mejora_agregada": fmt_signed_pct(r["improvement_agg_pct"]),
             "mediana_mejora": fmt_signed_pct(r["median_improvement_pct"]),
+            "abs_error_reduction": fmt_num(r["abs_error_reduction"]),
+            "pct_of_history_volume": fmt_pct_scaled(r["pct_of_history_volume"]),
             "muestra_pequena": bool(r["small_sample"]),
-        })
+        }
+        if has_bias:
+            row.update({
+                "scp_bias": fmt_signed_pct_fraction(r["scp_bias_agg"]),
+                "scp_direction": direction_label_es(r["scp_direction"]),
+                "ml_bias": fmt_signed_pct_fraction(r["ml_bias_agg"]),
+                "ml_direction": direction_label_es(r["ml_direction"]),
+            })
+        rows.append(row)
     return rows
 
 
@@ -470,6 +503,56 @@ def _pareto_analysis_vm(pareto) -> dict:
     }
 
 
+def _phase8_bias_total_vm(bias_total) -> dict:
+    return {
+        "scp_bias": fmt_signed_pct_fraction(bias_total.scp_bias_agg),
+        "scp_direction": direction_label_es(bias_total.scp_direction),
+        "ml_bias": fmt_signed_pct_fraction(bias_total.ml_bias_agg),
+        "ml_direction": direction_label_es(bias_total.ml_direction),
+    }
+
+
+def _phase8_volume_vm(volume_result, volume_table) -> dict:
+    """
+    volume_result/volume_table son PeriodResult.phase8.volume/.volume_table
+    ya calculados (src.phase8.compute_volume_buckets / category_performance_table_with_bias):
+    esta funcion solo reordena a orden de negocio (sort_volume_table, presentacion,
+    no recalculo) y formatea, reutilizando _category_table_vm (misma logica de
+    columnas que modelo/clasificacion, para que ninguna senal quede disponible
+    en una tabla de categoria y ausente en otra). Nunca fabrica LOW/MEDIUM/HIGH
+    cuando el status es NOT_ASSIGNABLE: en ese caso `rows` refleja tal cual la
+    unica fila NOT_ASSIGNABLE ya calculada por el nucleo (agregado real, no
+    inventado).
+    """
+    is_not_assignable = volume_result.status == NOT_ASSIGNABLE
+    table = sort_volume_table(volume_table)
+    rows = []
+    for row in _category_table_vm(table, top_n=len(table) if table is not None else 0):
+        row = dict(row)
+        row["bucket"] = volume_bucket_label_es(row.pop("categoria"))
+        rows.append(row)
+    return {
+        "status": volume_result.status,
+        "is_not_assignable": is_not_assignable,
+        "warning": volume_not_assignable_reason_es(volume_result.reason) if is_not_assignable else None,
+        "rows": rows,
+    }
+
+
+def _phase8_vm(phase8) -> dict:
+    """phase8 es un src.phase8.Phase8ClientDiagnostics ya calculado (PeriodResult.phase8), o None."""
+    if phase8 is None:
+        return {"available": False}
+    return {
+        "available": True,
+        "bias_total": _phase8_bias_total_vm(phase8.bias_total),
+        "volume": _phase8_volume_vm(phase8.volume, phase8.volume_table),
+        "bias_note": BIAS_METHODOLOGY_NOTE,
+        "volume_note": VOLUME_METHODOLOGY_NOTE,
+        "methodology_notes": [PHASE8_ONLY_6M_NOTE, PHASE8_SMALL_SAMPLE_NOTE, PHASE8_NO_ROUTING_NOTE],
+    }
+
+
 def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
     """
     prev_client / next_client: dicts con claves etiqueta/display_name/id_client/url,
@@ -552,13 +635,26 @@ def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
     mask_6m = m6.comparable_mask if m6 is not None else None
     has_6m_data = df is not None and mask_6m is not None and mask_6m.any()
 
+    # Modelos/clasificaciones: PeriodResult.phase8 (calculado una unica vez en
+    # client_analysis.py) es la fuente preferida -- ya incluye Bias. Si es
+    # None (edge case: 6M sin backend COMPARISON_STATUS), se mantiene el
+    # comportamiento anterior a 8C (categoria sin Bias) en vez de fallar.
+    has_phase8 = m6 is not None and m6.phase8 is not None
     if has_6m_data:
-        vm["ml_models"] = _category_table_vm(category_performance_table(df, pcols_6m, mask_6m, "ML_BEST_MODEL"))
-        vm["scp_models"] = _category_table_vm(category_performance_table(df, pcols_6m, mask_6m, "SCP_BEST_MODEL"))
-        vm["classifications"] = {
-            col: _category_table_vm(category_performance_table(df, pcols_6m, mask_6m, col))
-            for col in ("ML_CLASSIFICATION", "ML_TYPE", "SERIES_CLASSIFICATION", "SCP_CLASSIFICATION")
-        }
+        if has_phase8:
+            vm["ml_models"] = _category_table_vm(m6.phase8.model_tables.get("ML_BEST_MODEL", pd.DataFrame()))
+            vm["scp_models"] = _category_table_vm(m6.phase8.model_tables.get("SCP_BEST_MODEL", pd.DataFrame()))
+            vm["classifications"] = {
+                col: _category_table_vm(m6.phase8.classification_tables.get(col, pd.DataFrame()))
+                for col in ("ML_CLASSIFICATION", "ML_TYPE", "SERIES_CLASSIFICATION", "SCP_CLASSIFICATION")
+            }
+        else:
+            vm["ml_models"] = _category_table_vm(category_performance_table(df, pcols_6m, mask_6m, "ML_BEST_MODEL"))
+            vm["scp_models"] = _category_table_vm(category_performance_table(df, pcols_6m, mask_6m, "SCP_BEST_MODEL"))
+            vm["classifications"] = {
+                col: _category_table_vm(category_performance_table(df, pcols_6m, mask_6m, col))
+                for col in ("ML_CLASSIFICATION", "ML_TYPE", "SERIES_CLASSIFICATION", "SCP_CLASSIFICATION")
+            }
         vm["classifications"] = {k: v for k, v in vm["classifications"].items() if v}
         top_improve, top_worsen = top_percentage_changes(df, pcols_6m, mask_6m, n=10)
         vm["top_improvements"] = _ranking_table_vm(top_improve, "ML_IMPROVEMENT_VS_SCP_PCT")
@@ -576,6 +672,11 @@ def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
         vm["top_improvements"] = vm["top_deteriorations"] = []
         vm["top_abs_reductions"] = vm["top_abs_increases"] = []
         vm["pareto"] = _pareto_analysis_vm(None)
+
+    # Fase 8 (Bias/volumen): NUNCA se recalcula aqui (ni build_phase8_client_diagnostics
+    # ni bias_aggregate/compute_volume_buckets) -- se lee tal cual de
+    # PeriodResult.phase8, ya calculado una unica vez en client_analysis.py.
+    vm["phase8"] = _phase8_vm(m6.phase8 if m6 is not None else None)
 
     n_status_excluded = result.comparison_status_distribution.get("NOT_COMPARABLE_ML_EXCLUDED", 0)
     n_flag_excluded = m6.n_ml_excluded if m6 is not None else 0

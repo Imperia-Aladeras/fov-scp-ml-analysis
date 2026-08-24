@@ -2,12 +2,13 @@ from src.report_writer import (
     _fmt_num,
     _fmt_pct_fraction,
     _fmt_pct_scaled,
+    _fmt_signed_pct_fraction,
     _fmt_signed_pct_scaled,
     build_client_report,
 )
-from tests.factories import build_multi_client_results, build_synthetic_client_result
+from tests.factories import build_multi_client_results, build_synthetic_client_result, build_volume_bucket_client_result
 
-EXPECTED_SECTION_HEADERS = [f"## {i}." for i in range(1, 19)]
+EXPECTED_SECTION_HEADERS = [f"## {i}." for i in range(1, 20)]
 
 
 def test_fmt_helpers():
@@ -18,9 +19,12 @@ def test_fmt_helpers():
     assert _fmt_signed_pct_scaled(-5.0) == "-5.0%"
     assert _fmt_num(1234.5) == "1.234"
     assert _fmt_num(1234.5, decimals=1) == "1.234,5"
+    assert _fmt_signed_pct_fraction(0.12) == "+12.0%"
+    assert _fmt_signed_pct_fraction(-0.05) == "-5.0%"
+    assert _fmt_signed_pct_fraction(None) == "n/d"
 
 
-def test_build_client_report_has_all_18_sections():
+def test_build_client_report_has_all_19_sections():
     result = build_synthetic_client_result(with_data=True)
     report = build_client_report(result)
     for header in EXPECTED_SECTION_HEADERS:
@@ -74,3 +78,75 @@ def test_build_client_report_never_recomputes_pareto(monkeypatch):
 
     report = build_client_report(result)
     assert "Pareto de concentracion" in report
+
+
+# --------------------------------------------------------------------------
+# Fase 8C: seccion 18 (Bias + volumen relativo) y Bias integrado en 10/11/12.
+# --------------------------------------------------------------------------
+
+def test_sections_10_11_12_include_bias_columns():
+    result = build_synthetic_client_result(with_data=True)
+    report = build_client_report(result)
+    section_10 = report.split("## 10. Modelos ML")[1].split("## 11.")[0]
+    assert "Bias SCP" in section_10
+    assert "Direccion SCP" in section_10
+
+
+def test_section_18_present_with_bias_total_and_volume_not_assignable():
+    """El fixture sintetico estandar solo tiene 2 filas comparables en 6M -> NOT_ASSIGNABLE (n<3)."""
+    result = build_synthetic_client_result(with_data=True)
+    report = build_client_report(result)
+    section_18 = report.split("## 18. Diagnóstico Fase 8")[1].split("## 19.")[0]
+    assert "Bias agregado SCP" in section_18
+    assert "Bias agregado ML" in section_18
+    assert "no asignable" in section_18.lower()
+    assert "no evaluable" in section_18.lower() or "%" in section_18
+
+
+def test_section_18_ok_case_has_three_buckets_in_business_order():
+    result = build_volume_bucket_client_result()
+    report = build_client_report(result)
+    section_18 = report.split("## 18. Diagnóstico Fase 8")[1].split("## 19.")[0]
+    low_idx = section_18.find("Bajo relativo")
+    medium_idx = section_18.find("Medio relativo")
+    high_idx = section_18.find("Alto relativo")
+    assert -1 < low_idx < medium_idx < high_idx
+
+
+def test_section_18_methodology_warnings_present():
+    result = build_volume_bucket_client_result()
+    report = build_client_report(result)
+    section_18 = report.split("## 18. Diagnóstico Fase 8")[1].split("## 19.")[0]
+    assert "6M" in section_18
+    assert "muestra pequena" in section_18.lower()
+    assert "routing" in section_18.lower() or "causalidad" in section_18.lower()
+
+
+def test_section_18_no_individual_classification_volume_cross():
+    result = build_volume_bucket_client_result()
+    report = build_client_report(result)
+    section_18 = report.split("## 18. Diagnóstico Fase 8")[1].split("## 19.")[0]
+    assert "SERIES_CLASSIFICATION" not in section_18
+
+
+def test_section_18_phase8_none_does_not_crash():
+    result = build_synthetic_client_result(with_data=True)
+    result.periods["6M"].phase8 = None
+    report = build_client_report(result)
+    section_18 = report.split("## 18. Diagnóstico Fase 8")[1].split("## 19.")[0]
+    assert "no disponible" in section_18.lower()
+
+
+def test_build_client_report_never_recomputes_phase8(monkeypatch):
+    result = build_volume_bucket_client_result()  # Fase 8 ya calculada dentro de analyze_client
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("report_writer no debe recalcular Fase 8")
+
+    monkeypatch.setattr("src.phase8.build_phase8_client_diagnostics", _boom)
+    monkeypatch.setattr("src.phase8.bias_aggregate", _boom)
+    monkeypatch.setattr("src.phase8.compute_volume_buckets", _boom)
+    monkeypatch.setattr("src.phase8.classification_volume_cross_table", _boom)
+
+    report = build_client_report(result)
+    assert "## 18. Diagnóstico Fase 8" in report

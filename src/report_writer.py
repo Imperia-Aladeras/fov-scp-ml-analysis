@@ -1,5 +1,5 @@
 """
-Generacion del informe Markdown individual por cliente (18 secciones, ver
+Generacion del informe Markdown individual por cliente (19 secciones, ver
 docs/analysis_requirements.md "Informe Markdown individual").
 
 Cuando un cliente no tiene ninguna serie comparable en un periodo (o en
@@ -21,6 +21,19 @@ from src.models import (
     top_percentage_changes,
 )
 from src.periods import period_columns, visible_label
+from src.phase8 import NOT_ASSIGNABLE
+from src.phase8_presentation import (
+    BIAS_METHODOLOGY_NOTE,
+    PHASE8_NO_ROUTING_NOTE,
+    PHASE8_ONLY_6M_NOTE,
+    PHASE8_SMALL_SAMPLE_NOTE,
+    VOLUME_METHODOLOGY_NOTE,
+    direction_label_es,
+    has_bias_columns,
+    sort_volume_table,
+    volume_bucket_label_es,
+    volume_not_assignable_reason_es,
+)
 
 MODEL_CLASSIFICATION_PERIOD = "6M"
 
@@ -43,6 +56,13 @@ def _fmt_signed_pct_scaled(x) -> str:
     if x is None or (isinstance(x, float) and math.isnan(x)):
         return "n/d"
     return f"{x:+.1f}%"
+
+
+def _fmt_signed_pct_fraction(x) -> str:
+    """Como _fmt_pct_fraction (fraccion 0-1, p.ej. Bias), pero con signo explicito."""
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return "n/d"
+    return f"{x * 100:+.1f}%"
 
 
 def _fmt_num(x, decimals: int = 0) -> str:
@@ -94,17 +114,37 @@ def _table_from_rows(headers: list[str], rows: list[list[str]]) -> list[str]:
 
 
 def _category_table_lines(table: pd.DataFrame, top_n: int = 10) -> list[str]:
+    """
+    Tabla de categoria (modelo, clasificacion o VOLUME_BUCKET). Cuando
+    `table` trae las columnas de Bias de src.phase8.category_performance_table_with_bias
+    (PeriodResult.phase8.*_tables/.volume_table, nunca recalculadas aqui),
+    anade Bias SCP/ML y su direccion ya traducida a castellano.
+    """
     if table.empty:
         return ["_Sin datos (sin series comparables)._"]
-    headers = ["Categoria", "N", "Tasa victoria ML", "WAPE SCP", "WAPE ML", "Mejora agregada", "Mediana mejora", "% muestra pequena"]
+    has_bias = has_bias_columns(table)
+    headers = [
+        "Categoria", "N", "Tasa victoria ML", "WAPE SCP", "WAPE ML", "Mejora agregada", "Mediana mejora",
+        "Reduccion absoluta", "% volumen historico", "Muestra pequena",
+    ]
+    if has_bias:
+        headers += ["Bias SCP", "Direccion SCP", "Bias ML", "Direccion ML"]
     rows = []
     for _, r in table.head(top_n).iterrows():
-        rows.append([
+        row = [
             str(r["category"]), _fmt_num(r["n_comparable"]),
             _fmt_pct_scaled(r["win_rate_ml_pct"]), _fmt_pct_fraction(r["scp_wape_agg"]),
             _fmt_pct_fraction(r["ml_wape_agg"]), _fmt_signed_pct_scaled(r["improvement_agg_pct"]),
-            _fmt_signed_pct_scaled(r["median_improvement_pct"]), "si" if r["small_sample"] else "no",
-        ])
+            _fmt_signed_pct_scaled(r["median_improvement_pct"]),
+            _fmt_num(r["abs_error_reduction"]), _fmt_pct_scaled(r["pct_of_history_volume"]),
+            "si" if r["small_sample"] else "no",
+        ]
+        if has_bias:
+            row += [
+                _fmt_signed_pct_fraction(r["scp_bias_agg"]), direction_label_es(r["scp_direction"]),
+                _fmt_signed_pct_fraction(r["ml_bias_agg"]), direction_label_es(r["ml_direction"]),
+            ]
+        rows.append(row)
     return _table_from_rows(headers, rows)
 
 
@@ -389,12 +429,20 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     pcols_6m = period_columns(MODEL_CLASSIFICATION_PERIOD)
     mask_6m = m6.comparable_mask if m6 is not None else None
     has_6m_data = df is not None and mask_6m is not None and mask_6m.any()
+    # PeriodResult.phase8 (calculado una unica vez en client_analysis.py) es
+    # la fuente preferida para modelos/clasificaciones -- ya incluye Bias.
+    # Si es None (edge case: 6M sin backend COMPARISON_STATUS), se mantiene
+    # el comportamiento anterior a 8C (categoria sin Bias) en vez de fallar.
+    has_phase8 = m6 is not None and m6.phase8 is not None
 
     # 10. Modelos ML
     a("## 10. Modelos ML")
     a("")
     if has_6m_data:
-        ml_models = category_performance_table(df, pcols_6m, mask_6m, "ML_BEST_MODEL")
+        ml_models = (
+            m6.phase8.model_tables.get("ML_BEST_MODEL", pd.DataFrame()) if has_phase8
+            else category_performance_table(df, pcols_6m, mask_6m, "ML_BEST_MODEL")
+        )
         a(f"Modelos seleccionados por ML en {visible_label(MODEL_CLASSIFICATION_PERIOD)} (top 10 por frecuencia):")
         a("")
         a("\n".join(_category_table_lines(ml_models)))
@@ -403,6 +451,9 @@ def build_client_report(result: ClientAnalysisResult) -> str:
             "La frecuencia de seleccion no implica que ese modelo aporte mas valor: comparar la tasa de "
             "victoria y la mejora agregada, no solo el conteo."
         )
+        if has_phase8:
+            a("")
+            a(BIAS_METHODOLOGY_NOTE)
     else:
         a(_no_data_line(visible_label(MODEL_CLASSIFICATION_PERIOD)))
     a("")
@@ -413,7 +464,10 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     a("## 11. Modelos SCP")
     a("")
     if has_6m_data:
-        scp_models = category_performance_table(df, pcols_6m, mask_6m, "SCP_BEST_MODEL")
+        scp_models = (
+            m6.phase8.model_tables.get("SCP_BEST_MODEL", pd.DataFrame()) if has_phase8
+            else category_performance_table(df, pcols_6m, mask_6m, "SCP_BEST_MODEL")
+        )
         a(f"Modelos SCP en {visible_label(MODEL_CLASSIFICATION_PERIOD)} (top 10 por frecuencia), incluye contra que compite ML:")
         a("")
         a("\n".join(_category_table_lines(scp_models)))
@@ -431,7 +485,10 @@ def build_client_report(result: ClientAnalysisResult) -> str:
             ("ML_CLASSIFICATION", "ML_CLASSIFICATION"), ("ML_TYPE", "ML_TYPE"),
             ("SERIES_CLASSIFICATION", "SERIES_CLASSIFICATION"), ("SCP_CLASSIFICATION", "SCP_CLASSIFICATION"),
         ):
-            table = category_performance_table(df, pcols_6m, mask_6m, col)
+            table = (
+                m6.phase8.classification_tables.get(col, pd.DataFrame()) if has_phase8
+                else category_performance_table(df, pcols_6m, mask_6m, col)
+            )
             if table.empty:
                 continue
             a(f"**{label}** (top 10):")
@@ -442,6 +499,9 @@ def build_client_report(result: ClientAnalysisResult) -> str:
             "Las categorias con menos de 10 series comparables se marcan como muestra pequena: no se "
             "deben extraer conclusiones fuertes de ellas."
         )
+        if has_phase8:
+            a("")
+            a(BIAS_METHODOLOGY_NOTE)
     else:
         a(_no_data_line(visible_label(MODEL_CLASSIFICATION_PERIOD)))
     a("")
@@ -536,8 +596,46 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     a("---")
     a("")
 
-    # 18. Conclusion
-    a("## 18. Conclusion")
+    # 18. Diagnostico Fase 8 (6M): Bias y volumen relativo
+    a("## 18. Diagnóstico Fase 8 (6M): Bias y volumen relativo")
+    a("")
+    if has_phase8:
+        phase8 = m6.phase8
+        bt = phase8.bias_total
+        a(
+            f"**Bias agregado SCP:** {_fmt_signed_pct_fraction(bt.scp_bias_agg)} ({direction_label_es(bt.scp_direction)}). "
+            f"**Bias agregado ML:** {_fmt_signed_pct_fraction(bt.ml_bias_agg)} ({direction_label_es(bt.ml_direction)})."
+        )
+        a("")
+        a(BIAS_METHODOLOGY_NOTE)
+        a("")
+        a("**Volumen relativo (VOLUME_BUCKET).**")
+        a("")
+        a(VOLUME_METHODOLOGY_NOTE)
+        a("")
+        if phase8.volume.status == NOT_ASSIGNABLE:
+            a(
+                f"Volumen relativo **no asignable** para este cliente: "
+                f"{volume_not_assignable_reason_es(phase8.volume.reason)}"
+            )
+            a("")
+        volume_table = sort_volume_table(phase8.volume_table)
+        if volume_table is not None and not volume_table.empty:
+            volume_table = volume_table.copy()
+            volume_table["category"] = volume_table["category"].map(volume_bucket_label_es)
+        a("\n".join(_category_table_lines(volume_table)))
+        a("")
+        a(f"- {PHASE8_ONLY_6M_NOTE}")
+        a(f"- {PHASE8_SMALL_SAMPLE_NOTE}")
+        a(f"- {PHASE8_NO_ROUTING_NOTE}")
+    else:
+        a("Fase 8 (Bias/volumen) no disponible: no se calculo el backend 6M (COMPARISON_STATUS) para este cliente.")
+    a("")
+    a("---")
+    a("")
+
+    # 19. Conclusion
+    a("## 19. Conclusion")
     a("")
     if no_comparable_anywhere:
         a(

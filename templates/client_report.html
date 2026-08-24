@@ -121,10 +121,15 @@
   {% if page.ml_models %}
   <div class="table-scroll">
   <table>
-    <thead><tr><th scope="col">Modelo</th><th scope="col">N</th><th scope="col">% victoria ML</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora agregada</th><th scope="col">Muestra pequeña</th></tr></thead>
+    <thead><tr><th scope="col">Modelo</th><th scope="col">N</th><th scope="col">% victoria ML</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora agregada</th><th scope="col">Mediana mejora</th><th scope="col">Reducción absoluta</th><th scope="col">% volumen histórico</th><th scope="col">Bias SCP</th><th scope="col">Bias ML</th><th scope="col">Muestra pequeña</th></tr></thead>
     <tbody>
       {% for r in page.ml_models %}
-      <tr><td>{{ r.categoria }}</td><td>{{ r.n }}</td><td>{{ r.tasa_victoria_ml }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td><td>{{ r.mejora_agregada }}</td><td>{{ "Sí" if r.muestra_pequena else "No" }}</td></tr>
+      <tr>
+        <td>{{ r.categoria }}</td><td>{{ r.n }}</td><td>{{ r.tasa_victoria_ml }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td><td>{{ r.mejora_agregada }}</td><td>{{ r.mediana_mejora }}</td><td>{{ r.abs_error_reduction }}</td><td>{{ r.pct_of_history_volume }}</td>
+        <td>{% if r.scp_bias is defined %}{{ r.scp_bias }} ({{ r.scp_direction }}){% else %}N/D{% endif %}</td>
+        <td>{% if r.ml_bias is defined %}{{ r.ml_bias }} ({{ r.ml_direction }}){% else %}N/D{% endif %}</td>
+        <td>{{ "Sí" if r.muestra_pequena else "No" }}</td>
+      </tr>
       {% endfor %}
     </tbody>
   </table>
@@ -135,15 +140,21 @@
   {% if page.scp_models %}
   <div class="table-scroll">
   <table>
-    <thead><tr><th scope="col">Modelo</th><th scope="col">N</th><th scope="col">% victoria ML</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora agregada</th><th scope="col">Muestra pequeña</th></tr></thead>
+    <thead><tr><th scope="col">Modelo</th><th scope="col">N</th><th scope="col">% victoria ML</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora agregada</th><th scope="col">Mediana mejora</th><th scope="col">Reducción absoluta</th><th scope="col">% volumen histórico</th><th scope="col">Bias SCP</th><th scope="col">Bias ML</th><th scope="col">Muestra pequeña</th></tr></thead>
     <tbody>
       {% for r in page.scp_models %}
-      <tr><td>{{ r.categoria }}</td><td>{{ r.n }}</td><td>{{ r.tasa_victoria_ml }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td><td>{{ r.mejora_agregada }}</td><td>{{ "Sí" if r.muestra_pequena else "No" }}</td></tr>
+      <tr>
+        <td>{{ r.categoria }}</td><td>{{ r.n }}</td><td>{{ r.tasa_victoria_ml }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td><td>{{ r.mejora_agregada }}</td><td>{{ r.mediana_mejora }}</td><td>{{ r.abs_error_reduction }}</td><td>{{ r.pct_of_history_volume }}</td>
+        <td>{% if r.scp_bias is defined %}{{ r.scp_bias }} ({{ r.scp_direction }}){% else %}N/D{% endif %}</td>
+        <td>{% if r.ml_bias is defined %}{{ r.ml_bias }} ({{ r.ml_direction }}){% else %}N/D{% endif %}</td>
+        <td>{{ "Sí" if r.muestra_pequena else "No" }}</td>
+      </tr>
       {% endfor %}
     </tbody>
   </table>
   </div>
   {% else %}<p class="note">Sin datos de modelo SCP para el universo comparable.</p>{% endif %}
+  {% if page.phase8 and page.phase8.available %}<p class="note">{{ page.phase8.bias_note }}</p>{% endif %}
 </section>
 
 <section id="clasificaciones" aria-labelledby="clasificaciones-h">
@@ -154,10 +165,14 @@
     <summary>{{ col }} ({{ rows | length }})</summary>
     <div class="table-scroll">
     <table>
-      <thead><tr><th scope="col">Categoría</th><th scope="col">N</th><th scope="col">% victoria ML</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora agregada</th></tr></thead>
+      <thead><tr><th scope="col">Categoría</th><th scope="col">N</th><th scope="col">% victoria ML</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora agregada</th><th scope="col">Mediana mejora</th><th scope="col">Reducción absoluta</th><th scope="col">% volumen histórico</th><th scope="col">Bias SCP</th><th scope="col">Bias ML</th></tr></thead>
       <tbody>
         {% for r in rows %}
-        <tr><td>{{ r.categoria }}</td><td>{{ r.n }}</td><td>{{ r.tasa_victoria_ml }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td><td>{{ r.mejora_agregada }}</td></tr>
+        <tr>
+          <td>{{ r.categoria }}</td><td>{{ r.n }}</td><td>{{ r.tasa_victoria_ml }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td><td>{{ r.mejora_agregada }}</td><td>{{ r.mediana_mejora }}</td><td>{{ r.abs_error_reduction }}</td><td>{{ r.pct_of_history_volume }}</td>
+          <td>{% if r.scp_bias is defined %}{{ r.scp_bias }} ({{ r.scp_direction }}){% else %}N/D{% endif %}</td>
+          <td>{% if r.ml_bias is defined %}{{ r.ml_bias }} ({{ r.ml_direction }}){% else %}N/D{% endif %}</td>
+        </tr>
         {% endfor %}
       </tbody>
     </table>
@@ -165,6 +180,46 @@
   </details>
   {% endfor %}
   {% else %}<p class="note">Sin datos de clasificación para el universo comparable.</p>{% endif %}
+</section>
+
+<section id="fase8" aria-labelledby="fase8-h">
+  <h2 id="fase8-h">Diagnóstico Fase 8 (6M): Bias y volumen relativo</h2>
+  {% if page.phase8 and page.phase8.available %}
+  <table class="kv-table">
+    <tbody>
+      <tr><th scope="row">Bias agregado SCP</th><td>{{ page.phase8.bias_total.scp_bias }} ({{ page.phase8.bias_total.scp_direction }})</td></tr>
+      <tr><th scope="row">Bias agregado ML</th><td>{{ page.phase8.bias_total.ml_bias }} ({{ page.phase8.bias_total.ml_direction }})</td></tr>
+    </tbody>
+  </table>
+  <p class="note">{{ page.phase8.bias_note }}</p>
+
+  <h3>Volumen relativo (VOLUME_BUCKET)</h3>
+  <p class="note">{{ page.phase8.volume_note }}</p>
+  {% if page.phase8.volume.is_not_assignable %}
+  <p class="note"><strong>Volumen relativo no asignable para este cliente:</strong> {{ page.phase8.volume.warning }}</p>
+  {% endif %}
+  {% if page.phase8.volume.rows %}
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th scope="col">Bucket</th><th scope="col">N</th><th scope="col">% victoria ML</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora agregada</th><th scope="col">Mediana mejora</th><th scope="col">Reducción absoluta</th><th scope="col">% volumen histórico</th><th scope="col">Bias SCP</th><th scope="col">Bias ML</th><th scope="col">Muestra pequeña</th></tr></thead>
+    <tbody>
+      {% for r in page.phase8.volume.rows %}
+      <tr>
+        <td>{{ r.bucket }}</td><td>{{ r.n }}</td><td>{{ r.tasa_victoria_ml }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td><td>{{ r.mejora_agregada }}</td><td>{{ r.mediana_mejora }}</td><td>{{ r.abs_error_reduction }}</td><td>{{ r.pct_of_history_volume }}</td>
+        <td>{{ r.scp_bias }} ({{ r.scp_direction }})</td><td>{{ r.ml_bias }} ({{ r.ml_direction }})</td><td>{{ "Sí" if r.muestra_pequena else "No" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="note">Sin datos de volumen relativo para el universo comparable.</p>{% endif %}
+
+  <ul>
+    {% for note in page.phase8.methodology_notes %}<li>{{ note }}</li>{% endfor %}
+  </ul>
+  {% else %}
+  <p class="note">Fase 8 (Bias/volumen) no disponible: no se calculó el backend 6M (COMPARISON_STATUS) para este cliente.</p>
+  {% endif %}
 </section>
 
 <section id="impacto" aria-labelledby="impacto-h">

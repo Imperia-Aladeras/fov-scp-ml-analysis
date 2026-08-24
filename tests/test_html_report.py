@@ -20,7 +20,7 @@ from src import html_formatters as fmt
 from src import html_view_models as vm
 from src.html_report import extract_local_links, generate_html_report, validate_run_links
 from src.periods import ALL_PERIODS, period_columns
-from tests.factories import build_global_analysis_result, build_synthetic_client_result
+from tests.factories import build_global_analysis_result, build_synthetic_client_result, build_volume_bucket_client_result
 
 # --------------------------------------------------------------------------
 # Fixtures de CSV (independientes de data/): un unico generador parametrizado
@@ -975,6 +975,98 @@ def test_client_page_renders_pareto_section_with_empty_deterioration_group(tmp_p
     assert "Pareto de impacto absoluto — mejora" in html
     assert "Pareto de impacto absoluto — deterioro" in html
     assert "Sin series con deterioro en 6M para este cliente." in html
+
+
+# --------------------------------------------------------------------------
+# Fase 8C: vista individual de Bias y volumen relativo (6M)
+# --------------------------------------------------------------------------
+
+def test_client_page_renders_phase8_section_not_assignable_case(tmp_path: Path):
+    """Cliente con una unica serie: volumen no es segmentable (n<3) -- se debe advertir, no fabricar buckets."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _write_client_csv(data_dir / "TA_FOV_SCP_ML_10204_Mejora.csv", 10204, winner="ML", scp_err=20.0, ml_err=10.0)
+    output_root = tmp_path / "runs"
+    exit_code = pipeline.main([
+        "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "phase8_html_run",
+    ])
+    assert exit_code == 0
+    html = (output_root / "phase8_html_run" / "clients" / "10204-sklum" / "index.html").read_text(encoding="utf-8")
+    assert "Diagnóstico Fase 8 (6M): Bias y volumen relativo" in html
+    assert "no asignable" in html.lower()
+    assert "Sobreprevisión" in html or "Infraprevisión" in html or "Sin sesgo agregado" in html or "No evaluable" in html
+
+
+def test_build_client_page_vm_phase8_ok_case_has_three_buckets_in_business_order():
+    result = build_volume_bucket_client_result()
+    page_vm = vm.build_client_page_vm(result)
+    assert page_vm["phase8"]["available"] is True
+    buckets = [r["bucket"] for r in page_vm["phase8"]["volume"]["rows"]]
+    assert buckets == ["Bajo relativo", "Medio relativo", "Alto relativo"]
+    assert page_vm["phase8"]["volume"]["is_not_assignable"] is False
+
+
+def test_build_client_page_vm_phase8_not_assignable_case():
+    result = build_synthetic_client_result(with_data=True)  # solo 2 filas comparables en 6M
+    page_vm = vm.build_client_page_vm(result)
+    assert page_vm["phase8"]["available"] is True
+    assert page_vm["phase8"]["volume"]["is_not_assignable"] is True
+    assert page_vm["phase8"]["volume"]["warning"] is not None
+
+
+def test_build_client_page_vm_phase8_none_is_safe():
+    result = build_synthetic_client_result(with_data=True)
+    result.periods["6M"].phase8 = None
+    page_vm = vm.build_client_page_vm(result)
+    assert page_vm["phase8"] == {"available": False}
+    # Modelos/clasificaciones deben seguir funcionando sin Bias (comportamiento anterior a 8C).
+    assert page_vm["ml_models"] or page_vm["ml_models"] == []
+
+
+def test_build_client_page_vm_omits_phase8_when_no_comparable_series_anywhere():
+    result = build_synthetic_client_result(with_data=False)
+    page_vm = vm.build_client_page_vm(result)
+    assert page_vm["kind"] == "no_performance"
+    assert "phase8" not in page_vm
+
+
+def test_build_client_page_vm_phase8_never_recomputes(monkeypatch):
+    result = build_volume_bucket_client_result()  # Fase 8 ya calculada dentro de analyze_client
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("html_view_models no debe recalcular Fase 8")
+
+    monkeypatch.setattr("src.phase8.build_phase8_client_diagnostics", _boom)
+    monkeypatch.setattr("src.phase8.bias_aggregate", _boom)
+    monkeypatch.setattr("src.phase8.compute_volume_buckets", _boom)
+    monkeypatch.setattr("src.phase8.classification_volume_cross_table", _boom)
+
+    page_vm = vm.build_client_page_vm(result)
+    assert page_vm["phase8"]["available"] is True
+
+
+def test_category_table_vm_includes_bias_when_present_and_omits_when_absent():
+    with_bias = pd.DataFrame([{
+        "category": "AutoETS", "n_comparable": 5, "n_win_ml": 3, "n_win_scp": 2, "n_tie": 0,
+        "win_rate_ml_pct": 60.0, "scp_wape_agg": 0.2, "ml_wape_agg": 0.1, "improvement_agg_pct": 50.0,
+        "median_improvement_pct": 50.0, "abs_error_reduction": 10.0, "pct_of_history_volume": 100.0,
+        "small_sample": True, "scp_bias_agg": 0.05, "ml_bias_agg": -0.02,
+        "scp_direction": "POSITIVE", "ml_direction": "NEGATIVE",
+    }])
+    rows = vm._category_table_vm(with_bias)
+    assert rows[0]["scp_direction"] == "Sobreprevisión"
+    assert rows[0]["ml_direction"] == "Infraprevisión"
+
+    without_bias = with_bias.drop(columns=["scp_bias_agg", "ml_bias_agg", "scp_direction", "ml_direction"])
+    rows_no_bias = vm._category_table_vm(without_bias)
+    assert "scp_direction" not in rows_no_bias[0]
+
+
+def test_phase8_vm_no_individual_classification_volume_cross():
+    """8C no implementa el cruce SERIES_CLASSIFICATION x VOLUME_BUCKET (exclusivo de 8D global)."""
+    result = build_volume_bucket_client_result()
+    page_vm = vm.build_client_page_vm(result)
+    assert "SERIES_CLASSIFICATION" not in str(page_vm["phase8"])
 
 
 # --------------------------------------------------------------------------

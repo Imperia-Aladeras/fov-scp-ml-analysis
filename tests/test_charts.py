@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from src.charts import CHART_SUBFOLDERS, generate_client_charts, generate_impact_and_risk_charts
-from tests.factories import build_multi_client_results, build_synthetic_client_result
+from tests.factories import build_multi_client_results, build_synthetic_client_result, build_volume_bucket_client_result
 
 
 def test_generate_client_charts_creates_files_on_disk(tmp_path: Path):
@@ -69,3 +69,42 @@ def test_charts_never_recompute_pareto(monkeypatch, tmp_path: Path):
 
     generated = generate_client_charts(result, tmp_path / "charts")
     assert any("05_pareto_series_reduction.png" in p for p in generated)
+
+
+# --------------------------------------------------------------------------
+# Fase 8C: chart de Bias por bucket de volumen relativo (6M).
+# --------------------------------------------------------------------------
+
+def test_bias_by_volume_bucket_chart_generated_when_volume_ok(tmp_path: Path):
+    result = build_volume_bucket_client_result()  # 9 filas -> 3 buckets OK
+    out_dir = tmp_path / "impact_and_risk"
+    generated = generate_impact_and_risk_charts(result, out_dir)
+
+    matches = [p for p in generated if p.endswith("07_bias_by_volume_bucket.png")]
+    assert len(matches) == 1
+    assert Path(matches[0]).exists()
+    assert Path(matches[0]).stat().st_size > 0
+
+
+def test_bias_by_volume_bucket_chart_omitted_when_not_assignable(tmp_path: Path):
+    """El fixture sintetico estandar solo tiene 2 filas comparables en 6M -> NOT_ASSIGNABLE: no se fabrica un chart de 1 barra."""
+    result = build_synthetic_client_result(with_data=True)
+    out_dir = tmp_path / "impact_and_risk"
+    generated = generate_impact_and_risk_charts(result, out_dir)
+
+    assert not any(p.endswith("07_bias_by_volume_bucket.png") for p in generated)
+    assert not (out_dir / "07_bias_by_volume_bucket.png").exists()
+
+
+def test_bias_by_volume_bucket_chart_never_recomputes(monkeypatch, tmp_path: Path):
+    result = build_volume_bucket_client_result()  # Fase 8 ya calculada dentro de analyze_client
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("charts.py no debe recalcular Fase 8")
+
+    monkeypatch.setattr("src.phase8.build_phase8_client_diagnostics", _boom)
+    monkeypatch.setattr("src.phase8.bias_aggregate", _boom)
+    monkeypatch.setattr("src.phase8.compute_volume_buckets", _boom)
+
+    generated = generate_impact_and_risk_charts(result, tmp_path / "impact_and_risk")
+    assert any(p.endswith("07_bias_by_volume_bucket.png") for p in generated)

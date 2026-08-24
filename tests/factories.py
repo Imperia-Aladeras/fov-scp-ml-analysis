@@ -254,6 +254,76 @@ def _build_single_row_client_dataframe(history: float, scp_abs_error: float, ml_
     return df
 
 
+def build_volume_bucket_client_dataframe() -> pd.DataFrame:
+    """
+    9 filas comparables en 6M con TOTAL_HISTORY_6M = [10, 20, ..., 90]: 9
+    valores distintos -> terciles limpios 3/3/3 (RELATIVE_LOW/MEDIUM/HIGH,
+    ver src/phase8.compute_volume_buckets), a diferencia de
+    build_synthetic_client_dataframe (solo 2 filas comparables, siempre
+    NOT_ASSIGNABLE por REASON_N_LT_3). Bias con signo alternado
+    (sobreprevision/infraprevision: forecast por encima/debajo del historico
+    en filas pares/impares) y winner alternado ML/SCP para poder ejercitar
+    Fase 8 (Bias + volumen) con variedad real, no un unico caso degenerado.
+    Los mismos ratios (WAPE, signo de Bias) se mantienen en M1..M6/RECENT_3M/
+    OLDER_3M -- solo escalados por el peso de cada periodo dentro de 6M --
+    para que check_aggregate_vs_monthly_sum no genere warnings de reconciliacion.
+    """
+    n = 9
+    history_6m = [float(10 * (i + 1)) for i in range(n)]  # 10.0 .. 90.0
+
+    def _scaled(period_multiplier: float, scp_frac: float, ml_fracs: list[float]) -> dict:
+        history = [h * period_multiplier for h in history_6m]
+        scp_abs = [h * scp_frac for h in history]
+        ml_abs = [h * f for h, f in zip(history, ml_fracs)]
+        # Signo alternado (sobreprevision en filas pares, infraprevision en impares).
+        scp_fc = [h + e if i % 2 == 0 else h - e for i, (h, e) in enumerate(zip(history, scp_abs))]
+        ml_fc = [h + e if i % 2 == 0 else h - e for i, (h, e) in enumerate(zip(history, ml_abs))]
+        scp_wape = [scp_frac] * n
+        ml_wape = ml_fracs
+        winner = ["ML" if f < scp_frac else "SCP" for f in ml_fracs]
+        return dict(
+            total_history=history, scp_forecast=scp_fc, scp_abs_error=scp_abs, scp_wape=scp_wape,
+            ml_forecast=ml_fc, ml_abs_error=ml_abs, ml_wape=ml_wape, winner_method=winner,
+        )
+
+    scp_frac = 0.2
+    ml_fracs = [0.1 if i % 2 == 0 else 0.3 for i in range(n)]  # ML gana en filas pares, SCP en impares
+
+    models_ml = ["AutoETS", "AutoARIMA"]
+    models_scp = ["x11 seasonal", "SeasonalNaive"]
+    classifications = ["smooth", "erratic"]
+
+    df = pd.DataFrame({
+        "HAS_BASE_CANDIDATE": [1] * n,
+        "ID_CLIENT": [66666] * n,
+        "ID_CONFIGURATION": list(range(4001, 4001 + n)),
+        "VALUE_LEVEL_1": [f"Cat {i}" for i in range(n)],
+        "VALUE_LEVEL_2": [None] * n, "VALUE_LEVEL_3": [None] * n,
+        "VALUE_LEVEL_4": [None] * n, "VALUE_LEVEL_5": [None] * n,
+        "ML_BEST_MODEL": [models_ml[i % 2] for i in range(n)],
+        "SCP_BEST_MODEL": [models_scp[i % 2] for i in range(n)],
+        "ML_CLASSIFICATION": [classifications[i % 2] for i in range(n)],
+        "ML_TYPE": [classifications[i % 2] for i in range(n)],
+        "SERIES_CLASSIFICATION": [classifications[i % 2] for i in range(n)],
+        "SCP_CLASSIFICATION": [classifications[i % 2] for i in range(n)],
+        "COMPARISON_STATUS": ["COMPARABLE"] * n,
+    })
+
+    for month in [f"M{i}" for i in range(1, 7)]:
+        set_period(df, month, **_scaled(1.0 / 6, scp_frac, ml_fracs))
+    for quarter in ("RECENT_3M", "OLDER_3M"):
+        set_period(df, quarter, **_scaled(0.5, scp_frac, ml_fracs))
+    set_period(df, "6M", **_scaled(1.0, scp_frac, ml_fracs))
+    return df
+
+
+def build_volume_bucket_client_result():
+    from src.client_analysis import analyze_client
+
+    df = build_volume_bucket_client_dataframe()
+    return analyze_client(make_client_source(df, 66666, "VolumeBuckets"))
+
+
 def build_negative_net_multi_client_results() -> list:
     """
     2 clientes disenados para que la reduccion NETA total sea negativa:

@@ -1,5 +1,5 @@
 """
-Generacion del Excel individual por cliente (15 pestanas, 00_readme..14_pareto_absolute_impact).
+Generacion del Excel individual por cliente (16 pestanas, 00_readme..15_phase8_bias_volume).
 
 Formato aplicado (ver docs/analysis_requirements.md, seccion "Formato Excel"):
 freeze panes en la primera fila, encabezados en negrita con relleno discreto,
@@ -21,6 +21,19 @@ from openpyxl.utils import get_column_letter
 from src.client_analysis import ClientAnalysisResult
 from src.models import category_performance_table, top_absolute_impact, top_percentage_changes
 from src.periods import ALL_PERIODS, period_columns, visible_label
+from src.phase8 import NOT_ASSIGNABLE
+from src.phase8_presentation import (
+    BIAS_METHODOLOGY_NOTE,
+    PHASE8_NO_ROUTING_NOTE,
+    PHASE8_ONLY_6M_NOTE,
+    PHASE8_SMALL_SAMPLE_NOTE,
+    VOLUME_METHODOLOGY_NOTE,
+    direction_label_es,
+    has_bias_columns,
+    sort_volume_table,
+    volume_bucket_label_es,
+    volume_not_assignable_reason_es,
+)
 
 TITLE_FONT = Font(bold=True, size=11, color="1F3864")
 HEADER_FONT = Font(bold=True)
@@ -32,7 +45,7 @@ MODEL_CLASSIFICATION_PERIOD = "6M"
 
 def _column_number_format(col_name: str) -> str | None:
     name = col_name.upper()
-    if "WAPE" in name:
+    if "WAPE" in name or "BIAS" in name:
         return "0.0%"
     if any(h in name for h in ("PCT", "_RATE", "IMPROVEMENT")):
         return '0.0"%"'
@@ -321,12 +334,35 @@ def _period_df_and_mask(result: ClientAnalysisResult, period: str):
     return df, period_columns(period), pr.comparable_mask
 
 
+def _translate_bias_directions(table: pd.DataFrame) -> pd.DataFrame:
+    """
+    Traduce scp_direction/ml_direction (POSITIVE/NEGATIVE/ZERO/NOT_EVALUABLE)
+    a copy en castellano SOLO en una copia de presentacion; nunca toca las
+    tablas de PeriodResult.phase8 ni recalcula ninguna columna.
+    """
+    if not has_bias_columns(table):
+        return table
+    table = table.copy()
+    table["scp_direction"] = table["scp_direction"].map(direction_label_es)
+    table["ml_direction"] = table["ml_direction"].map(direction_label_es)
+    return table
+
+
 def models_and_win_rates_blocks(result: ClientAnalysisResult) -> list[tuple[str, pd.DataFrame]]:
     df, pcols, mask = _period_df_and_mask(result, MODEL_CLASSIFICATION_PERIOD)
     if df is None:
         return [("Sin datos", pd.DataFrame())]
-    ml_models = category_performance_table(df, pcols, mask, "ML_BEST_MODEL")
-    scp_models = category_performance_table(df, pcols, mask, "SCP_BEST_MODEL")
+    pr = result.periods.get(MODEL_CLASSIFICATION_PERIOD)
+    # PeriodResult.phase8 (calculado una unica vez en client_analysis.py) es
+    # la fuente preferida -- ya incluye Bias. Si es None (edge case: 6M sin
+    # backend COMPARISON_STATUS), se mantiene el comportamiento anterior a
+    # 8C, sin Bias, en vez de fallar.
+    if pr is not None and pr.phase8 is not None:
+        ml_models = _translate_bias_directions(pr.phase8.model_tables.get("ML_BEST_MODEL", pd.DataFrame()))
+        scp_models = _translate_bias_directions(pr.phase8.model_tables.get("SCP_BEST_MODEL", pd.DataFrame()))
+    else:
+        ml_models = category_performance_table(df, pcols, mask, "ML_BEST_MODEL")
+        scp_models = category_performance_table(df, pcols, mask, "SCP_BEST_MODEL")
     blocks = [
         (f"Modelos ML (ML_BEST_MODEL) - {visible_label(MODEL_CLASSIFICATION_PERIOD)}", ml_models),
         (f"Modelos SCP (SCP_BEST_MODEL) - {visible_label(MODEL_CLASSIFICATION_PERIOD)}", scp_models),
@@ -335,6 +371,8 @@ def models_and_win_rates_blocks(result: ClientAnalysisResult) -> list[tuple[str,
         blocks.append(("Nota", pd.DataFrame({
             "": ["Sin series comparables en 6M: no se calculan modelos ni tasas de victoria (no se inventan)."]
         })))
+    elif pr is not None and pr.phase8 is not None:
+        blocks.append(("Nota metodologica - Bias", pd.DataFrame({"": [BIAS_METHODOLOGY_NOTE]})))
     return blocks
 
 
@@ -342,6 +380,8 @@ def classifications_blocks(result: ClientAnalysisResult) -> list[tuple[str, pd.D
     df, pcols, mask = _period_df_and_mask(result, MODEL_CLASSIFICATION_PERIOD)
     if df is None:
         return [("Sin datos", pd.DataFrame())]
+    pr = result.periods.get(MODEL_CLASSIFICATION_PERIOD)
+    has_phase8 = pr is not None and pr.phase8 is not None
     blocks = []
     any_data = False
     for col, label in (
@@ -350,13 +390,18 @@ def classifications_blocks(result: ClientAnalysisResult) -> list[tuple[str, pd.D
         ("SERIES_CLASSIFICATION", "SERIES_CLASSIFICATION"),
         ("SCP_CLASSIFICATION", "SCP_CLASSIFICATION"),
     ):
-        table = category_performance_table(df, pcols, mask, col)
+        if has_phase8:
+            table = _translate_bias_directions(pr.phase8.classification_tables.get(col, pd.DataFrame()))
+        else:
+            table = category_performance_table(df, pcols, mask, col)
         any_data = any_data or not table.empty
         blocks.append((f"{label} - {visible_label(MODEL_CLASSIFICATION_PERIOD)}", table))
     if not any_data:
         blocks.append(("Nota", pd.DataFrame({
             "": ["Sin series comparables en 6M: no se calculan clasificaciones (no se inventan)."]
         })))
+    elif has_phase8:
+        blocks.append(("Nota metodologica - Bias", pd.DataFrame({"": [BIAS_METHODOLOGY_NOTE]})))
     return blocks
 
 
@@ -477,6 +522,52 @@ def data_quality_checks_table(result: ClientAnalysisResult) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------
+# 15_phase8_bias_volume
+#
+# Lee PeriodResult.phase8 (ya calculado una unica vez en client_analysis.py):
+# esta hoja NUNCA llama a build_phase8_client_diagnostics/bias_aggregate/
+# compute_volume_buckets. No existe cruce SERIES_CLASSIFICATION x
+# VOLUME_BUCKET aqui (exclusivo de 8D global). Bias total y volumen son
+# contenido genuinamente nuevo (no ampliaban ninguna hoja existente sin
+# perder claridad), de ahi la hoja propia.
+# --------------------------------------------------------------------------
+
+def _bias_total_table(bias_total) -> pd.DataFrame:
+    return pd.DataFrame([
+        {"METODO": "SCP", "BIAS_AGREGADO": bias_total.scp_bias_agg, "DIRECCION": direction_label_es(bias_total.scp_direction)},
+        {"METODO": "ML", "BIAS_AGREGADO": bias_total.ml_bias_agg, "DIRECCION": direction_label_es(bias_total.ml_direction)},
+    ])
+
+
+def phase8_bias_volume_blocks(result: ClientAnalysisResult) -> list[tuple[str, pd.DataFrame]]:
+    pr = result.periods.get(MODEL_CLASSIFICATION_PERIOD)
+    if pr is None or pr.phase8 is None:
+        return [("Nota", pd.DataFrame({
+            "": ["Fase 8 (Bias/volumen) no disponible: no se calculo el backend 6M (COMPARISON_STATUS) para este cliente."]
+        }))]
+
+    phase8 = pr.phase8
+    label = visible_label(MODEL_CLASSIFICATION_PERIOD)
+    blocks: list[tuple[str, pd.DataFrame]] = [
+        (f"Bias agregado del cliente - {label}", _bias_total_table(phase8.bias_total)),
+        ("Nota metodologica - Bias", pd.DataFrame({"": [BIAS_METHODOLOGY_NOTE]})),
+    ]
+
+    volume_table = _translate_bias_directions(sort_volume_table(phase8.volume_table))
+    if volume_table is not None and not volume_table.empty:
+        volume_table = volume_table.copy()
+        volume_table["category"] = volume_table["category"].map(volume_bucket_label_es)
+        volume_table = volume_table.rename(columns={"category": "VOLUME_BUCKET"})
+    blocks.append((f"Volumen relativo (VOLUME_BUCKET) - {label}", volume_table))
+
+    notes = [VOLUME_METHODOLOGY_NOTE, PHASE8_ONLY_6M_NOTE, PHASE8_SMALL_SAMPLE_NOTE, PHASE8_NO_ROUTING_NOTE]
+    if phase8.volume.status == NOT_ASSIGNABLE:
+        notes.insert(0, f"Volumen relativo NO asignable para este cliente: {volume_not_assignable_reason_es(phase8.volume.reason)}")
+    blocks.append(("Notas metodologicas - Fase 8", pd.DataFrame({"": notes})))
+    return blocks
+
+
+# --------------------------------------------------------------------------
 # Orquestacion
 # --------------------------------------------------------------------------
 
@@ -504,6 +595,7 @@ def build_client_workbook(result: ClientAnalysisResult, output_path: Path) -> No
         write_blocks(writer, "12_top_percentage_changes", top_percentage_changes_blocks(result))
         write_blocks(writer, "13_data_quality_checks", [("Chequeos de calidad", data_quality_checks_table(result))])
         write_blocks(writer, "14_pareto_absolute_impact", pareto_absolute_impact_blocks(result))
+        write_blocks(writer, "15_phase8_bias_volume", phase8_bias_volume_blocks(result))
 
         for sheet_name in writer.sheets:
             autosize_columns(writer, sheet_name)

@@ -31,6 +31,7 @@ from src.client_analysis import ClientAnalysisResult
 from src.metrics import relative_improvement_row
 from src.models import category_performance_table, top_absolute_impact, top_percentage_changes
 from src.periods import period_columns, visible_label
+from src.phase8_presentation import sort_volume_table, volume_bucket_label_es
 
 COLOR_ML = "#2a78d6"
 COLOR_SCP = "#e34948"
@@ -535,6 +536,48 @@ def _pareto_bar_chart(
     return _save_close(fig, out_path)
 
 
+def _chart_bias_by_volume_bucket(result: ClientAnalysisResult, out_dir: Path, fname: str) -> str | None:
+    """
+    Unico chart nuevo de Fase 8 (8C): Bias agregado SCP vs ML por bucket de
+    volumen relativo (6M). Lee PeriodResult.phase8.volume_table ya calculado
+    (src.phase8.category_performance_table_with_bias, nunca recalcula Bias ni
+    buckets aqui). Solo se genera cuando el volumen es realmente segmentable
+    (status == "OK"): NOT_ASSIGNABLE no se dibuja -- no hay 3 buckets reales
+    que comparar, y un chart de una unica barra no aporta nada sobre la tabla
+    de la pestana/seccion Fase 8. Bias por modelo/clasificacion se dejo
+    deliberadamente SOLO como tabla (ver resumen de 8C): esas dimensiones ya
+    tienen su propio chart de tasa de victoria y anadir un segundo chart de
+    Bias por la misma dimension duplicaria lectura sin aportar diagnostico
+    nuevo.
+    """
+    pr = result.periods.get(MODEL_CLASSIFICATION_PERIOD)
+    if pr is None or pr.phase8 is None or pr.phase8.volume.status != "OK":
+        return None
+    table = sort_volume_table(pr.phase8.volume_table)
+    if table is None or table.empty:
+        return None
+
+    labels = [volume_bucket_label_es(v) for v in table["category"]]
+    scp_vals = (table["scp_bias_agg"] * 100).tolist()
+    ml_vals = (table["ml_bias_agg"] * 100).tolist()
+
+    fig, ax = _new_fig((7.5, 4.5))
+    x = np.arange(len(labels))
+    width = 0.35
+    ax.bar(x - width / 2, scp_vals, width=width, color=COLOR_SCP, label="SCP")
+    ax.bar(x + width / 2, ml_vals, width=width, color=COLOR_ML, label="ML")
+    ax.axhline(0, color=COLOR_AXIS, linewidth=1)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels)
+    ax.set_ylabel("Bias agregado (%)", color=COLOR_TEXT_SECONDARY, fontsize=9)
+    ax.legend(frameon=False, fontsize=8)
+    _apply_title(
+        ax, "Bias agregado SCP vs ML por volumen relativo",
+        f"{_client_tag(result)} | {visible_label(MODEL_CLASSIFICATION_PERIOD)} | buckets RELATIVOS a este cliente",
+    )
+    return _save_close(fig, out_dir / fname)
+
+
 def generate_impact_and_risk_charts(result: ClientAnalysisResult, out_dir: Path) -> list[str]:
     df = result.source.dataframe
     pr = result.periods.get(MODEL_CLASSIFICATION_PERIOD)
@@ -573,6 +616,10 @@ def generate_impact_and_risk_charts(result: ClientAnalysisResult, out_dir: Path)
         )
         if path:
             generated.append(path)
+
+    path = _chart_bias_by_volume_bucket(result, out_dir, "07_bias_by_volume_bucket.png")
+    if path:
+        generated.append(path)
 
     return generated
 

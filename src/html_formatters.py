@@ -52,6 +52,13 @@ def fmt_signed_pct(x, decimals: int = 1) -> str:
     return f"{x:+.{decimals}f}%"
 
 
+def fmt_signed_pct_fraction(x, decimals: int = 1) -> str:
+    """Como fmt_pct_fraction (fraccion 0-1, p.ej. Bias), pero con signo explicito."""
+    if is_missing(x):
+        return NA_TEXT
+    return f"{x * 100:+.{decimals}f}%"
+
+
 def fmt_num(x, decimals: int = 0) -> str:
     """Numero con separador de miles '.' y decimal ',' (convencion es-ES)."""
     if is_missing(x):
