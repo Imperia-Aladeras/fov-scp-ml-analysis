@@ -56,6 +56,7 @@ from src.metrics import (
 )
 from src.models import pareto_absolute_impact
 from src.pareto import ParetoAnalysis
+from src.phase8 import Phase8ClientDiagnostics, build_phase8_client_diagnostics
 from src.periods import ALL_PERIODS, MONTHLY_PERIODS, PeriodColumns, period_columns, visible_label
 from src.quality_checks import (
     QualityReport,
@@ -115,6 +116,11 @@ class PeriodResult:
     # M1..M6/RECENT_3M/OLDER_3M. Los writers leen este campo y nunca llaman
     # a pareto_absolute_impact/build_pareto_analysis por su cuenta.
     pareto: ParetoAnalysis | None = None
+    # Diagnostico Fase 8 (modelo/clasificacion/volumen/Bias): mismo criterio
+    # que `pareto` -- SOLO 6M backend, calculado una unica vez aqui. None
+    # para el resto de periodos. Los writers de 8C leen este campo y nunca
+    # llaman a build_phase8_client_diagnostics por su cuenta.
+    phase8: Phase8ClientDiagnostics | None = None
 
 
 @dataclass
@@ -328,6 +334,11 @@ def _analyze_period(df: pd.DataFrame, candidate_mask: pd.Series, period: str, fi
     # a llamar a pareto_absolute_impact/build_pareto_analysis.
     pareto = pareto_absolute_impact(df, pcols, comparable_mask) if is_backend_6m else None
 
+    # Diagnostico Fase 8: mismo criterio que Pareto -- SOLO 6M backend, una
+    # unica vez aqui. Ningun writer debe llamar a build_phase8_client_diagnostics
+    # por su cuenta.
+    phase8 = build_phase8_client_diagnostics(df, pcols, comparable_mask) if is_backend_6m else None
+
     # --- chequeos de calidad numericos del periodo ---
     for monthly_field, aggregate_col in (
         ("HISTORY", pcols.total_history),
@@ -376,6 +387,7 @@ def _analyze_period(df: pd.DataFrame, candidate_mask: pd.Series, period: str, fi
         comparable_mask=comparable_mask,
         quality=quality,
         pareto=pareto,
+        phase8=phase8,
     )
 
 

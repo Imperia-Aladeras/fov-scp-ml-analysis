@@ -15,17 +15,66 @@ from src.periods import period_columns
 DEFAULT_RUN_START_DATE = "2026-01-01"
 
 
+def _derive_signed_error_and_bias(history_values, forecast_values):
+    """
+    SIGNED_ERROR = FORECAST - HISTORY; BIAS = SIGNED_ERROR / HISTORY (None si
+    `history` no es > 0 o `forecast` es None) -- misma formula canonica que
+    valida `quality_checks.check_error_chain_reconstruction`/
+    `check_bias_reconstruction`, no un valor especifico de una fixture.
+    """
+    signed_error = []
+    bias = []
+    for history, forecast in zip(history_values, forecast_values):
+        if forecast is None or history is None:
+            signed_error.append(None)
+            bias.append(None)
+            continue
+        signed = forecast - history
+        signed_error.append(signed)
+        bias.append(signed / history if history > 0 else None)
+    return signed_error, bias
+
+
 def set_period(df: pd.DataFrame, period: str, total_history, scp_forecast, scp_abs_error, scp_wape,
                 ml_forecast, ml_abs_error, ml_wape, winner_method) -> None:
+    """
+    Ademas de las columnas historicas (Fases 0-7), deriva y rellena las
+    columnas canonicas de signed error/Bias (Fase 8B) a partir de los mismos
+    `total_history`/`*_forecast` ya recibidos -- ningun llamador existente
+    necesita cambiar para seguir produciendo un DataFrame valido para
+    `build_phase8_client_diagnostics`.
+
+    Todas las columnas del periodo se insertan en una unica asignacion
+    multi-columna y despues se consolida el DataFrame in-place. Esta funcion
+    se llama 9 veces por fixture (una por periodo) sobre el mismo `df`;
+    sin consolidar, cada tanda de columnas nuevas queda en un bloque interno
+    separado y pandas termina emitiendo `PerformanceWarning: DataFrame is
+    highly fragmented` (~100+ bloques para un DataFrame de este tamano).
+    `_consolidate_inplace()` es el mecanismo que pandas usa internamente para
+    fusionar esos bloques (el mismo que aplica `DataFrame.copy()`); no altera
+    ningun valor ni columna, solo la representacion interna -- mismo
+    contrato de mutacion in-place para el llamador, cero cambios de firma.
+    """
     pcols = period_columns(period)
-    df[pcols.total_history] = total_history
-    df[pcols.scp_total_forecast] = scp_forecast
-    df[pcols.scp_total_abs_error] = scp_abs_error
-    df[pcols.scp_wape] = scp_wape
-    df[pcols.ml_total_forecast] = ml_forecast
-    df[pcols.ml_total_abs_error] = ml_abs_error
-    df[pcols.ml_wape] = ml_wape
-    df[pcols.winner_method] = winner_method
+    scp_signed_error, scp_bias = _derive_signed_error_and_bias(total_history, scp_forecast)
+    ml_signed_error, ml_bias = _derive_signed_error_and_bias(total_history, ml_forecast)
+
+    new_columns = pd.DataFrame({
+        pcols.total_history: total_history,
+        pcols.scp_total_forecast: scp_forecast,
+        pcols.scp_total_abs_error: scp_abs_error,
+        pcols.scp_wape: scp_wape,
+        pcols.ml_total_forecast: ml_forecast,
+        pcols.ml_total_abs_error: ml_abs_error,
+        pcols.ml_wape: ml_wape,
+        pcols.winner_method: winner_method,
+        pcols.scp_total_signed_error: scp_signed_error,
+        pcols.scp_bias: scp_bias,
+        pcols.ml_total_signed_error: ml_signed_error,
+        pcols.ml_bias: ml_bias,
+    }, index=df.index)
+    df[new_columns.columns] = new_columns
+    df._consolidate_inplace()
 
 
 def build_synthetic_client_dataframe() -> pd.DataFrame:

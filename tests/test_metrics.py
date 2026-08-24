@@ -4,6 +4,10 @@ import numpy as np
 import pandas as pd
 
 from src.metrics import (
+    BIAS_DIRECTION_NEGATIVE,
+    BIAS_DIRECTION_NOT_EVALUABLE,
+    BIAS_DIRECTION_POSITIVE,
+    BIAS_DIRECTION_ZERO,
     CASE_BOTH_ZERO,
     CASE_MISSING_WAPE,
     CASE_ML_ZERO_SCP_POSITIVE,
@@ -11,10 +15,12 @@ from src.metrics import (
     CASE_SCP_ZERO_ML_POSITIVE,
     absolute_error_reduction_row,
     absolute_error_reduction_total,
+    bias_aggregate,
     both_wape_zero_mask,
     client_contribution_to_total_reduction,
     cross_entity_stats,
     descriptive_stats,
+    direction_label,
     period_wape_global,
     relative_improvement_row,
     safe_divide,
@@ -295,3 +301,157 @@ def test_cross_entity_stats_equal_weight_mean_median_and_improved_worse_tie():
     assert stats["n_improved"] == 2
     assert stats["n_worse"] == 2
     assert stats["n_tie"] == 1
+
+
+# --------------------------------------------------------------------------
+# Fase 8B (K.2): bias_aggregate / BiasAggregateResult / direction_label.
+# --------------------------------------------------------------------------
+
+def _bias_frame(total_history, scp_signed, ml_signed):
+    pcols = period_columns("6M")
+    df = pd.DataFrame({
+        pcols.total_history: total_history,
+        pcols.scp_total_signed_error: scp_signed,
+        pcols.ml_total_signed_error: ml_signed,
+    })
+    return df, pcols
+
+
+def test_bias_aggregate_positive_direction():
+    df, pcols = _bias_frame([1000.0, 10.0], [100.0, 5.0], [-50.0, -5.0])
+    result = bias_aggregate(df, pcols)
+    assert math.isclose(result.scp_bias_agg, 105.0 / 1010.0, rel_tol=1e-9)
+    assert result.scp_direction == BIAS_DIRECTION_POSITIVE
+    assert math.isclose(result.ml_bias_agg, -55.0 / 1010.0, rel_tol=1e-9)
+    assert result.ml_direction == BIAS_DIRECTION_NEGATIVE
+
+
+def test_bias_aggregate_zero_direction_is_exact_zero_not_tolerance():
+    df, pcols = _bias_frame([1000.0, 10.0], [50.0, -50.0], [0.0, 0.0])
+    result = bias_aggregate(df, pcols)
+    assert result.scp_bias_agg == 0.0
+    assert result.scp_direction == BIAS_DIRECTION_ZERO
+    assert result.ml_bias_agg == 0.0
+    assert result.ml_direction == BIAS_DIRECTION_ZERO
+
+
+def test_bias_aggregate_sum_over_sum_differs_from_simple_mean_of_per_row_ratio():
+    """
+    BIAS_AGG = SUM(signed)/SUM(history) nunca debe coincidir, en general, con
+    la media simple de (signed/history) fila a fila -- mismo principio que
+    WAPE_GLOBAL frente a la media simple de WAPE por serie (CLAUDE.md).
+    """
+    df, pcols = _bias_frame([1000.0, 10.0], [100.0, -5.0], [0.0, 0.0])
+    result = bias_aggregate(df, pcols)
+    expected_sum_over_sum = (100.0 + -5.0) / (1000.0 + 10.0)
+    naive_mean_per_row = ((100.0 / 1000.0) + (-5.0 / 10.0)) / 2
+    assert math.isclose(result.scp_bias_agg, expected_sum_over_sum, rel_tol=1e-9)
+    assert not math.isclose(result.scp_bias_agg, naive_mean_per_row, rel_tol=1e-3)
+
+
+def test_bias_aggregate_history_sum_non_positive_makes_both_not_evaluable():
+    df, pcols = _bias_frame([0.0, 0.0], [10.0, 5.0], [10.0, 5.0])
+    result = bias_aggregate(df, pcols)
+    assert math.isnan(result.scp_bias_agg)
+    assert math.isnan(result.ml_bias_agg)
+    assert result.scp_direction == BIAS_DIRECTION_NOT_EVALUABLE
+    assert result.ml_direction == BIAS_DIRECTION_NOT_EVALUABLE
+
+
+def test_bias_aggregate_history_nan_makes_both_not_evaluable():
+    df, pcols = _bias_frame([1000.0, None], [10.0, 5.0], [10.0, 5.0])
+    result = bias_aggregate(df, pcols)
+    assert math.isnan(result.history_sum)
+    assert math.isnan(result.scp_bias_agg)
+    assert math.isnan(result.ml_bias_agg)
+    assert result.scp_direction == BIAS_DIRECTION_NOT_EVALUABLE
+    assert result.ml_direction == BIAS_DIRECTION_NOT_EVALUABLE
+
+
+def test_bias_aggregate_history_inf_makes_both_not_evaluable():
+    df, pcols = _bias_frame([1000.0, np.inf], [10.0, 5.0], [10.0, 5.0])
+    result = bias_aggregate(df, pcols)
+    assert math.isnan(result.scp_bias_agg)
+    assert math.isnan(result.ml_bias_agg)
+    assert result.scp_direction == BIAS_DIRECTION_NOT_EVALUABLE
+    assert result.ml_direction == BIAS_DIRECTION_NOT_EVALUABLE
+
+
+def test_bias_aggregate_history_negative_inf_makes_both_not_evaluable():
+    df, pcols = _bias_frame([1000.0, -np.inf], [10.0, 5.0], [10.0, 5.0])
+    result = bias_aggregate(df, pcols)
+    assert math.isnan(result.scp_bias_agg)
+    assert math.isnan(result.ml_bias_agg)
+    assert result.scp_direction == BIAS_DIRECTION_NOT_EVALUABLE
+    assert result.ml_direction == BIAS_DIRECTION_NOT_EVALUABLE
+
+
+def test_bias_aggregate_scp_signed_error_nan_does_not_affect_ml():
+    df, pcols = _bias_frame([1000.0, 10.0], [100.0, None], [50.0, 5.0])
+    result = bias_aggregate(df, pcols)
+    assert math.isnan(result.scp_bias_agg)
+    assert result.scp_direction == BIAS_DIRECTION_NOT_EVALUABLE
+    assert not math.isnan(result.ml_bias_agg)
+    assert math.isclose(result.ml_bias_agg, 55.0 / 1010.0, rel_tol=1e-9)
+    assert result.ml_direction == BIAS_DIRECTION_POSITIVE
+
+
+def test_bias_aggregate_scp_signed_error_inf_does_not_affect_ml():
+    df, pcols = _bias_frame([1000.0, 10.0], [100.0, np.inf], [50.0, 5.0])
+    result = bias_aggregate(df, pcols)
+    assert math.isnan(result.scp_bias_agg)
+    assert result.scp_direction == BIAS_DIRECTION_NOT_EVALUABLE
+    assert not math.isnan(result.ml_bias_agg)
+    assert result.ml_direction == BIAS_DIRECTION_POSITIVE
+
+
+def test_bias_aggregate_ml_signed_error_nan_does_not_affect_scp():
+    df, pcols = _bias_frame([1000.0, 10.0], [100.0, 5.0], [50.0, None])
+    result = bias_aggregate(df, pcols)
+    assert math.isnan(result.ml_bias_agg)
+    assert result.ml_direction == BIAS_DIRECTION_NOT_EVALUABLE
+    assert not math.isnan(result.scp_bias_agg)
+    assert math.isclose(result.scp_bias_agg, 105.0 / 1010.0, rel_tol=1e-9)
+    assert result.scp_direction == BIAS_DIRECTION_POSITIVE
+
+
+def test_bias_aggregate_ml_signed_error_negative_inf_does_not_affect_scp():
+    df, pcols = _bias_frame([1000.0, 10.0], [100.0, 5.0], [50.0, -np.inf])
+    result = bias_aggregate(df, pcols)
+    assert math.isnan(result.ml_bias_agg)
+    assert result.ml_direction == BIAS_DIRECTION_NOT_EVALUABLE
+    assert not math.isnan(result.scp_bias_agg)
+    assert result.scp_direction == BIAS_DIRECTION_POSITIVE
+
+
+def test_bias_aggregate_both_methods_valid_and_independent():
+    df, pcols = _bias_frame([500.0, 500.0], [50.0, -25.0], [-10.0, 30.0])
+    result = bias_aggregate(df, pcols)
+    assert math.isclose(result.scp_bias_agg, 25.0 / 1000.0, rel_tol=1e-9)
+    assert math.isclose(result.ml_bias_agg, 20.0 / 1000.0, rel_tol=1e-9)
+    assert result.scp_direction == BIAS_DIRECTION_POSITIVE
+    assert result.ml_direction == BIAS_DIRECTION_POSITIVE
+
+
+def test_bias_aggregate_empty_group_is_not_evaluable():
+    pcols = period_columns("6M")
+    df = pd.DataFrame({
+        pcols.total_history: pd.Series(dtype=float),
+        pcols.scp_total_signed_error: pd.Series(dtype=float),
+        pcols.ml_total_signed_error: pd.Series(dtype=float),
+    })
+    result = bias_aggregate(df, pcols)
+    assert result.history_sum == 0.0
+    assert math.isnan(result.scp_bias_agg)
+    assert math.isnan(result.ml_bias_agg)
+    assert result.scp_direction == BIAS_DIRECTION_NOT_EVALUABLE
+    assert result.ml_direction == BIAS_DIRECTION_NOT_EVALUABLE
+
+
+def test_direction_label_never_labels_non_finite_values_positive_or_negative():
+    assert direction_label(np.inf) == BIAS_DIRECTION_NOT_EVALUABLE
+    assert direction_label(-np.inf) == BIAS_DIRECTION_NOT_EVALUABLE
+    assert direction_label(np.nan) == BIAS_DIRECTION_NOT_EVALUABLE
+    assert direction_label(5.0) == BIAS_DIRECTION_POSITIVE
+    assert direction_label(-5.0) == BIAS_DIRECTION_NEGATIVE
+    assert direction_label(0.0) == BIAS_DIRECTION_ZERO

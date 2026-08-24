@@ -15,6 +15,7 @@ from src.client_analysis import (
 from src.input_loader import ClientSource
 from src.models import pareto_absolute_impact
 from src.periods import ALL_PERIODS, period_columns
+from src.phase8 import Phase8ClientDiagnostics
 from tests.factories import build_synthetic_client_dataframe as build_factory_synthetic_client_dataframe
 from tests.factories import make_client_source
 
@@ -68,17 +69,44 @@ def test_period_comparable_mask_semester_excludes_missing_ml():
     assert mask.tolist() == [True, False]
 
 
+def _derive_signed_error_and_bias(history_values, forecast_values):
+    """SIGNED_ERROR = FORECAST - HISTORY; BIAS = SIGNED_ERROR / HISTORY (None si history<=0 o forecast es None)."""
+    signed_error = []
+    bias = []
+    for history, forecast in zip(history_values, forecast_values):
+        if forecast is None or history is None:
+            signed_error.append(None)
+            bias.append(None)
+            continue
+        signed = forecast - history
+        signed_error.append(signed)
+        bias.append(signed / history if history > 0 else None)
+    return signed_error, bias
+
+
 def _set_period(df: pd.DataFrame, period: str, total_history, scp_forecast, scp_abs_error, scp_wape,
                  ml_forecast, ml_abs_error, ml_wape, winner_method):
+    """Asignacion multi-columna en una unica operacion (evita PerformanceWarning de fragmentacion; ver tests/factories.py::set_period)."""
     pcols = period_columns(period)
-    df[pcols.total_history] = total_history
-    df[pcols.scp_total_forecast] = scp_forecast
-    df[pcols.scp_total_abs_error] = scp_abs_error
-    df[pcols.scp_wape] = scp_wape
-    df[pcols.ml_total_forecast] = ml_forecast
-    df[pcols.ml_total_abs_error] = ml_abs_error
-    df[pcols.ml_wape] = ml_wape
-    df[pcols.winner_method] = winner_method
+    scp_signed_error, scp_bias = _derive_signed_error_and_bias(total_history, scp_forecast)
+    ml_signed_error, ml_bias = _derive_signed_error_and_bias(total_history, ml_forecast)
+
+    new_columns = pd.DataFrame({
+        pcols.total_history: total_history,
+        pcols.scp_total_forecast: scp_forecast,
+        pcols.scp_total_abs_error: scp_abs_error,
+        pcols.scp_wape: scp_wape,
+        pcols.ml_total_forecast: ml_forecast,
+        pcols.ml_total_abs_error: ml_abs_error,
+        pcols.ml_wape: ml_wape,
+        pcols.winner_method: winner_method,
+        pcols.scp_total_signed_error: scp_signed_error,
+        pcols.scp_bias: scp_bias,
+        pcols.ml_total_signed_error: ml_signed_error,
+        pcols.ml_bias: ml_bias,
+    }, index=df.index)
+    df[new_columns.columns] = new_columns
+    df._consolidate_inplace()  # evita PerformanceWarning de fragmentacion; ver tests/factories.py::set_period
 
 
 def _build_synthetic_client_dataframe() -> pd.DataFrame:
@@ -199,6 +227,48 @@ def test_pareto_field_matches_standalone_pareto_absolute_impact_call():
     assert period_6m.pareto.n_no_evaluables == expected.n_no_evaluables
     assert period_6m.pareto.improvement.summary == expected.improvement.summary
     assert period_6m.pareto.deterioration.summary == expected.deterioration.summary
+
+
+# --------------------------------------------------------------------------
+# Fase 8B (K.5): diagnostico individual de Fase 8, integrado en analyze_client.
+# Mismo criterio que Pareto: exclusivamente 6M, calculado una unica vez.
+# --------------------------------------------------------------------------
+
+def test_phase8_only_populated_for_6m():
+    df = build_factory_synthetic_client_dataframe()
+    source = make_client_source(df, 99999, "Synthetic")
+    result = analyze_client(source)
+
+    assert isinstance(result.periods["6M"].phase8, Phase8ClientDiagnostics)
+    for period in ("M1", "M2", "M3", "M4", "M5", "M6", "RECENT_3M", "OLDER_3M"):
+        assert result.periods[period].phase8 is None
+
+
+def test_phase8_volume_computed_only_over_comparable_population():
+    """build_synthetic_client_dataframe: 2 filas COMPARABLE en 6M (n<3) -> NOT_ASSIGNABLE."""
+    df = build_factory_synthetic_client_dataframe()
+    source = make_client_source(df, 99999, "Synthetic")
+    result = analyze_client(source)
+    period_6m = result.periods["6M"]
+
+    assert period_6m.n_comparable == 2
+    assert period_6m.phase8.volume.status == "NOT_ASSIGNABLE"
+    assert sum(period_6m.phase8.volume.bucket_counts.values()) == 2
+
+
+def test_phase8_does_not_mutate_source_dataframe():
+    df = build_factory_synthetic_client_dataframe()
+    original = df.copy(deep=True)
+    source = make_client_source(df, 99999, "Synthetic")
+    analyze_client(source)
+
+    pd.testing.assert_frame_equal(df, original)  # ninguna columna nueva ni valor existente alterado
+    assert "VOLUME_BUCKET" not in df.columns
+
+
+def test_period_result_has_no_individual_classification_volume_cross_field():
+    field_names = set(PeriodResult.__dataclass_fields__)
+    assert not any("cross" in f for f in field_names)
 
 
 def test_pareto_none_when_backend_comparison_status_column_absent():

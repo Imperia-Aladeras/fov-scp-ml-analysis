@@ -13,6 +13,8 @@ sobre el universo de series comparables correspondiente.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 
@@ -270,3 +272,92 @@ def cross_entity_stats(values: pd.Series, tie_epsilon: float = 0.0) -> dict:
         "pct_tie": (n_tie / n * 100) if n else np.nan,
     })
     return stats
+
+
+# --------------------------------------------------------------------------
+# Bias agregado (Fase 8B). BIAS_AGREGADO = SUM(TOTAL_SIGNED_ERROR) / SUM(TOTAL_HISTORY),
+# nunca media simple del Bias por serie (mismo principio que WAPE_GLOBAL: ver
+# docstring del modulo). Direcciones machine-readable, sin copy de presentacion.
+# --------------------------------------------------------------------------
+
+BIAS_DIRECTION_POSITIVE = "POSITIVE"
+BIAS_DIRECTION_NEGATIVE = "NEGATIVE"
+BIAS_DIRECTION_ZERO = "ZERO"
+BIAS_DIRECTION_NOT_EVALUABLE = "NOT_EVALUABLE"
+
+
+@dataclass
+class BiasAggregateResult:
+    history_sum: float
+    scp_signed_error_sum: float
+    ml_signed_error_sum: float
+    scp_bias_agg: float
+    ml_bias_agg: float
+    scp_direction: str
+    ml_direction: str
+
+
+def _sum_or_not_evaluable(series: pd.Series) -> float:
+    """
+    NaN si algun valor de `series` es NaN o +/-inf; si no, la suma. Coerciona
+    a numerico primero (misma razon que `_as_numeric`): una columna dtype
+    `object` (p.ej. una serie de solo `None`, como la de un cliente sin
+    filas comparables) no debe hacer fallar `np.isinf`.
+    """
+    series = _as_numeric(series)
+    if series.isna().any() or np.isinf(series).any():
+        return np.nan
+    return float(series.sum())
+
+
+def direction_label(bias_value: float) -> str:
+    """
+    Etiqueta machine-readable de la direccion de un Bias agregado. Un valor no
+    finito (NaN, +inf o -inf) nunca se etiqueta POSITIVE/NEGATIVE -- siempre
+    NOT_EVALUABLE, incluso si llega no finito por una causa no anticipada
+    (p.ej. desbordamiento) y no solo por un input crudo ya no finito.
+    """
+    if not np.isfinite(bias_value):
+        return BIAS_DIRECTION_NOT_EVALUABLE
+    if bias_value > 0:
+        return BIAS_DIRECTION_POSITIVE
+    if bias_value < 0:
+        return BIAS_DIRECTION_NEGATIVE
+    return BIAS_DIRECTION_ZERO
+
+
+def bias_aggregate(df: pd.DataFrame, pcols: PeriodColumns) -> BiasAggregateResult:
+    """
+    Bias agregado SCP y ML sobre las filas de `df` (el llamador debe pasar ya
+    el subconjunto comparable correspondiente): BIAS_AGG = SUM(TOTAL_SIGNED_ERROR)
+    / SUM(TOTAL_HISTORY). Nunca se reconstruye SIGNED_ERROR = FORECAST - HISTORY
+    aqui (eso es exclusivo de quality_checks.check_error_chain_reconstruction,
+    una validacion, no una fuente de calculo) -- se usan directamente las
+    columnas canonicas ya materializadas.
+
+    History es el denominador comun: si no es finito o su suma no es > 0,
+    ambos metodos quedan no evaluables. Con history valido, SCP y ML se
+    evaluan de forma INDEPENDIENTE: un signed error no finito de un metodo
+    no invalida al otro.
+    """
+    history_sum = _sum_or_not_evaluable(df[pcols.total_history])
+    scp_signed_sum = _sum_or_not_evaluable(df[pcols.scp_total_signed_error])
+    ml_signed_sum = _sum_or_not_evaluable(df[pcols.ml_total_signed_error])
+
+    history_valid = np.isfinite(history_sum) and history_sum > 0
+
+    if not history_valid:
+        return BiasAggregateResult(
+            history_sum=history_sum, scp_signed_error_sum=scp_signed_sum, ml_signed_error_sum=ml_signed_sum,
+            scp_bias_agg=np.nan, ml_bias_agg=np.nan,
+            scp_direction=BIAS_DIRECTION_NOT_EVALUABLE, ml_direction=BIAS_DIRECTION_NOT_EVALUABLE,
+        )
+
+    scp_bias_agg = (scp_signed_sum / history_sum) if np.isfinite(scp_signed_sum) else np.nan
+    ml_bias_agg = (ml_signed_sum / history_sum) if np.isfinite(ml_signed_sum) else np.nan
+
+    return BiasAggregateResult(
+        history_sum=history_sum, scp_signed_error_sum=scp_signed_sum, ml_signed_error_sum=ml_signed_sum,
+        scp_bias_agg=scp_bias_agg, ml_bias_agg=ml_bias_agg,
+        scp_direction=direction_label(scp_bias_agg), ml_direction=direction_label(ml_bias_agg),
+    )

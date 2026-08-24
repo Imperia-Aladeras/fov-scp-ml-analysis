@@ -490,3 +490,205 @@ def test_multi_client_partial_periods_unaffected_by_evaluability_guard():
         gp = build_global_period_result([result_a, result_b], period)
         assert not math.isnan(gp.ml_wape_global)
         assert not math.isnan(gp.reduction_totals["REDUCCION_NETA"])
+
+
+# --------------------------------------------------------------------------
+# Fase 8B (K.6/K.7): diagnostico global de Fase 8. Todos los periodos
+# distintos de "6M" quedan trivialmente no comparables (history=0) para
+# aislar el comportamiento de Fase 8, que solo actua sobre 6M.
+# --------------------------------------------------------------------------
+
+def _multi_row_client_df(id_client: int, histories, scp_forecasts, ml_forecasts, classifications, winner_methods) -> pd.DataFrame:
+    n = len(histories)
+    df = pd.DataFrame({
+        "HAS_BASE_CANDIDATE": [1] * n, "ID_CLIENT": [id_client] * n,
+        "ID_CONFIGURATION": list(range(1, n + 1)),
+        "VALUE_LEVEL_1": ["Cat"] * n, "VALUE_LEVEL_2": [None] * n, "VALUE_LEVEL_3": [None] * n,
+        "VALUE_LEVEL_4": [None] * n, "VALUE_LEVEL_5": [None] * n,
+        "ML_BEST_MODEL": ["AutoETS"] * n, "SCP_BEST_MODEL": ["x11 seasonal"] * n,
+        "ML_CLASSIFICATION": classifications, "ML_TYPE": classifications,
+        "SERIES_CLASSIFICATION": classifications, "SCP_CLASSIFICATION": classifications,
+        "COMPARISON_STATUS": ["COMPARABLE"] * n,
+    })
+    for period in [f"M{i}" for i in range(1, 7)] + ["RECENT_3M", "OLDER_3M"]:
+        set_period(
+            df, period, total_history=[0.0] * n,
+            scp_forecast=[None] * n, scp_abs_error=[None] * n, scp_wape=[None] * n,
+            ml_forecast=[None] * n, ml_abs_error=[None] * n, ml_wape=[None] * n, winner_method=[None] * n,
+        )
+    scp_abs_error = [abs(f - h) for f, h in zip(scp_forecasts, histories)]
+    ml_abs_error = [abs(f - h) for f, h in zip(ml_forecasts, histories)]
+    scp_wape = [e / h for e, h in zip(scp_abs_error, histories)]
+    ml_wape = [e / h for e, h in zip(ml_abs_error, histories)]
+    set_period(
+        df, "6M", total_history=histories,
+        scp_forecast=scp_forecasts, scp_abs_error=scp_abs_error, scp_wape=scp_wape,
+        ml_forecast=ml_forecasts, ml_abs_error=ml_abs_error, ml_wape=ml_wape, winner_method=winner_methods,
+    )
+    return df
+
+
+def _phase8_client_result(id_client, histories, scp_forecasts, ml_forecasts, classifications, winner_methods):
+    df = _multi_row_client_df(id_client, histories, scp_forecasts, ml_forecasts, classifications, winner_methods)
+    return analyze_client(make_client_source(df, id_client, f"Client{id_client}"))
+
+
+def test_global_phase8_bias_is_sum_over_sum_not_average_of_client_bias():
+    # Cliente A: signed=[20,10] (suma 30), history=200 -> bias_A=0.15
+    result_a = _phase8_client_result(
+        70001, histories=[100.0, 100.0], scp_forecasts=[120.0, 110.0], ml_forecasts=[100.0, 100.0],
+        classifications=["smooth", "smooth"], winner_methods=["SCP", "SCP"],
+    )
+    # Cliente B: signed=[300,300] (suma 600), history=2000 -> bias_B=0.3
+    result_b = _phase8_client_result(
+        70002, histories=[1000.0, 1000.0], scp_forecasts=[1300.0, 1300.0], ml_forecasts=[1000.0, 1000.0],
+        classifications=["erratic", "erratic"], winner_methods=["SCP", "SCP"],
+    )
+
+    gp = build_global_period_result([result_a, result_b], "6M")
+
+    naive_average_of_client_bias = (0.15 + 0.3) / 2
+    expected_sum_over_sum = (30.0 + 600.0) / (200.0 + 2000.0)
+    assert math.isclose(gp.phase8.bias_total.scp_bias_agg, expected_sum_over_sum, rel_tol=1e-9)
+    assert not math.isclose(gp.phase8.bias_total.scp_bias_agg, naive_average_of_client_bias, rel_tol=1e-3)
+
+
+def test_global_phase8_volume_reuses_per_client_buckets_not_recalculated_on_pool():
+    """
+    Cliente A (escala pequena) y Cliente B (escala 1e6 mayor): si el volumen
+    global recalculase terciles sobre el pool concatenado, TODO A caeria en
+    RELATIVE_LOW y TODO B en RELATIVE_HIGH (0 filas de A en HIGH). Reutilizando
+    el bucket ya calculado POR CLIENTE, cada uno aporta a los 3 buckets.
+    """
+    histories_a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    histories_b = [1_000_000.0, 2_000_000.0, 3_000_000.0, 4_000_000.0, 5_000_000.0, 6_000_000.0]
+    result_a = _phase8_client_result(
+        70003, histories=histories_a, scp_forecasts=[h * 1.2 for h in histories_a], ml_forecasts=histories_a,
+        classifications=["smooth"] * 6, winner_methods=["SCP"] * 6,
+    )
+    result_b = _phase8_client_result(
+        70004, histories=histories_b, scp_forecasts=[h * 1.2 for h in histories_b], ml_forecasts=histories_b,
+        classifications=["erratic"] * 6, winner_methods=["SCP"] * 6,
+    )
+
+    gp = build_global_period_result([result_a, result_b], "6M")
+    counts = gp.phase8.volume_table.set_index("category")["n_comparable"].to_dict()
+    assert counts == {"RELATIVE_LOW": 4, "RELATIVE_MEDIUM": 4, "RELATIVE_HIGH": 4}
+
+
+def test_global_phase8_not_assignable_client_preserved_and_counted():
+    histories_a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    result_a = _phase8_client_result(
+        70005, histories=histories_a, scp_forecasts=[h * 1.2 for h in histories_a], ml_forecasts=histories_a,
+        classifications=["smooth"] * 6, winner_methods=["SCP"] * 6,
+    )
+    # Cliente C: solo 2 series comparables -> NOT_ASSIGNABLE (N_LT_3).
+    result_c = _phase8_client_result(
+        70006, histories=[10.0, 20.0], scp_forecasts=[12.0, 22.0], ml_forecasts=[10.0, 20.0],
+        classifications=["lumpy", "lumpy"], winner_methods=["SCP", "SCP"],
+    )
+    assert result_c.periods["6M"].phase8.volume.status == "NOT_ASSIGNABLE"
+
+    gp = build_global_period_result([result_a, result_c], "6M")
+
+    assert gp.phase8.n_clients_with_not_assignable_volume == 1
+    not_assignable_row = gp.phase8.volume_table[gp.phase8.volume_table["category"] == "NOT_ASSIGNABLE"]
+    assert len(not_assignable_row) == 1
+    assert not_assignable_row.iloc[0]["n_comparable"] == 2  # las 2 filas del cliente C, nunca excluidas
+
+
+def test_global_phase8_null_category_n_clients_and_bias_aligned():
+    result_a = _phase8_client_result(
+        70007, histories=[100.0], scp_forecasts=[120.0], ml_forecasts=[100.0],
+        classifications=[None], winner_methods=["SCP"],
+    )
+    result_b = _phase8_client_result(
+        70008, histories=[200.0], scp_forecasts=[260.0], ml_forecasts=[200.0],
+        classifications=[None], winner_methods=["SCP"],
+    )
+
+    gp = build_global_period_result([result_a, result_b], "6M")
+    table = gp.phase8.classification_tables["SERIES_CLASSIFICATION"]
+
+    null_row = table[table["category"] == "(sin clasificar)"].iloc[0]
+    assert null_row["n_comparable"] == 2
+    assert null_row["n_clients"] == 2
+    # signed=[20,60], history=[100,200] -> bias = 80/300
+    assert math.isclose(null_row["scp_bias_agg"], 80.0 / 300.0, rel_tol=1e-9)
+
+
+def test_global_phase8_none_when_all_clients_missing_phase8():
+    results = build_multi_client_results()
+    for r in results:
+        pr = r.periods.get("6M")
+        if pr is not None:
+            pr.phase8 = None
+
+    gp = build_global_period_result(results, "6M")
+    assert gp.phase8 is None
+    assert gp.n_clients == len(results)  # el resto del resultado global no se ve afectado
+
+
+def test_global_phase8_present_when_all_clients_have_phase8():
+    results = build_multi_client_results()
+    gp = build_global_period_result(results, "6M")
+    assert gp.phase8 is not None
+
+
+def test_global_phase8_none_when_mixed_some_clients_missing_phase8():
+    results = build_multi_client_results()
+    results[0].periods["6M"].phase8 = None  # simula un ClientAnalysisResult legacy
+
+    gp = build_global_period_result(results, "6M")
+    assert gp.phase8 is None
+    # el cliente sin phase8 no se excluye del resto del agregado global (winner_counts sigue sumando los 3).
+    assert gp.n_clients == len(results)
+    assert gp.winner_counts["_total"] > 0
+
+
+def test_global_phase8_none_for_periods_other_than_6m():
+    results = build_multi_client_results()
+    for period in ("M1", "RECENT_3M", "OLDER_3M"):
+        gp = build_global_period_result(results, period)
+        assert gp.phase8 is None
+
+
+def test_global_classification_volume_cross_present_with_n_clients_and_bias():
+    histories_a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    histories_b = [1_000_000.0, 2_000_000.0, 3_000_000.0, 4_000_000.0, 5_000_000.0, 6_000_000.0]
+    result_a = _phase8_client_result(
+        70009, histories=histories_a, scp_forecasts=[h * 1.2 for h in histories_a], ml_forecasts=histories_a,
+        classifications=["smooth"] * 6, winner_methods=["SCP"] * 6,
+    )
+    result_b = _phase8_client_result(
+        70010, histories=histories_b, scp_forecasts=[h * 1.2 for h in histories_b], ml_forecasts=histories_b,
+        classifications=["erratic"] * 6, winner_methods=["SCP"] * 6,
+    )
+
+    gp = build_global_period_result([result_a, result_b], "6M")
+    cross = gp.phase8.classification_volume_cross
+
+    for col in ("SERIES_CLASSIFICATION", "VOLUME_BUCKET", "n_comparable", "n_clients",
+                "scp_bias_agg", "ml_bias_agg", "scp_direction", "ml_direction", "small_sample"):
+        assert col in cross.columns
+
+    smooth_low = cross[(cross["SERIES_CLASSIFICATION"] == "smooth") & (cross["VOLUME_BUCKET"] == "RELATIVE_LOW")]
+    assert len(smooth_low) == 1
+    assert smooth_low.iloc[0]["n_comparable"] == 2
+    assert smooth_low.iloc[0]["n_clients"] == 1
+
+    erratic_high = cross[(cross["SERIES_CLASSIFICATION"] == "erratic") & (cross["VOLUME_BUCKET"] == "RELATIVE_HIGH")]
+    assert erratic_high.iloc[0]["n_clients"] == 1
+    assert (cross["small_sample"]).all()  # todas las celdas tienen n_comparable=2 < 10
+
+
+def test_global_phase8_has_no_individual_cross_attribute():
+    """El diagnostico global expone classification_volume_cross; el individual (Phase8ClientDiagnostics) no expone ningun cruce."""
+    results = build_multi_client_results()
+    gp = build_global_period_result(results, "6M")
+    assert gp.phase8 is not None
+    assert hasattr(gp.phase8, "classification_volume_cross")
+    for r in results:
+        pr = r.periods.get("6M")
+        if pr is not None and pr.phase8 is not None:
+            assert not hasattr(pr.phase8, "classification_volume_cross")
