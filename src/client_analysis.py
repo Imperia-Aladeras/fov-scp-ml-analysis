@@ -72,12 +72,17 @@ from src.quality_checks import (
     check_extreme_improvement,
     check_extreme_wape,
     check_forecast_null_when_flag_absent,
+    check_infinite_backend_metrics,
+    check_invalid_binary_flag_value,
+    check_invalid_winner_method_value,
     check_mae_reconstruction,
     check_ml_exclusion_reason_present,
     check_negative_forecast,
     check_negative_history,
+    check_negative_nonnegative_metrics,
     check_null_metrics_when_zero_history,
     check_rmse_reconstruction,
+    check_unknown_comparison_status_value,
     check_wape_reconstruction,
     check_winner_formula_not_auditable,
     QualityIssue,
@@ -363,6 +368,10 @@ def _analyze_period(df: pd.DataFrame, candidate_mask: pd.Series, period: str, fi
     quality.add(check_comparable_without_forecasts(
         file_label, period, comparable_mask, df[pcols.scp_total_forecast], df[pcols.ml_total_forecast]
     ))
+    # Fase 9B (METRIC_001/002/003): period-level, varian por PeriodColumns.
+    quality.extend(check_negative_nonnegative_metrics(file_label, df, period, pcols))
+    quality.extend(check_infinite_backend_metrics(file_label, df, period, pcols))
+    quality.add(check_invalid_winner_method_value(file_label, period, comparable_mask, df[pcols.winner_method]))
     if is_backend_6m:
         # `local_mask` (reconstruccion local) se compara contra
         # COMPARISON_STATUS (fuente de verdad backend, ya usada como
@@ -468,6 +477,10 @@ def analyze_client(source: ClientSource) -> ClientAnalysisResult:
     quality.add(check_ml_exclusion_reason_present(file_label, df))
     quality.extend(check_forecast_null_when_flag_absent(file_label, df))
     quality.add(check_winner_formula_not_auditable(file_label))
+    # Fase 9B (METRIC_004/005): file/client-level, una unica vez por cliente
+    # (columnas sin variante por periodo, no forman parte de _analyze_period).
+    quality.add(check_unknown_comparison_status_value(file_label, df))
+    quality.extend(check_invalid_binary_flag_value(file_label, df))
 
     periods: dict[str, PeriodResult] = {}
     for period in ALL_PERIODS:

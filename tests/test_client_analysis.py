@@ -754,3 +754,167 @@ def test_period_result_has_no_new_field_for_6m_local_audit_mask():
     field_names = {f.name for f in fields(PeriodResult)}
     assert "comparable_mask_local_audit" not in field_names
     assert "local_mask" not in field_names
+
+
+# --------------------------------------------------------------------------
+# Fase 9B: integracion de METRIC_001-005 en analyze_client/_analyze_period.
+# METRIC_001/002/003 son period-level (varian por PeriodColumns, se integran
+# en la cascada de _analyze_period). METRIC_004/005 son file/client-level
+# (columnas sin variante por periodo, se ejecutan UNA sola vez por cliente,
+# en el mismo bloque que check_ml_exclusion_reason_present).
+# --------------------------------------------------------------------------
+
+def test_metric_001_negative_wape_fires_only_in_affected_period():
+    df = _build_synthetic_client_dataframe()
+    pcols_m1 = period_columns("M1")
+    df.loc[0, pcols_m1.scp_wape] = -0.05  # WAPE es dominio matematico >=0
+    source = make_client_source(df, 99999, "Synthetic")
+
+    result = analyze_client(source)
+
+    codes_m1 = [i.code for i in result.periods["M1"].quality.issues]
+    assert "NEGATIVE_NONNEGATIVE_METRIC_VALUE" in codes_m1
+    for period in [p for p in ALL_PERIODS if p != "M1"]:
+        codes = [i.code for i in result.periods[period].quality.issues]
+        assert "NEGATIVE_NONNEGATIVE_METRIC_VALUE" not in codes
+
+
+def test_metric_002_infinite_value_fires_only_in_affected_period():
+    df = _build_synthetic_client_dataframe()
+    pcols_m1 = period_columns("M1")
+    df.loc[0, pcols_m1.ml_bias] = float("inf")
+    source = make_client_source(df, 99999, "Synthetic")
+
+    result = analyze_client(source)
+
+    codes_m1 = [i.code for i in result.periods["M1"].quality.issues]
+    assert "INFINITE_METRIC_VALUE" in codes_m1
+    for period in [p for p in ALL_PERIODS if p != "M1"]:
+        codes = [i.code for i in result.periods[period].quality.issues]
+        assert "INFINITE_METRIC_VALUE" not in codes
+
+
+def test_metric_002_nan_never_triggers_infinite_check_end_to_end():
+    """La fixture sintetica ya contiene NaN de forma natural (fila 2, no candidata); no debe disparar METRIC_002 en ningun periodo."""
+    df = _build_synthetic_client_dataframe()
+    source = make_client_source(df, 99999, "Synthetic")
+
+    result = analyze_client(source)
+
+    for period in ALL_PERIODS:
+        codes = [i.code for i in result.periods[period].quality.issues]
+        assert "INFINITE_METRIC_VALUE" not in codes
+
+
+def test_metric_003_invalid_winner_value_does_not_duplicate_null_winner_error():
+    df = _build_synthetic_client_dataframe()
+    pcols_m1 = period_columns("M1")
+    df.loc[0, pcols_m1.winner_method] = "DRAW"  # fuera de {ML,SCP,TIE}, fila comparable en M1
+    source = make_client_source(df, 99999, "Synthetic")
+
+    result = analyze_client(source)
+
+    codes_m1 = [i.code for i in result.periods["M1"].quality.issues]
+    assert "INVALID_WINNER_METHOD_VALUE" in codes_m1
+    assert "COMPARABLE_WITHOUT_WINNER" not in codes_m1  # winner no es nulo: no se duplica
+
+
+def test_metric_004_unknown_comparison_status_fires_exactly_once_not_per_period():
+    df = _build_synthetic_client_dataframe()
+    df.loc[0, "COMPARISON_STATUS"] = "NOT_COMPARABLE_UNKNOWN_REASON"
+    source = make_client_source(df, 99999, "Synthetic")
+
+    result = analyze_client(source)
+
+    client_level = [i for i in result.quality.issues if i.code == "UNKNOWN_COMPARISON_STATUS_VALUE"]
+    assert len(client_level) == 1  # una unica vez por cliente, no 9 (una por periodo)
+    for period in ALL_PERIODS:
+        codes = [i.code for i in result.periods[period].quality.issues]
+        assert "UNKNOWN_COMPARISON_STATUS_VALUE" not in codes  # no forma parte de la cascada period-level
+
+
+def test_metric_005_invalid_binary_flag_fires_exactly_once_not_per_period():
+    df = _build_synthetic_client_dataframe()
+    df["HAS_ML_EXCLUDED"] = [2, 0, 0]  # fuera de {0,1}
+    source = make_client_source(df, 99999, "Synthetic")
+
+    result = analyze_client(source)
+
+    client_level = [i for i in result.quality.issues if i.code == "INVALID_BINARY_FLAG_VALUE"]
+    assert len(client_level) == 1  # una unica vez por cliente, no 9 (una por periodo)
+    for period in ALL_PERIODS:
+        codes = [i.code for i in result.periods[period].quality.issues]
+        assert "INVALID_BINARY_FLAG_VALUE" not in codes
+
+
+def test_metric_004_and_005_do_not_fire_when_domain_valid():
+    """Contrapunto: la fixture sintetica base (dominio valido) no dispara ni METRIC_004 ni METRIC_005."""
+    df = _build_synthetic_client_dataframe()
+    source = make_client_source(df, 99999, "Synthetic")
+
+    result = analyze_client(source)
+
+    codes = [i.code for i in result.quality.issues]
+    assert "UNKNOWN_COMPARISON_STATUS_VALUE" not in codes
+    assert "INVALID_BINARY_FLAG_VALUE" not in codes
+
+
+def test_metric_003_uses_local_period_mask_not_backend_6m_status_for_monthly_periods():
+    """
+    Auditoria (punto 5): confirma explicitamente, no solo por lectura de
+    codigo, que METRIC_003 en periodos mensuales/trimestrales usa la mascara
+    LOCAL especifica del periodo (period_comparable_mask via `comparable_mask`
+    en _analyze_period), nunca COMPARISON_STATUS (que solo es la poblacion
+    canonica de 6M). La fila 0 mantiene COMPARISON_STATUS='COMPARABLE' (a
+    nivel 6M) pero pierde su forecast SCP en M1 (localmente NO comparable en
+    M1), con un WINNER_METHOD_M1 invalido de todas formas: si el sistema
+    usara incorrectamente la mascara backend de 6M para M1, esto dispararia
+    INVALID_WINNER_METHOD_VALUE en M1; con la mascara local correcta no debe
+    dispararse, porque la fila no pertenece a la poblacion comparable de M1.
+    """
+    df = _build_synthetic_client_dataframe()
+    pcols_m1 = period_columns("M1")
+    df.loc[0, pcols_m1.scp_total_forecast] = None  # rompe la mascara LOCAL de M1 para la fila 0
+    df.loc[0, pcols_m1.winner_method] = "DRAW"  # valor invalido, pero la fila ya no es comparable en M1
+    assert df.loc[0, "COMPARISON_STATUS"] == "COMPARABLE"  # sigue comparable a nivel 6M (backend)
+
+    source = make_client_source(df, 99999, "Synthetic")
+    result = analyze_client(source)
+
+    assert not result.periods["M1"].comparable_mask.iloc[0]  # confirma que la mascara local excluye la fila
+    codes_m1 = [i.code for i in result.periods["M1"].quality.issues]
+    assert "INVALID_WINNER_METHOD_VALUE" not in codes_m1
+
+
+def test_metric_checks_do_not_change_client_analyzability_or_core_results():
+    """
+    Auditoria (punto 11): con dos anomalias simultaneas activas (METRIC_001 en
+    M1, METRIC_004 a nivel cliente sobre una fila ya no-comparable en 6M), el
+    cliente sigue siendo completamente analizable (file_valid, status nunca
+    ERROR) y los resultados numericos base de 6M no cambian respecto al
+    baseline sin anomalias (test_analyze_client_end_to_end_synthetic).
+    """
+    df = _build_synthetic_client_dataframe()
+    pcols_m1 = period_columns("M1")
+    df.loc[0, pcols_m1.scp_wape] = -0.05  # dispara METRIC_001 en M1
+    # Fila 2 ya era NOT_COMPARABLE_NO_HISTORY (excluida de 6M); cambiar su
+    # status a un literal desconocido dispara METRIC_004 sin alterar la
+    # poblacion comparable de 6M (ya estaba excluida antes y sigue estandolo).
+    df.loc[2, "COMPARISON_STATUS"] = "NOT_COMPARABLE_UNKNOWN_REASON"
+    source = make_client_source(df, 99999, "Synthetic")
+
+    result = analyze_client(source)
+
+    assert result.file_valid is True
+    assert result.status == "SUCCESS_WITH_WARNINGS"  # ningun WARNING nuevo escala a ERROR de cliente
+    assert set(result.periods.keys()) == set(ALL_PERIODS)
+
+    period_6m = result.periods["6M"]
+    assert period_6m.n_comparable == 2  # identico al baseline: la fila 2 ya estaba excluida
+    assert math.isclose(period_6m.wape["scp_wape_global"], 180 / 1200, rel_tol=1e-9)
+    assert math.isclose(period_6m.wape["ml_wape_global"], 240 / 1200, rel_tol=1e-9)
+    assert math.isclose(period_6m.abs_error_reduction_total, 180 - 240)
+
+    codes_client = [i.code for i in result.quality.issues]
+    assert "NEGATIVE_NONNEGATIVE_METRIC_VALUE" in codes_client
+    assert "UNKNOWN_COMPARISON_STATUS_VALUE" in codes_client

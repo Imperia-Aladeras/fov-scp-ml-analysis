@@ -14,13 +14,20 @@ from src.quality_checks import (
     check_comparison_status_vs_period_mask,
     check_error_chain_reconstruction,
     check_extreme_wape,
+    check_infinite_backend_metrics,
+    check_invalid_binary_flag_value,
+    check_invalid_winner_method_value,
     check_mae_reconstruction,
     check_mojibake_in_value_levels,
     check_negative_history,
+    check_negative_nonnegative_metrics,
     check_rmse_reconstruction,
+    check_unknown_comparison_status_value,
     check_wape_reconstruction,
     check_winner_formula_not_auditable,
     check_wrapped_csv_normalized,
+    _INFINITE_CHECK_ATTRS,
+    _NEGATIVE_DOMAIN_FIELDS,
 )
 
 
@@ -376,3 +383,274 @@ def test_check_mojibake_detects_replacement_character_and_double_encoding():
 def test_check_mojibake_passes_on_clean_text():
     df = pd.DataFrame({"VALUE_LEVEL_1": ["Heladerías", "Decoración", "Muebles"]})
     assert check_mojibake_in_value_levels("f.csv", df) is None
+
+
+# --------------------------------------------------------------------------
+# Fase 9B: METRIC_001-005 (auditoria de dominio matematico y de valores
+# backend inesperados). Todos WARNING; ninguno reconstruye ni cambia
+# comparabilidad/winner/Bias/WAPE (ver plan aprobado en Fase 9A).
+# --------------------------------------------------------------------------
+
+def test_negative_domain_fields_scope_is_10_columns_per_period():
+    """Guarda de regresion sobre el alcance aprobado en 9A: 5 metricas x 2 metodos."""
+    assert len(_NEGATIVE_DOMAIN_FIELDS) == 10
+
+
+def test_infinite_check_attrs_scope_is_18_columns_per_period():
+    """Guarda de regresion sobre el alcance aprobado en 9A: 18 columnas por periodo."""
+    assert len(_INFINITE_CHECK_ATTRS) == 18
+
+
+def test_check_negative_nonnegative_metrics_detects_negative_wape():
+    pcols = period_columns("6M")
+    df = pd.DataFrame({
+        "ID_CONFIGURATION": [1, 2],
+        pcols.scp_wape: [-0.1, 0.2],  # WAPE es dominio matematico >=0
+    })
+    issues = check_negative_nonnegative_metrics("f.csv", df, "6M", pcols)
+    codes = [i.code for i in issues]
+    assert codes == ["NEGATIVE_NONNEGATIVE_METRIC_VALUE"]
+    assert issues[0].details["method"] == "SCP"
+    assert issues[0].details["metric"] == "WAPE"
+    assert issues[0].details["n_violations"] == 1
+    assert issues[0].details["sample_ids"] == [1]
+
+
+def test_check_negative_nonnegative_metrics_nan_does_not_trigger():
+    pcols = period_columns("6M")
+    df = pd.DataFrame({pcols.scp_wape: [None, 0.2]})
+    assert check_negative_nonnegative_metrics("f.csv", df, "6M", pcols) == []
+
+
+def test_check_negative_nonnegative_metrics_infinite_does_not_trigger():
+    """Un +-inf no dispara METRIC_001 (np.isfinite lo descarta); lo cubre METRIC_002."""
+    pcols = period_columns("6M")
+    df = pd.DataFrame({pcols.scp_wape: [float("inf"), float("-inf"), 0.2]})
+    assert check_negative_nonnegative_metrics("f.csv", df, "6M", pcols) == []
+
+
+def test_check_negative_nonnegative_metrics_ignores_signed_error_bias_history_forecast():
+    """
+    SIGNED_ERROR, BIAS, HISTORY y FORECAST pueden ser negativos legitimamente:
+    no forman parte del dominio auditado por este check.
+    """
+    pcols = period_columns("6M")
+    df = pd.DataFrame({
+        pcols.total_history: [-5.0],
+        pcols.scp_total_forecast: [-1.0],
+        pcols.scp_total_signed_error: [-3.0],
+        pcols.scp_bias: [-0.5],
+    })
+    assert check_negative_nonnegative_metrics("f.csv", df, "6M", pcols) == []
+
+
+def test_check_infinite_backend_metrics_detects_inf_in_history():
+    pcols = period_columns("6M")
+    df = pd.DataFrame({
+        "ID_CONFIGURATION": [1, 2],
+        pcols.total_history: [float("inf"), 100.0],
+    })
+    issues = check_infinite_backend_metrics("f.csv", df, "6M", pcols)
+    codes = [i.code for i in issues]
+    assert codes == ["INFINITE_METRIC_VALUE"]
+    assert issues[0].details["column"] == pcols.total_history
+    assert issues[0].details["n_violations"] == 1
+    assert issues[0].details["sample_ids"] == [1]
+
+
+def test_check_infinite_backend_metrics_detects_negative_inf_in_bias():
+    """BIAS puede ser negativo, pero -inf no es un valor finito valido: METRIC_002 si lo audita."""
+    pcols = period_columns("6M")
+    df = pd.DataFrame({pcols.scp_bias: [float("-inf"), -0.2]})
+    issues = check_infinite_backend_metrics("f.csv", df, "6M", pcols)
+    assert [i.code for i in issues] == ["INFINITE_METRIC_VALUE"]
+    assert issues[0].details["column"] == pcols.scp_bias
+
+
+def test_check_infinite_backend_metrics_nan_does_not_trigger():
+    pcols = period_columns("6M")
+    df = pd.DataFrame({pcols.total_history: [None, 100.0]})
+    assert check_infinite_backend_metrics("f.csv", df, "6M", pcols) == []
+
+
+def test_check_infinite_backend_metrics_ignores_categorical_and_count_columns():
+    pcols = period_columns("6M")
+    df = pd.DataFrame({
+        pcols.winner_method: ["ML"],
+        pcols.winner_model: ["AutoETS"],
+        pcols.positive_history_month_count: [6],
+    })
+    assert check_infinite_backend_metrics("f.csv", df, "6M", pcols) == []
+
+
+def test_check_invalid_winner_method_value_detects_unexpected_literal():
+    pcols = period_columns("6M")
+    winner = pd.Series(["ML", "DRAW", "SCP"], name=pcols.winner_method)
+    comparable_mask = pd.Series([True, True, True])
+    issue = check_invalid_winner_method_value("f.csv", "6M", comparable_mask, winner)
+    assert issue is not None
+    assert issue.severity == Severity.WARNING
+    assert issue.code == "INVALID_WINNER_METHOD_VALUE"
+    assert issue.details["unexpected_values"] == {"DRAW": 1}
+    assert issue.details["n_rows"] == 1
+
+
+def test_check_invalid_winner_method_value_does_not_duplicate_null_winner():
+    """Winner nulo en fila comparable ya es ERROR via check_comparable_without_winner; no se duplica aqui."""
+    pcols = period_columns("6M")
+    winner = pd.Series([None, "ML"], name=pcols.winner_method)
+    comparable_mask = pd.Series([True, True])
+    assert check_invalid_winner_method_value("f.csv", "6M", comparable_mask, winner) is None
+
+
+def test_check_invalid_winner_method_value_ignores_non_comparable_rows():
+    pcols = period_columns("6M")
+    winner = pd.Series(["DRAW", "ML"], name=pcols.winner_method)
+    comparable_mask = pd.Series([False, True])
+    assert check_invalid_winner_method_value("f.csv", "6M", comparable_mask, winner) is None
+
+
+def test_check_invalid_winner_method_value_accepts_full_valid_domain():
+    pcols = period_columns("6M")
+    winner = pd.Series(["ML", "SCP", "TIE"], name=pcols.winner_method)
+    comparable_mask = pd.Series([True, True, True])
+    assert check_invalid_winner_method_value("f.csv", "6M", comparable_mask, winner) is None
+
+
+def test_check_unknown_comparison_status_value_accepts_full_known_domain():
+    """Dominio confirmado por grep dirigido en Fase 9B (docs/backend-validation-flow.md, 8 estados)."""
+    df = pd.DataFrame({"COMPARISON_STATUS": [
+        "COMPARABLE", "NOT_COMPARABLE_NO_HISTORY", "NOT_COMPARABLE_MISSING_SCP",
+        "NOT_COMPARABLE_MISSING_ML", "NOT_COMPARABLE_MISSING_SCP_AND_ML",
+        "NOT_COMPARABLE_ML_EXCLUDED", "NOT_COMPARABLE_MISSING_VALIDATION",
+        "NOT_COMPARABLE_RUN_FAILED",
+    ]})
+    assert check_unknown_comparison_status_value("f.csv", df) is None
+
+
+def test_check_unknown_comparison_status_value_detects_unexpected_literal():
+    df = pd.DataFrame({"COMPARISON_STATUS": ["COMPARABLE", "NOT_COMPARABLE_NEW_REASON"]})
+    issue = check_unknown_comparison_status_value("f.csv", df)
+    assert issue is not None
+    assert issue.severity == Severity.WARNING
+    assert issue.code == "UNKNOWN_COMPARISON_STATUS_VALUE"
+    assert issue.details["unexpected_values"] == {"NOT_COMPARABLE_NEW_REASON": 1}
+
+
+def test_check_unknown_comparison_status_value_null_is_not_unknown():
+    df = pd.DataFrame({"COMPARISON_STATUS": ["COMPARABLE", None]})
+    assert check_unknown_comparison_status_value("f.csv", df) is None
+
+
+def test_check_invalid_binary_flag_value_detects_out_of_domain():
+    df = pd.DataFrame({"HAS_ML_EXCLUDED": [0, 1, 2]})
+    issues = check_invalid_binary_flag_value("f.csv", df)
+    assert len(issues) == 1
+    assert issues[0].code == "INVALID_BINARY_FLAG_VALUE"
+    assert issues[0].details["column"] == "HAS_ML_EXCLUDED"
+    assert issues[0].details["n_rows"] == 1
+
+
+def test_check_invalid_binary_flag_value_nan_does_not_trigger():
+    df = pd.DataFrame({"HAS_SCP_CALCULATED": [0, 1, None]})
+    assert check_invalid_binary_flag_value("f.csv", df) == []
+
+
+def test_check_invalid_binary_flag_value_accepts_zero_and_one():
+    df = pd.DataFrame({
+        "HAS_BASE_CANDIDATE": [1, 0], "HAS_SCP_CALCULATED": [1, 1],
+        "HAS_ML_CALCULATED": [0, 1], "HAS_ML_EXCLUDED": [0, 0],
+    })
+    assert check_invalid_binary_flag_value("f.csv", df) == []
+
+
+# --------------------------------------------------------------------------
+# Auditoria de Fase 9B: robustez dtype object/string, no-duplicacion con
+# counts explicitos, y confirmacion de que METRIC_003 nunca usa la mascara
+# backend de 6M para periodos mensuales/trimestrales.
+# --------------------------------------------------------------------------
+
+def test_check_negative_nonnegative_metrics_object_dtype_does_not_raise_and_coerces_correctly():
+    """
+    Robustez dtype object/string: aunque el contrato de carga real
+    (input_loader.coerce_numeric_columns) ya garantiza dtype numerico para
+    estas columnas antes de que lleguen a analyze_client (WAPE/MAE/RMSE/
+    ABS_ERROR/SQUARED_ERROR no estan en _CATEGORICAL_COLUMNS ni matchean
+    _CATEGORICAL_SUFFIXES), el propio check es defensivo por si mismo
+    (_coerce_numeric) y no debe lanzar TypeError si recibe una Series object
+    con strings no numericos -- p.ej. un DataFrame construido a mano en tests.
+    """
+    pcols = period_columns("6M")
+    df = pd.DataFrame({pcols.scp_wape: pd.Series(["no-numerico", "-0.1", None, 0.2], dtype=object)})
+    issues = check_negative_nonnegative_metrics("f.csv", df, "6M", pcols)
+    assert [i.code for i in issues] == ["NEGATIVE_NONNEGATIVE_METRIC_VALUE"]
+    assert issues[0].details["n_violations"] == 1  # solo "-0.1" coerciona a negativo; "no-numerico" coerciona a NaN
+
+
+def test_check_infinite_backend_metrics_object_dtype_does_not_raise_and_coerces_correctly():
+    pcols = period_columns("6M")
+    df = pd.DataFrame({pcols.total_history: pd.Series(["no-numerico", float("inf"), None, 100.0], dtype=object)})
+    issues = check_infinite_backend_metrics("f.csv", df, "6M", pcols)
+    assert [i.code for i in issues] == ["INFINITE_METRIC_VALUE"]
+    assert issues[0].details["n_violations"] == 1
+
+
+def test_check_invalid_binary_flag_value_object_dtype_does_not_raise_and_coerces_correctly():
+    df = pd.DataFrame({"HAS_ML_EXCLUDED": pd.Series(["no-numerico", "1", None, 2.0], dtype=object)})
+    issues = check_invalid_binary_flag_value("f.csv", df)
+    assert len(issues) == 1
+    # "1" (string) coerciona a 1.0 (valido, no dispara); "no-numerico" coerciona a NaN (no dispara); solo 2.0 dispara.
+    assert issues[0].details["n_rows"] == 1
+
+
+def test_negative_infinite_wape_triggers_metric_002_but_not_metric_001():
+    """
+    Punto 9 del brief de auditoria: un -inf en una metrica del dominio
+    COMPARTIDO por ambos checks (WAPE) debe disparar METRIC_002
+    (INFINITE_METRIC_VALUE) pero explicitamente NO METRIC_001
+    (NEGATIVE_NONNEGATIVE_METRIC_VALUE) -- np.isfinite descarta el valor
+    infinito de la condicion "negativo" en METRIC_001.
+    """
+    pcols = period_columns("6M")
+    df = pd.DataFrame({pcols.scp_wape: [float("-inf"), 0.2]})
+
+    negative_issues = check_negative_nonnegative_metrics("f.csv", df, "6M", pcols)
+    infinite_issues = check_infinite_backend_metrics("f.csv", df, "6M", pcols)
+
+    assert negative_issues == []
+    assert [i.code for i in infinite_issues] == ["INFINITE_METRIC_VALUE"]
+    assert infinite_issues[0].details["n_violations"] == 1
+
+
+def test_check_invalid_binary_flag_value_one_issue_per_affected_column_not_per_row():
+    """
+    Contrato de METRIC_005: un issue POR COLUMNA afectada (no un issue global
+    combinando varias columnas, ni un issue por fila).
+    """
+    df = pd.DataFrame({
+        "HAS_SCP_CALCULATED": [2, 0], "HAS_ML_CALCULATED": [0, 3], "HAS_BASE_CANDIDATE": [1, 0],
+    })
+    issues = check_invalid_binary_flag_value("f.csv", df)
+    columns = {i.details["column"] for i in issues}
+    assert columns == {"HAS_SCP_CALCULATED", "HAS_ML_CALCULATED"}  # HAS_BASE_CANDIDATE (valida) no genera issue
+    assert len(issues) == 2
+
+
+def test_null_winner_triggers_comparable_without_winner_but_not_metric_003():
+    """
+    Winner nulo en fila comparable: dispara COMPARABLE_WITHOUT_WINNER (ERROR,
+    check preexistente) pero NUNCA METRIC_003 (INVALID_WINNER_METHOD_VALUE) --
+    METRIC_003 excluye explicitamente los nulos de su condicion para no
+    duplicar la incidencia ya cubierta.
+    """
+    pcols = period_columns("6M")
+    winner = pd.Series([None, "ML"], name=pcols.winner_method)
+    comparable_mask = pd.Series([True, True])
+
+    metric_003_issue = check_invalid_winner_method_value("f.csv", "6M", comparable_mask, winner)
+    without_winner_issue = check_comparable_without_winner("f.csv", "6M", comparable_mask, winner)
+
+    assert metric_003_issue is None
+    assert without_winner_issue is not None
+    assert without_winner_issue.severity == Severity.ERROR
+    assert without_winner_issue.details["n_bad"] == 1

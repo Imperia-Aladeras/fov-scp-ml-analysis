@@ -119,6 +119,11 @@ def values_close(a: pd.Series, b: pd.Series) -> pd.Series:
     return np.isclose(a_num, b_num, atol=NUMERIC_ABS_TOLERANCE, rtol=NUMERIC_REL_TOLERANCE, equal_nan=True)
 
 
+def _coerce_numeric(series: pd.Series) -> pd.Series:
+    """Mismo patron de coercion que `values_close`, reutilizado por los chequeos de dominio de Fase 9B."""
+    return pd.to_numeric(series, errors="coerce")
+
+
 # --------------------------------------------------------------------------
 # Chequeos a nivel de fichero / carga (items 1-9 de la spec)
 # --------------------------------------------------------------------------
@@ -771,3 +776,228 @@ def check_mojibake_in_value_levels(file_label: str, df: pd.DataFrame) -> Quality
         f"infiere el texto original.",
         scope="file", details={"file": file_label, "counts_by_column": counts, "examples": examples},
     )
+
+
+# --------------------------------------------------------------------------
+# Fase 9B (METRIC_001-005): auditoria de dominio matematico y de valores
+# backend inesperados. Todos WARNING; ninguno reconstruye ni cambia
+# comparabilidad/winner/Bias/WAPE.
+#
+#   METRIC_001/002/003 son period-level: varian por PeriodColumns y se
+#   integran en la cascada por periodo de client_analysis._analyze_period.
+#   METRIC_004/005 son file/client-level: columnas sin variante por periodo,
+#   se ejecutan UNA sola vez por cliente (mismo bloque que
+#   check_ml_exclusion_reason_present / check_forecast_null_when_flag_absent).
+#
+# Los invariantes derivados del propio proyecto (conteos de winner,
+# win_rate_ml_pct, pct_of_history_volume, aditividad de abs_error_reduction,
+# small_sample) NO se auditan aqui: son tests de regresion junto a los
+# modulos que los producen (decision de Fase 9A).
+# --------------------------------------------------------------------------
+
+_NEGATIVE_DOMAIN_FIELDS = (
+    # (metodo, nombre de metrica, atributo de PeriodColumns)
+    ("SCP", "ABS_ERROR", "scp_total_abs_error"),
+    ("ML", "ABS_ERROR", "ml_total_abs_error"),
+    ("SCP", "SQUARED_ERROR", "scp_total_squared_error"),
+    ("ML", "SQUARED_ERROR", "ml_total_squared_error"),
+    ("SCP", "WAPE", "scp_wape"),
+    ("ML", "WAPE", "ml_wape"),
+    ("SCP", "MAE", "scp_mae"),
+    ("ML", "MAE", "ml_mae"),
+    ("SCP", "RMSE", "scp_rmse"),
+    ("ML", "RMSE", "ml_rmse"),
+)
+
+
+def check_negative_nonnegative_metrics(file_label: str, df: pd.DataFrame, period: str, pcols: PeriodColumns) -> list[QualityIssue]:
+    """
+    METRIC_001: metricas backend cuyo dominio matematico es >=0 (ABS_ERROR,
+    SQUARED_ERROR, WAPE, MAE, RMSE, para SCP y ML) no deberian contener un
+    valor negativo finito. Deliberadamente NO incluye SIGNED_ERROR, BIAS,
+    HISTORY ni FORECAST: esas metricas pueden ser negativas legitimamente.
+    Un valor +-inf no dispara este check (np.isfinite lo descarta); lo cubre
+    check_infinite_backend_metrics. NaN sigue significando "no evaluable" y
+    tampoco dispara.
+    """
+    issues: list[QualityIssue] = []
+    id_col = "ID_CONFIGURATION"
+    for method, metric_name, attr in _NEGATIVE_DOMAIN_FIELDS:
+        col = getattr(pcols, attr)
+        if col not in df.columns:
+            continue
+        value = _coerce_numeric(df[col])
+        bad = value.notna() & np.isfinite(value) & (value < 0)
+        n_violations = int(bad.sum())
+        if n_violations == 0:
+            continue
+        sample_ids = df.loc[bad, id_col].tolist()[:10] if id_col in df.columns else []
+        issues.append(QualityIssue(
+            Severity.WARNING, "NEGATIVE_NONNEGATIVE_METRIC_VALUE",
+            f"{n_violations} filas con {col} negativo (dominio matematico >=0 para {metric_name}).",
+            scope="period", details={
+                "file": file_label, "period": period, "column": col, "method": method,
+                "metric": metric_name, "n_violations": n_violations, "sample_ids": sample_ids,
+            },
+        ))
+    return issues
+
+
+_INFINITE_CHECK_ATTRS = (
+    # 18 columnas por periodo (1 + 2x8 + 1): dominio ampliado deliberadamente
+    # respecto a _NEGATIVE_DOMAIN_FIELDS (ver docstring de la funcion).
+    "total_history",
+    "scp_total_forecast", "ml_total_forecast",
+    "scp_total_signed_error", "ml_total_signed_error",
+    "scp_total_abs_error", "ml_total_abs_error",
+    "scp_total_squared_error", "ml_total_squared_error",
+    "scp_wape", "ml_wape",
+    "scp_mae", "ml_mae",
+    "scp_rmse", "ml_rmse",
+    "scp_bias", "ml_bias",
+    "winner_improvement_pct",
+)
+
+
+def check_infinite_backend_metrics(file_label: str, df: pd.DataFrame, period: str, pcols: PeriodColumns) -> list[QualityIssue]:
+    """
+    METRIC_002: +-inf en cualquiera de las 18 columnas numericas backend que
+    alimentan el reporting/agregacion (HISTORY, FORECAST, SIGNED_ERROR,
+    ABS_ERROR, SQUARED_ERROR, WAPE, MAE, RMSE, BIAS, WINNER_IMPROVEMENT_PCT).
+    Ambito deliberadamente mas amplio que check_negative_nonnegative_metrics:
+    un +-inf en HISTORY/SIGNED_ERROR/BIAS ya se convierte silenciosamente en
+    "NOT_EVALUABLE" (metrics._sum_or_not_evaluable, metrics.direction_label)
+    sin dejar rastro auditable de por que; este check aporta esa trazabilidad.
+    NaN sigue significando "no evaluable" y no dispara. Excluye columnas
+    categoricas (winner_method/winner_model/finalist_method/finalist_model) y
+    positive_history_month_count.
+    """
+    issues: list[QualityIssue] = []
+    id_col = "ID_CONFIGURATION"
+    for attr in _INFINITE_CHECK_ATTRS:
+        col = getattr(pcols, attr)
+        if col not in df.columns:
+            continue
+        value = _coerce_numeric(df[col])
+        bad = value.notna() & np.isinf(value)
+        n_violations = int(bad.sum())
+        if n_violations == 0:
+            continue
+        sample_ids = df.loc[bad, id_col].tolist()[:10] if id_col in df.columns else []
+        issues.append(QualityIssue(
+            Severity.WARNING, "INFINITE_METRIC_VALUE",
+            f"{n_violations} filas con {col} = +-inf.",
+            scope="period", details={
+                "file": file_label, "period": period, "column": col,
+                "n_violations": n_violations, "sample_ids": sample_ids,
+            },
+        ))
+    return issues
+
+
+VALID_WINNER_METHOD_VALUES = frozenset({"ML", "SCP", "TIE"})
+
+
+def check_invalid_winner_method_value(
+    file_label: str, period: str, comparable_mask: pd.Series, winner: pd.Series,
+) -> QualityIssue | None:
+    """
+    METRIC_003: un WINNER_METHOD no nulo en fila comparable deberia
+    pertenecer al dominio real que usa el proyecto (VALID_WINNER_METHOD_VALUES
+    = {"ML","SCP","TIE"}, literal confirmado en metrics.winner_distribution).
+    NO evalua si el winner "deberia" haber sido otro -- la formula
+    relativeDiff no se reconstruye (ver check_winner_formula_not_auditable):
+    solo valida pertenencia al dominio. Winner nulo en fila comparable ya es
+    ERROR via check_comparable_without_winner; este check no lo duplica.
+    """
+    bad = comparable_mask & winner.notna() & ~winner.isin(VALID_WINNER_METHOD_VALUES)
+    n_bad = int(bad.sum())
+    if n_bad == 0:
+        return None
+    unexpected_values = winner[bad].value_counts().to_dict()
+    column = winner.name or "WINNER_METHOD"
+    return QualityIssue(
+        Severity.WARNING, "INVALID_WINNER_METHOD_VALUE",
+        f"{n_bad} filas comparables en {period} con {column} fuera del dominio "
+        f"{sorted(VALID_WINNER_METHOD_VALUES)}: {unexpected_values}.",
+        scope="period", details={
+            "file": file_label, "period": period, "column": column,
+            "unexpected_values": unexpected_values, "n_rows": n_bad,
+        },
+    )
+
+
+# Dominio confirmado en docs/backend-validation-flow.md (tabla de precedencia
+# de COMPARISON_STATUS, 8 estados) mas NOT_COMPARABLE_MISSING_VALIDATION /
+# NOT_COMPARABLE_RUN_FAILED ya usados como valores reales en
+# tests/test_client_analysis.py. Grep dirigido realizado en Fase 9B sobre
+# src/, tests/ y docs/ (no se ha inventado ningun literal).
+KNOWN_COMPARISON_STATUS_VALUES = frozenset({
+    "COMPARABLE",
+    "NOT_COMPARABLE_NO_HISTORY",
+    "NOT_COMPARABLE_MISSING_SCP",
+    "NOT_COMPARABLE_MISSING_ML",
+    "NOT_COMPARABLE_MISSING_SCP_AND_ML",
+    "NOT_COMPARABLE_ML_EXCLUDED",
+    "NOT_COMPARABLE_MISSING_VALIDATION",
+    "NOT_COMPARABLE_RUN_FAILED",
+})
+
+
+def check_unknown_comparison_status_value(file_label: str, df: pd.DataFrame) -> QualityIssue | None:
+    """
+    METRIC_004: COMPARISON_STATUS es una columna sin variante por periodo,
+    auditada UNA sola vez por cliente (no forma parte de la cascada
+    period-level, porque no depende de PeriodColumns). No reconstruye
+    COMPARISON_STATUS ni cambia la poblacion comparable: solo evita que un
+    valor nuevo/erroneo del backend quede tratado silenciosamente como
+    "no comparable" sin que nadie lo note. Un valor nulo ya se trata como
+    no-comparable por la logica existente y NO se clasifica como
+    "desconocido" aqui.
+    """
+    if "COMPARISON_STATUS" not in df.columns:
+        return None
+    status = df["COMPARISON_STATUS"]
+    bad = status.notna() & ~status.isin(KNOWN_COMPARISON_STATUS_VALUES)
+    n_bad = int(bad.sum())
+    if n_bad == 0:
+        return None
+    unexpected_values = status[bad].value_counts().to_dict()
+    return QualityIssue(
+        Severity.WARNING, "UNKNOWN_COMPARISON_STATUS_VALUE",
+        f"{n_bad} filas con COMPARISON_STATUS fuera del dominio conocido: {unexpected_values}.",
+        scope="file", details={"file": file_label, "unexpected_values": unexpected_values, "n_rows": n_bad},
+    )
+
+
+_BINARY_FLAG_COLUMNS = ("HAS_BASE_CANDIDATE", "HAS_SCP_CALCULATED", "HAS_ML_CALCULATED", "HAS_ML_EXCLUDED")
+
+
+def check_invalid_binary_flag_value(file_label: str, df: pd.DataFrame) -> list[QualityIssue]:
+    """
+    METRIC_005: los flags backend HAS_BASE_CANDIDATE/HAS_SCP_CALCULATED/
+    HAS_ML_CALCULATED/HAS_ML_EXCLUDED deberian valer 0 o 1 cuando estan
+    presentes. Columnas sin variante por periodo, auditadas UNA sola vez por
+    cliente (mismo bloque que check_unknown_comparison_status_value). No se
+    deduce ninguna semantica adicional de estos flags: en particular NO se
+    relaciona HAS_*_CALCULATED=1 con cobertura mensual completa de 6M
+    (decision metodologica cerrada en Fase 9A).
+    """
+    issues: list[QualityIssue] = []
+    for col in _BINARY_FLAG_COLUMNS:
+        if col not in df.columns:
+            continue
+        value = _coerce_numeric(df[col])
+        bad = value.notna() & ~value.isin([0, 1])
+        n_bad = int(bad.sum())
+        if n_bad == 0:
+            continue
+        unexpected_values = df.loc[bad, col].value_counts().to_dict()
+        issues.append(QualityIssue(
+            Severity.WARNING, "INVALID_BINARY_FLAG_VALUE",
+            f"{n_bad} filas con {col} fuera del dominio {{0,1}}: {unexpected_values}.",
+            scope="file", details={
+                "file": file_label, "column": col, "unexpected_values": unexpected_values, "n_rows": n_bad,
+            },
+        ))
+    return issues
