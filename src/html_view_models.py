@@ -46,6 +46,7 @@ from src.phase8_presentation import (
     volume_bucket_label_es,
     volume_not_assignable_reason_es,
 )
+from src.quality_presentation import issue_period, metric_audit_friendly_label, metric_audit_global_rows
 
 MODEL_CLASSIFICATION_PERIOD = "6M"
 
@@ -300,6 +301,18 @@ def build_client_row_vm(result) -> dict:
 
 def build_client_table_vm(client_results: list) -> list[dict]:
     return [build_client_row_vm(r) for r in client_results]
+
+
+# --------------------------------------------------------------------------
+# 6.5b Auditoria de metricas (Fase 9C, global): agrega QualityIssue ya
+# calculados por cada ClientAnalysisResult -- nunca vuelve a ejecutar los
+# chequeos METRIC_00X sobre una concatenacion global (ver
+# src/quality_presentation.metric_audit_global_rows).
+# --------------------------------------------------------------------------
+
+def build_metric_audit_vm(results: list) -> dict:
+    rows = metric_audit_global_rows(results)
+    return {"rows": rows, "has_issues": bool(rows)}
 
 
 # --------------------------------------------------------------------------
@@ -716,7 +729,10 @@ def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
         "warnings_count": counts.get("WARNING", 0),
         "errors_count": counts.get("ERROR", 0),
         "quality_issues": [
-            {"severity": i.severity.value, "code": i.code, "message": i.message}
+            {
+                "severity": i.severity.value, "code": i.code, "message": i.message,
+                "label": metric_audit_friendly_label(i.code), "scope": i.scope, "period": issue_period(i),
+            }
             for i in result.quality.issues if i.severity.value != "OK"
         ],
         "prev_client": prev_client,

@@ -1,7 +1,9 @@
 from src.global_analysis import analyze_global
 from src.global_report_writer import build_global_report
+from src.quality_checks import QualityIssue, Severity
 from tests.factories import (
     build_global_analysis_result,
+    build_multi_client_results,
     build_phase8_global_missing_client_results,
     build_phase8_global_multi_client_analysis_result,
 )
@@ -41,6 +43,84 @@ def test_build_global_report_improving_and_worsening_tables_include_id_client():
     # 77777_AllMlWins mejora (+50%); 99999_Synthetic empeora (ML peor que SCP en 6M).
     assert "| 77777 | AllMlWins |" in section_13
     assert "| 99999 | Synthetic |" in section_14
+
+
+# --------------------------------------------------------------------------
+# Fase 9C: subseccion "Auditoria de metricas" (5 codigos aprobados de Fase
+# 9B) dentro de la seccion 20 (Riesgos y limitaciones). Tests de
+# PRESENTACION: los QualityIssue se inyectan a mano sobre resultados
+# sinteticos ya calculados, nunca se ejercitan los checks de
+# src/quality_checks.py, y nunca se recalculan sobre el conjunto global.
+# --------------------------------------------------------------------------
+
+def _section_20(report: str) -> str:
+    return report.split("## 20. Riesgos y limitaciones")[1].split("## 21.")[0]
+
+
+def test_global_metric_audit_subsection_clean_when_no_metric_issues():
+    """Case A (global): sin issues METRIC_* -> mensaje breve, sin filas por codigo."""
+    result = build_global_analysis_result()
+    report = build_global_report(result)
+    section_20 = _section_20(report)
+
+    assert "### Auditoría de métricas" in section_20
+    assert "No se han detectado incidencias de auditoría de métricas." in section_20
+
+
+def test_global_metric_audit_subsection_aggregates_two_clients_same_code():
+    """Case F: global con dos clientes afectados por el mismo codigo -> una fila con N clientes afectados = 2."""
+    clients = build_multi_client_results()
+    clients[0].quality.add(QualityIssue(
+        Severity.WARNING, "INFINITE_METRIC_VALUE", "msg a", scope="period", details={"period": "6M"},
+    ))
+    clients[2].quality.add(QualityIssue(
+        Severity.WARNING, "INFINITE_METRIC_VALUE", "msg b", scope="period", details={"period": "6M"},
+    ))
+    result = analyze_global(clients)
+    report = build_global_report(result)
+    section_20 = _section_20(report)
+
+    assert "INFINITE_METRIC_VALUE" in section_20
+    assert "Valor infinito en métrica" in section_20
+    rows = [line for line in section_20.splitlines() if "INFINITE_METRIC_VALUE" in line]
+    assert len(rows) == 1
+    assert (
+        "| WARNING | INFINITE_METRIC_VALUE | Valor infinito en métrica | 6M | 2 | 2 | "
+        "77777 (AllMlWins), 99999 (Synthetic) |"
+    ) == rows[0]
+
+
+def test_global_metric_audit_subsection_keeps_different_periods_in_separate_rows():
+    """Case G: mismo codigo en dos periodos distintos -> dos filas separadas, no mezcladas."""
+    clients = build_multi_client_results()
+    clients[0].quality.add(QualityIssue(
+        Severity.WARNING, "NEGATIVE_NONNEGATIVE_METRIC_VALUE", "m1", scope="period", details={"period": "M1"},
+    ))
+    clients[0].quality.add(QualityIssue(
+        Severity.WARNING, "NEGATIVE_NONNEGATIVE_METRIC_VALUE", "6m", scope="period", details={"period": "6M"},
+    ))
+    result = analyze_global(clients)
+    report = build_global_report(result)
+    section_20 = _section_20(report)
+
+    rows = [line for line in section_20.splitlines() if "NEGATIVE_NONNEGATIVE_METRIC_VALUE" in line]
+    assert len(rows) == 2
+    assert any("| M1 |" in r for r in rows)
+    assert any("| 6M |" in r for r in rows)
+
+
+def test_global_metric_audit_subsection_does_not_duplicate_other_quality_checks():
+    """Case I: un warning preexistente (no METRIC_*) no debe aparecer en la subseccion filtrada."""
+    clients = build_multi_client_results()
+    clients[0].quality.add(QualityIssue(
+        Severity.WARNING, "EXTREME_WAPE", "3 filas > 500%.", scope="period", details={"period": "M1"},
+    ))
+    result = analyze_global(clients)
+    report = build_global_report(result)
+    section_20 = _section_20(report)
+    audit_subsection = section_20.split("### Auditoría de métricas")[1]
+
+    assert "EXTREME_WAPE" not in audit_subsection
 
 
 def test_build_global_report_preserves_technical_period_names_in_headings():

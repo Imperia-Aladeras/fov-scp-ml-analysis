@@ -111,6 +111,33 @@ def test_data_quality_checks_counts_affected_clients_by_id_not_by_shared_file_la
     assert list(shared_detail.columns[:2]) == ["ID_CLIENT", "CLIENTE"]
 
 
+def test_data_quality_checks_does_not_mix_same_code_across_different_periods(tmp_path: Path):
+    """
+    Fase 9C, seccion 12: un METRIC_001 en M1 y otro en 6M son incidencias
+    distintas aunque compartan codigo -- no deben colapsar en la misma fila
+    de resumen (universo M1 != universo 6M).
+    """
+    result = analyze_client(make_client_source(build_synthetic_client_dataframe(), 30001, "PeriodMix"))
+    result.quality.add(QualityIssue(
+        Severity.WARNING, "NEGATIVE_NONNEGATIVE_METRIC_VALUE", "1 filas con SCP_WAPE_M1 negativo.",
+        scope="period", details={"period": "M1"},
+    ))
+    result.quality.add(QualityIssue(
+        Severity.WARNING, "NEGATIVE_NONNEGATIVE_METRIC_VALUE", "1 filas con SCP_WAPE_6M negativo.",
+        scope="period", details={"period": "6M"},
+    ))
+
+    global_result = GlobalAnalysisResult(client_results=[result], invalid_results=[])
+    blocks = data_quality_checks_blocks(global_result)
+    summary_df = blocks[0][1]
+
+    rows = summary_df[summary_df["CODIGO"] == "NEGATIVE_NONNEGATIVE_METRIC_VALUE"]
+    assert len(rows) == 2
+    assert set(rows["PERIODO"]) == {"M1", "6M"}
+    assert (rows["N_OCURRENCIAS"] == 1).all()
+    assert (rows["DESCRIPCION"] == "Valor negativo en métrica no negativa").all()
+
+
 # --------------------------------------------------------------------------
 # 16_pareto_absolute_impact
 # --------------------------------------------------------------------------

@@ -26,6 +26,7 @@ from src.phase8_presentation import (
     sort_volume_table,
     volume_bucket_label_es,
 )
+from src.quality_presentation import metric_audit_global_rows
 from src.report_writer import (
     _fmt_num,
     _fmt_pct_fraction,
@@ -48,6 +49,26 @@ _PHASE8_BASE_HEADERS = [
 ]
 _PHASE8_BIAS_HEADERS = ["Bias SCP", "Direccion SCP", "Bias ML", "Direccion ML"]
 _CROSS_TABLE_TOP_N = 30
+
+
+def _metric_audit_global_table_lines(rows: list[dict]) -> list[str]:
+    """
+    Tabla compacta de auditoria de metricas (Fase 9B) agregada por
+    (severidad, codigo, periodo) via src.quality_presentation.metric_audit_global_rows
+    -- consume QualityIssue ya calculados por cada ClientAnalysisResult,
+    nunca recalcula los chequeos sobre el conjunto global.
+    """
+    if not rows:
+        return ["No se han detectado incidencias de auditoría de métricas."]
+    headers = ["Severidad", "Código", "Descripción", "Periodo", "N clientes afectados", "N incidencias", "Clientes"]
+    table_rows = [
+        [
+            r["severidad"], r["codigo"], r["descripcion"], r["periodo"],
+            str(r["n_clientes_afectados"]), str(r["n_issues"]), r["clientes"],
+        ]
+        for r in rows
+    ]
+    return _table_from_rows(headers, table_rows)
 
 
 def _phase8_category_table_lines(table: pd.DataFrame, category_label: str = "Categoria", top_n: int = 10) -> list[str]:
@@ -629,6 +650,17 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     ]
     for lim in limitations:
         a(f"- {lim}")
+    a("")
+    a("### Auditoría de métricas")
+    a("")
+    audit_rows = metric_audit_global_rows(result.client_results, result.invalid_results)
+    a("\n".join(_metric_audit_global_table_lines(audit_rows)))
+    if audit_rows:
+        a("")
+        a(
+            "Un mismo código en dos periodos distintos se cuenta en filas separadas (no se mezclan universos "
+            "distintos); ver el detalle completo por cliente en la hoja `15_data_quality_checks` del Excel global."
+        )
     a("")
     a("---")
     a("")

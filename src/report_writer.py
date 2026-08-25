@@ -34,6 +34,7 @@ from src.phase8_presentation import (
     volume_bucket_label_es,
     volume_not_assignable_reason_es,
 )
+from src.quality_presentation import filter_metric_audit_issues, issue_period, metric_audit_friendly_label
 
 MODEL_CLASSIFICATION_PERIOD = "6M"
 
@@ -197,6 +198,29 @@ def _ranking_table_lines(df: pd.DataFrame, value_col: str, value_fmt) -> list[st
             str(r.get("SCP_BEST_MODEL", "")), str(r.get("ML_BEST_MODEL", "")),
             str(r.get("SERIES_CLASSIFICATION", "")),
         ])
+    return _table_from_rows(headers, rows)
+
+
+def _metric_audit_table_lines(issues: list) -> list[str]:
+    """
+    Tabla compacta de auditoria de metricas (Fase 9B, 5 codigos aprobados,
+    ver src/quality_presentation.py). No recalcula ni reinterpreta los
+    QualityIssue: solo traduce el codigo a castellano y reutiliza el mensaje
+    ya generado por Fase 9B para el Detalle. Ambito y Periodo se leen de
+    issue.scope/issue_period(issue) directamente (no de issue.message: no
+    todos los mensajes de Fase 9B repiten el periodo en prosa, p.ej.
+    METRIC_001/002). "—" para checks file/client-level sin periodo.
+    """
+    if not issues:
+        return ["No se han detectado incidencias de auditoría de métricas."]
+    headers = ["Severidad", "Código", "Descripción", "Ámbito", "Periodo", "Detalle"]
+    rows = [
+        [
+            issue.severity.value, issue.code, metric_audit_friendly_label(issue.code) or "",
+            issue.scope, issue_period(issue) or "—", issue.message,
+        ]
+        for issue in issues
+    ]
     return _table_from_rows(headers, rows)
 
 
@@ -570,6 +594,10 @@ def build_client_report(result: ClientAnalysisResult) -> str:
         risks.append("No se han detectado riesgos adicionales relevantes mas alla de los chequeos de calidad estandar.")
     for r in risks:
         a(f"- {r}")
+    a("")
+    a("### Auditoría de métricas")
+    a("")
+    a("\n".join(_metric_audit_table_lines(filter_metric_audit_issues(result.quality.issues))))
     a("")
     a("---")
     a("")

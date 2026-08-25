@@ -8,11 +8,13 @@ from src.excel_writer import (
     _dict_to_df,
     build_client_workbook,
     classifications_blocks,
+    data_quality_checks_table,
     executive_summary_table,
     models_and_win_rates_blocks,
     pareto_absolute_impact_blocks,
     phase8_bias_volume_blocks,
 )
+from src.quality_checks import QualityIssue, Severity
 from tests.factories import build_synthetic_client_result, build_volume_bucket_client_result
 
 EXPECTED_SHEETS = [
@@ -26,6 +28,51 @@ EXPECTED_SHEETS = [
 def test_dict_to_df_sorted_descending():
     df = _dict_to_df({"a": 1, "b": 5, "c": 3}, "K", "V")
     assert df["K"].tolist() == ["b", "c", "a"]
+
+
+# --------------------------------------------------------------------------
+# Fase 9C: columnas DESCRIPCION/PERIODO en 13_data_quality_checks. Tests de
+# PRESENTACION: los QualityIssue se inyectan a mano, no se ejercitan los
+# checks de src/quality_checks.py.
+# --------------------------------------------------------------------------
+
+def test_data_quality_checks_table_keeps_code_severity_scope_and_context():
+    """Case K: el Excel individual conserva code/severity/scope/periodo/mensaje sin perderlos."""
+    result = build_synthetic_client_result(with_data=True)
+    result.quality.issues.append(QualityIssue(
+        Severity.WARNING, "NEGATIVE_NONNEGATIVE_METRIC_VALUE",
+        "1 filas con SCP_WAPE_M1 negativo (dominio matematico >=0 para WAPE).",
+        scope="period", details={"file": "f", "period": "M1", "column": "SCP_WAPE_M1", "n_violations": 1},
+    ))
+    result.quality.issues.append(QualityIssue(
+        Severity.WARNING, "INVALID_BINARY_FLAG_VALUE",
+        "1 filas con HAS_ML_EXCLUDED fuera del dominio {0,1}: {2: 1}.",
+        scope="file", details={"file": "f", "column": "HAS_ML_EXCLUDED", "unexpected_values": {2: 1}, "n_rows": 1},
+    ))
+    df = data_quality_checks_table(result)
+
+    period_row = df[df["CODIGO"] == "NEGATIVE_NONNEGATIVE_METRIC_VALUE"].iloc[0]
+    assert period_row["SEVERIDAD"] == "WARNING"
+    assert period_row["AMBITO"] == "period"
+    assert period_row["PERIODO"] == "M1"
+    assert period_row["DESCRIPCION"] == "Valor negativo en métrica no negativa"
+    assert "SCP_WAPE_M1" in period_row["MENSAJE"]
+
+    file_row = df[df["CODIGO"] == "INVALID_BINARY_FLAG_VALUE"].iloc[0]
+    assert file_row["AMBITO"] == "file"
+    assert file_row["PERIODO"] == ""  # scope file-level: sin periodo, no "None"
+    assert file_row["DESCRIPCION"] == "Valor inválido en indicador binario"
+
+
+def test_data_quality_checks_table_unknown_code_has_blank_description_not_invented():
+    """Case H: fallback -- un codigo preexistente/desconocido no recibe una traduccion inventada."""
+    result = build_synthetic_client_result(with_data=True)
+    result.quality.issues.append(QualityIssue(
+        Severity.WARNING, "EXTREME_WAPE", "3 filas con SCP_WAPE_M1 > 500%.", scope="period", details={"period": "M1", "n_extreme": 3},
+    ))
+    df = data_quality_checks_table(result)
+    row = df[df["CODIGO"] == "EXTREME_WAPE"].iloc[0]
+    assert row["DESCRIPCION"] == ""
 
 
 def test_dict_to_df_empty():

@@ -34,6 +34,7 @@ from src.phase8_presentation import (
     volume_bucket_label_es,
     volume_not_assignable_reason_es,
 )
+from src.quality_presentation import issue_period, metric_audit_friendly_label
 
 TITLE_FONT = Font(bold=True, size=11, color="1F3864")
 HEADER_FONT = Font(bold=True)
@@ -515,7 +516,12 @@ def pareto_absolute_impact_blocks(result: ClientAnalysisResult) -> list[tuple[st
 
 def data_quality_checks_table(result: ClientAnalysisResult) -> pd.DataFrame:
     rows = [
-        {"SEVERIDAD": issue.severity.value, "CODIGO": issue.code, "AMBITO": issue.scope, "MENSAJE": issue.message}
+        {
+            "SEVERIDAD": issue.severity.value, "CODIGO": issue.code,
+            "DESCRIPCION": metric_audit_friendly_label(issue.code) or "",
+            "AMBITO": issue.scope, "PERIODO": issue_period(issue) or "",
+            "MENSAJE": issue.message,
+        }
         for issue in result.quality.issues
     ]
     return pd.DataFrame(rows)

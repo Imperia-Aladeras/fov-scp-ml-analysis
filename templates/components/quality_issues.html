@@ -4,7 +4,8 @@
   {% for issue in issues %}
   <li class="quality-issue quality-issue--{{ issue.severity | lower }}">
     <span class="badge badge--{{ issue.severity | lower }}">{{ issue.severity }}</span>
-    <code>{{ issue.code }}</code> — {{ issue.message }}
+    <code>{{ issue.code }}</code>{% if issue.label %} — <strong>{{ issue.label }}</strong>{% endif %} — {{ issue.message }}
+    <span class="note">({{ issue.scope }}{% if issue.period %} · {{ issue.period }}{% endif %})</span>
   </li>
   {% endfor %}
 </ul>

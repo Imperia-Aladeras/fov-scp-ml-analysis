@@ -41,6 +41,7 @@
     <li><a href="#graficos">Modelos, clasificaciones e impacto/riesgos (gráficos)</a></li>
     <li><a href="#fase8-global">Diagnóstico Fase 8 global: Bias y volumen relativo</a></li>
     <li><a href="#clientes">Clientes</a></li>
+    <li><a href="#auditoria-metricas">Auditoría de métricas</a></li>
     <li><a href="#metodologia">Metodología y limitaciones</a></li>
     <li><a href="#ficheros">Ficheros de la ejecución</a></li>
   </ul>
@@ -344,6 +345,40 @@
   </table>
   </div>
   <p class="note">El estado de cada cliente se indica con texto además de color: Evaluable, Sin performance, Con warnings, Con errores o Inválido.</p>
+</section>
+
+<section id="auditoria-metricas" aria-labelledby="auditoria-metricas-h">
+  <h2 id="auditoria-metricas-h">Auditoría de métricas</h2>
+  {% if quality_audit and quality_audit.has_issues %}
+  <p class="note">Incidencias de auditoría de métricas (Fase 9B) ya detectadas en el análisis individual de cada cliente: esta tabla las agrega, nunca recalcula los chequeos sobre el conjunto global. Un mismo código en dos periodos distintos se muestra en filas separadas.</p>
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Severidad</th><th scope="col">Código</th><th scope="col">Descripción</th>
+        <th scope="col">Periodo</th><th scope="col">N clientes</th><th scope="col">Incidencias</th>
+        <th scope="col">Clientes afectados</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in quality_audit.rows %}
+      <tr>
+        <td><span class="badge badge--{{ row.severidad | lower }}">{{ row.severidad }}</span></td>
+        <td><code>{{ row.codigo }}</code></td>
+        <td>{{ row.descripcion }}</td>
+        <td>{{ row.periodo }}</td>
+        <td>{{ row.n_clientes_afectados }}</td>
+        <td>{{ row.n_issues }}</td>
+        <td>{{ row.clientes }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="note">Ver el detalle completo por cliente (incluyendo el resto de chequeos de calidad) en la hoja <code>15_data_quality_checks</code> del Excel global.</p>
+  {% else %}
+  <p class="note">No se han detectado incidencias de auditoría de métricas.</p>
+  {% endif %}
 </section>
 
 <section id="inventario" aria-labelledby="inventario-h">

@@ -18,14 +18,19 @@ import pytest
 import analysis_fov_scp_ml as pipeline
 from src import html_formatters as fmt
 from src import html_view_models as vm
+from src.client_analysis import ClientAnalysisResult
 from src.html_report import extract_local_links, generate_html_report, validate_run_links
 from src.periods import ALL_PERIODS, period_columns
+from src.quality_checks import QualityIssue, Severity
 from tests.factories import (
     build_global_analysis_result,
+    build_multi_client_results,
     build_phase8_global_missing_client_results,
     build_phase8_global_multi_client_analysis_result,
+    build_synthetic_client_dataframe,
     build_synthetic_client_result,
     build_volume_bucket_client_result,
+    make_client_source,
 )
 
 # --------------------------------------------------------------------------
@@ -961,6 +966,106 @@ def test_build_client_page_vm_omits_pareto_when_no_comparable_series_anywhere():
     page_vm = vm.build_client_page_vm(result)
     assert page_vm["kind"] == "no_performance"
     assert "pareto" not in page_vm
+
+
+# --------------------------------------------------------------------------
+# Fase 9C: traduccion/periodo en quality_issues (individual) y agregacion
+# global de auditoria de metricas. Tests de PRESENTACION: los QualityIssue
+# se inyectan a mano, no se ejercitan los checks de src/quality_checks.py.
+# --------------------------------------------------------------------------
+
+def test_build_client_page_vm_quality_issues_carry_friendly_label_scope_and_period():
+    """Case B/D: METRIC_001 (period-level) y METRIC_004 (file-level) exponen label/scope/period para el macro HTML."""
+    result = build_synthetic_client_result(with_data=True)
+    result.quality.issues.append(QualityIssue(
+        Severity.WARNING, "NEGATIVE_NONNEGATIVE_METRIC_VALUE", "1 filas con SCP_WAPE_M1 negativo.",
+        scope="period", details={"period": "M1"},
+    ))
+    result.quality.issues.append(QualityIssue(
+        Severity.WARNING, "UNKNOWN_COMPARISON_STATUS_VALUE", "1 filas con COMPARISON_STATUS desconocido.",
+        scope="file", details={},
+    ))
+    page_vm = vm.build_client_page_vm(result)
+    by_code = {i["code"]: i for i in page_vm["quality_issues"]}
+
+    period_issue = by_code["NEGATIVE_NONNEGATIVE_METRIC_VALUE"]
+    assert period_issue["label"] == "Valor negativo en métrica no negativa"
+    assert period_issue["scope"] == "period"
+    assert period_issue["period"] == "M1"
+
+    file_issue = by_code["UNKNOWN_COMPARISON_STATUS_VALUE"]
+    assert file_issue["label"] == "Estado de comparación no reconocido"
+    assert file_issue["scope"] == "file"
+    assert file_issue["period"] is None
+
+
+def test_build_client_page_vm_quality_issues_unknown_code_has_no_invented_label():
+    """Case H: fallback -- un codigo preexistente no recibe una traduccion de auditoria de metricas."""
+    result = build_synthetic_client_result(with_data=True)
+    result.quality.issues.append(QualityIssue(
+        Severity.WARNING, "EXTREME_WAPE", "3 filas con SCP_WAPE_M1 > 500%.", scope="period", details={"period": "M1"},
+    ))
+    page_vm = vm.build_client_page_vm(result)
+    issue = next(i for i in page_vm["quality_issues"] if i["code"] == "EXTREME_WAPE")
+    assert issue["label"] is None
+
+
+def test_build_metric_audit_vm_clean_state_when_no_metric_issues():
+    """Case A: sin issues METRIC_* -> has_issues False, rows vacio (el template muestra el mensaje breve)."""
+    results = build_multi_client_results()
+    page_vm = vm.build_metric_audit_vm(results)
+    assert page_vm == {"rows": [], "has_issues": False}
+
+
+def test_build_metric_audit_vm_includes_issues_that_only_exist_on_an_invalid_result():
+    """
+    Revision 9C, punto 2: en analysis_fov_scp_ml.py (fase CLIENT_PROCESSING),
+    `results` acumula TODOS los ClientAnalysisResult -- validos e invalidos
+    (el fallback de la linea ~562, `ClientAnalysisResult(source=source,
+    file_valid=False, status="ERROR")`, se anade a la misma lista con
+    `results.append(result)`, sin distincion). src/html_report.py deriva
+    `ordered_results = sorted(results, ...)` de esa MISMA lista y se la pasa
+    tal cual a vm.build_metric_audit_vm -- por construccion ya incluye
+    invalid_results, sin necesitar separarlos (a diferencia de Excel/Markdown
+    global, que si reciben client_results/invalid_results por separado desde
+    GlobalAnalysisResult). Esta prueba fija ese contrato: un QualityIssue
+    METRIC_* que solo existe en un resultado invalido debe aparecer igualmente
+    en la auditoria global.
+    """
+    valid = build_synthetic_client_result(with_data=True)
+
+    invalid_source = make_client_source(build_synthetic_client_dataframe(), 55555, "InvalidClient")
+    invalid_result = ClientAnalysisResult(source=invalid_source, file_valid=False, status="ERROR")
+    invalid_result.quality.add(QualityIssue(
+        Severity.WARNING, "INVALID_BINARY_FLAG_VALUE", "1 filas con HAS_ML_EXCLUDED fuera del dominio {0,1}.",
+        scope="file", details={},
+    ))
+
+    # Misma forma que ordered_results en html_report.py: una unica lista plana
+    # con validos e invalidos mezclados, nunca separados en dos parametros.
+    page_vm = vm.build_metric_audit_vm([valid, invalid_result])
+
+    assert page_vm["has_issues"] is True
+    row = next(r for r in page_vm["rows"] if r["codigo"] == "INVALID_BINARY_FLAG_VALUE")
+    assert row["n_clientes_afectados"] == 1
+    assert "55555" in row["clientes"]
+
+
+def test_build_metric_audit_vm_aggregates_two_clients_same_code():
+    """Case F: global con dos clientes afectados por el mismo codigo -> una fila agregada con n_clientes_afectados=2."""
+    results = build_multi_client_results()
+    results[0].quality.issues.append(QualityIssue(
+        Severity.WARNING, "INFINITE_METRIC_VALUE", "msg a", scope="period", details={"period": "6M"},
+    ))
+    results[2].quality.issues.append(QualityIssue(
+        Severity.WARNING, "INFINITE_METRIC_VALUE", "msg b", scope="period", details={"period": "6M"},
+    ))
+    page_vm = vm.build_metric_audit_vm(results)
+    assert page_vm["has_issues"] is True
+    assert len(page_vm["rows"]) == 1
+    row = page_vm["rows"][0]
+    assert row["n_clientes_afectados"] == 2
+    assert row["descripcion"] == "Valor infinito en métrica"
 
 
 def test_client_page_renders_pareto_section_with_empty_deterioration_group(tmp_path: Path):

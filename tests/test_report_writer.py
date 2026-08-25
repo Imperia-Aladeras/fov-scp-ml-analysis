@@ -1,9 +1,11 @@
+from src.quality_checks import QualityIssue, Severity
 from src.report_writer import (
     _fmt_num,
     _fmt_pct_fraction,
     _fmt_pct_scaled,
     _fmt_signed_pct_fraction,
     _fmt_signed_pct_scaled,
+    _metric_audit_table_lines,
     build_client_report,
 )
 from tests.factories import build_multi_client_results, build_synthetic_client_result, build_volume_bucket_client_result
@@ -65,6 +67,129 @@ def test_section_9_states_empty_deterioration_group_explicitly():
 
     section_9 = report.split("## 9. Impacto absoluto")[1].split("## 10.")[0]
     assert "Sin series con deterioro en 6M" in section_9
+
+
+# --------------------------------------------------------------------------
+# Fase 9C: subseccion "Auditoria de metricas" (5 codigos aprobados de Fase
+# 9B), dentro de la seccion 16 (Riesgos). Tests de PRESENTACION, no de
+# analisis: los QualityIssue se inyectan a mano sobre un resultado sintetico
+# ya calculado, nunca se ejercitan los checks de src/quality_checks.py.
+# --------------------------------------------------------------------------
+
+def _section_16(report: str) -> str:
+    return report.split("## 16. Riesgos")[1].split("## 17.")[0]
+
+
+def test_metric_audit_subsection_present_and_clean_when_no_metric_issues():
+    """Case A: cliente sin issues METRIC_* -> mensaje breve, sin filas OK por codigo."""
+    result = build_synthetic_client_result(with_data=True)
+    report = build_client_report(result)
+    section_16 = _section_16(report)
+
+    assert "### Auditoría de métricas" in section_16
+    assert "No se han detectado incidencias de auditoría de métricas." in section_16
+    assert "METRIC_001" not in section_16
+    assert "PASS" not in section_16
+
+
+def test_metric_audit_subsection_shows_metric_001_period_level():
+    """Case B: METRIC_001 period-level aparece con codigo, traduccion y mensaje (incluye periodo via nombre de columna)."""
+    result = build_synthetic_client_result(with_data=True)
+    result.quality.issues.append(QualityIssue(
+        Severity.WARNING, "NEGATIVE_NONNEGATIVE_METRIC_VALUE",
+        "1 filas con SCP_WAPE_M1 negativo (dominio matematico >=0 para WAPE).",
+        scope="period", details={"file": "f", "period": "M1", "column": "SCP_WAPE_M1", "n_violations": 1},
+    ))
+    report = build_client_report(result)
+    section_16 = _section_16(report)
+
+    assert "NEGATIVE_NONNEGATIVE_METRIC_VALUE" in section_16
+    assert "Valor negativo en métrica no negativa" in section_16
+    assert "SCP_WAPE_M1" in section_16
+    assert "WARNING" in section_16
+
+
+def test_metric_audit_subsection_shows_metric_003_with_unexpected_values():
+    """Case C: METRIC_003 con unexpected_values en el mensaje (texto ya generado por Fase 9B, no se reformatea)."""
+    result = build_synthetic_client_result(with_data=True)
+    result.quality.issues.append(QualityIssue(
+        Severity.WARNING, "INVALID_WINNER_METHOD_VALUE",
+        "2 filas comparables en 6M con WINNER_METHOD_6M fuera del dominio ['ML', 'SCP', 'TIE']: {'DRAW': 2}.",
+        scope="period", details={"file": "f", "period": "6M", "column": "WINNER_METHOD_6M", "unexpected_values": {"DRAW": 2}, "n_rows": 2},
+    ))
+    report = build_client_report(result)
+    section_16 = _section_16(report)
+
+    assert "Método ganador no reconocido" in section_16
+    assert "DRAW" in section_16
+
+
+def test_metric_audit_subsection_shows_explicit_scope_and_period_for_period_level_issue():
+    """
+    Revision 9C: Ambito y Periodo deben ser columnas propias (issue.scope /
+    issue_period(issue)), no solo deducibles del texto de issue.message --
+    aqui el mensaje deliberadamente NO repite el periodo en prosa (como
+    ocurre en la vida real con METRIC_001/002), para demostrar que la tabla
+    no depende de ello.
+    """
+    result = build_synthetic_client_result(with_data=True)
+    result.quality.issues.append(QualityIssue(
+        Severity.WARNING, "NEGATIVE_NONNEGATIVE_METRIC_VALUE", "mensaje sin periodo en prosa",
+        scope="period", details={"period": "6M"},
+    ))
+    report = build_client_report(result)
+    section_16 = _section_16(report)
+    audit_subsection = section_16.split("### Auditoría de métricas")[1]
+
+    assert "| Severidad | Código | Descripción | Ámbito | Periodo | Detalle |" in audit_subsection
+    assert (
+        "| WARNING | NEGATIVE_NONNEGATIVE_METRIC_VALUE | Valor negativo en métrica no negativa | "
+        "period | 6M | mensaje sin periodo en prosa |"
+    ) in audit_subsection
+
+
+def test_metric_audit_subsection_shows_dash_period_for_file_level_issue():
+    """Case D/E: METRIC_004/METRIC_005 son file-level -> Ambito='file', Periodo='—' (nunca 'None')."""
+    result = build_synthetic_client_result(with_data=True)
+    result.quality.issues.append(QualityIssue(
+        Severity.WARNING, "INVALID_BINARY_FLAG_VALUE",
+        "1 filas con HAS_ML_EXCLUDED fuera del dominio {0,1}: {2: 1}.",
+        scope="file", details={"column": "HAS_ML_EXCLUDED", "unexpected_values": {2: 1}, "n_rows": 1},
+    ))
+    report = build_client_report(result)
+    section_16 = _section_16(report)
+    audit_subsection = section_16.split("### Auditoría de métricas")[1]
+
+    assert "| WARNING | INVALID_BINARY_FLAG_VALUE | Valor inválido en indicador binario | file | — |" in audit_subsection
+    assert " None " not in audit_subsection
+    assert "| None |" not in audit_subsection
+
+
+def test_metric_audit_subsection_does_not_duplicate_other_quality_checks():
+    """Case I: un warning preexistente (no METRIC_*) no debe aparecer en la subseccion filtrada."""
+    result = build_synthetic_client_result(with_data=True)
+    result.quality.issues.append(QualityIssue(
+        Severity.WARNING, "EXTREME_WAPE", "3 filas con SCP_WAPE_M1 > 500%.", scope="period", details={"period": "M1", "n_extreme": 3},
+    ))
+    report = build_client_report(result)
+    section_16 = _section_16(report)
+    audit_subsection = section_16.split("### Auditoría de métricas")[1]
+
+    assert "EXTREME_WAPE" not in audit_subsection
+
+
+def test_metric_audit_table_lines_never_renders_raw_none_nan_or_dict_repr_of_details():
+    """Case J: las columnas que SI generamos (severidad/codigo/descripcion) nunca son None/nan/dict crudo."""
+    issue = QualityIssue(
+        Severity.WARNING, "INFINITE_METRIC_VALUE", "1 filas con ML_WAPE_6M = +-inf.",
+        scope="period", details={"period": "6M", "column": "ML_WAPE_6M", "n_violations": 1, "sample_ids": [1]},
+    )
+    lines = _metric_audit_table_lines([issue])
+    rendered = "\n".join(lines)
+
+    assert "nan" not in rendered.lower()
+    assert " None" not in rendered
+    assert "{'period'" not in rendered  # no se vuelca el dict `details` crudo
 
 
 def test_build_client_report_never_recomputes_pareto(monkeypatch):

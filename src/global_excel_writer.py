@@ -24,6 +24,7 @@ from src.phase8_presentation import (
     sort_volume_table,
     volume_bucket_label_es,
 )
+from src.quality_presentation import issue_period, metric_audit_friendly_label
 
 MODEL_CLASSIFICATION_PERIOD = "6M"
 _SINGLE_TABLE_SHEETS = ("15_data_quality_checks",)
@@ -473,13 +474,18 @@ def exclusions_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.DataFr
 
 def data_quality_checks_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.DataFrame]]:
     all_results = result.client_results + result.invalid_results
-    summary_counts: dict[tuple[str, str], dict] = {}
+    # Clave (severidad, codigo, PERIODO): un mismo codigo en dos periodos
+    # distintos (p.ej. METRIC_001 en M1 y METRIC_001 en 6M) es una incidencia
+    # distinta y no debe sumarse en la misma fila de resumen (Fase 9C,
+    # seccion 12). Periodo=None para chequeos file/client-level.
+    summary_counts: dict[tuple[str, str, str | None], dict] = {}
     detail_rows = []
     for r in all_results:
         for issue in r.quality.issues:
             if issue.severity.value == "OK":
                 continue
-            key = (issue.severity.value, issue.code)
+            period = issue_period(issue)
+            key = (issue.severity.value, issue.code, period)
             entry = summary_counts.setdefault(key, {"n_occurrences": 0, "clients": set()})
             entry["n_occurrences"] += 1
             # Identidad por ID_CLIENT, nunca por file_label/display_name (Fase
@@ -492,11 +498,16 @@ def data_quality_checks_blocks(result: GlobalAnalysisResult) -> list[tuple[str, 
             detail_rows.append({
                 "ID_CLIENT": r.source.id_client, "CLIENTE": r.source.display_name,
                 "SEVERIDAD": issue.severity.value,
-                "CODIGO": issue.code, "AMBITO": issue.scope, "MENSAJE": issue.message,
+                "CODIGO": issue.code, "DESCRIPCION": metric_audit_friendly_label(issue.code) or "",
+                "AMBITO": issue.scope, "PERIODO": period or "",
+                "MENSAJE": issue.message,
             })
     summary_rows = [
-        {"SEVERIDAD": sev, "CODIGO": code, "N_OCURRENCIAS": v["n_occurrences"], "N_CLIENTES_AFECTADOS": len(v["clients"])}
-        for (sev, code), v in sorted(summary_counts.items(), key=lambda kv: -kv[1]["n_occurrences"])
+        {
+            "SEVERIDAD": sev, "CODIGO": code, "DESCRIPCION": metric_audit_friendly_label(code) or "",
+            "PERIODO": period or "", "N_OCURRENCIAS": v["n_occurrences"], "N_CLIENTES_AFECTADOS": len(v["clients"]),
+        }
+        for (sev, code, period), v in sorted(summary_counts.items(), key=lambda kv: -kv[1]["n_occurrences"])
     ]
     return [
         ("Resumen de incidencias por codigo (todos los clientes)", pd.DataFrame(summary_rows)),
