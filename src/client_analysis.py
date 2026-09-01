@@ -57,6 +57,11 @@ from src.metrics import (
 from src.models import pareto_absolute_impact
 from src.pareto import ParetoAnalysis
 from src.phase8 import Phase8ClientDiagnostics, build_phase8_client_diagnostics
+from src.portfolio import (
+    AVAILABILITY_SOURCE_UNAVAILABLE,
+    PortfolioAnalysisResult,
+    build_portfolio_analysis,
+)
 from src.periods import ALL_PERIODS, MONTHLY_PERIODS, PeriodColumns, period_columns, visible_label
 from src.quality_checks import (
     QualityReport,
@@ -139,6 +144,9 @@ class ClientAnalysisResult:
     comparison_status_distribution: dict = field(default_factory=dict)
     periods: dict = field(default_factory=dict)  # nivel 3: periods[period].status
     quality: QualityReport = field(default_factory=QualityReport)
+    portfolio: PortfolioAnalysisResult = field(
+        default_factory=lambda: PortfolioAnalysisResult.unavailable(AVAILABILITY_SOURCE_UNAVAILABLE),
+    )
 
 
 def _history_valid(df: pd.DataFrame, pcols: PeriodColumns) -> pd.Series:
@@ -500,8 +508,17 @@ def analyze_client(source: ClientSource) -> ClientAnalysisResult:
     # y en el detalle de cada QualityIssue, nunca escalan a ERROR de cliente.
     status = "SUCCESS_WITH_WARNINGS" if (quality.has_errors() or quality.has_warnings()) else "SUCCESS"
 
+    portfolio = build_portfolio_analysis(
+        df,
+        candidate_mask,
+        {
+            "OLDER_3M": periods["OLDER_3M"].comparable_mask,
+            "RECENT_3M": periods["RECENT_3M"].comparable_mask,
+        },
+    )
+
     return ClientAnalysisResult(
         source=source, file_valid=True, status=status, n_candidates=n_candidates,
         comparison_status_distribution=comparison_status_distribution,
-        periods=periods, quality=quality,
+        periods=periods, quality=quality, portfolio=portfolio,
     )

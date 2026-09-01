@@ -49,6 +49,11 @@ from src.phase8 import (
     category_performance_table_with_bias,
     classification_volume_cross_table,
 )
+from src.portfolio import (
+    AVAILABILITY_NO_VALID_CLIENTS,
+    PortfolioAnalysisResult,
+    combine_portfolio_analyses,
+)
 
 
 @dataclass
@@ -97,6 +102,9 @@ class GlobalAnalysisResult:
     invalid_results: list  # ClientAnalysisResult no validos (informativos)
     periods: dict = field(default_factory=dict)  # period -> GlobalPeriodResult
     client_period_tables: dict = field(default_factory=dict)  # period -> DataFrame (fila por cliente)
+    portfolio: PortfolioAnalysisResult = field(
+        default_factory=lambda: PortfolioAnalysisResult.unavailable(AVAILABILITY_NO_VALID_CLIENTS),
+    )
 
 
 def _period_history_sum(r: ClientAnalysisResult, period: str) -> float:
@@ -582,8 +590,9 @@ def analyze_global(all_results: list[ClientAnalysisResult]) -> GlobalAnalysisRes
 
     periods = {period: build_global_period_result(valid_results, period) for period in ALL_PERIODS}
     client_period_tables = {period: build_client_period_table(valid_results, period) for period in ALL_PERIODS}
+    portfolio = combine_portfolio_analyses(r.portfolio for r in valid_results)
 
     return GlobalAnalysisResult(
         client_results=valid_results, invalid_results=invalid_results,
-        periods=periods, client_period_tables=client_period_tables,
+        periods=periods, client_period_tables=client_period_tables, portfolio=portfolio,
     )
