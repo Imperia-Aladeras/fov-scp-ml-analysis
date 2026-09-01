@@ -199,6 +199,7 @@ def test_coverage_is_available_even_when_every_model_is_missing():
     assert coverage["n_model_missing"].eq(3).all()
     assert coverage["selection_assignment_rate"].eq(0.0).all()
     assert coverage["n_performance_evaluable"].eq(0).all()
+    assert result.portfolio.model_tables.by_engine_block_model.empty
 
 
 def test_coverage_counts_selection_and_performance_by_engine_and_block():

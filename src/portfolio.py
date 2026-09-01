@@ -1,8 +1,9 @@
 """Canonical block events for the Phase 10B portfolio analysis.
 
-This module deliberately stops at the 10B.2 contract: availability,
-long-form structural events and coverage.  It does not aggregate by model,
-family or classification, and it never falls back to legacy 6M metadata.
+It contains the 10B.2 availability/event/coverage contract and the explicit
+10B.3 aggregation by selected model.  It does not know about families,
+classification analysis or stability, and it never falls back to legacy 6M
+metadata.
 """
 
 from __future__ import annotations
@@ -14,7 +15,15 @@ import numpy as np
 import pandas as pd
 
 from src.input_loader import KEY_COLUMNS
-from src.metrics import absolute_error_reduction_row, relative_improvement_row
+from src.metrics import (
+    absolute_error_reduction_row,
+    absolute_error_reduction_total,
+    bias_aggregate,
+    period_wape_global,
+    relative_improvement_row,
+    winner_distribution,
+)
+from src.models import MIN_SAMPLE_SIZE_FOR_STRONG_CONCLUSION
 from src.periods import PeriodColumns, period_columns
 
 
@@ -56,6 +65,30 @@ COVERAGE_COLUMNS: tuple[str, ...] = (
     "n_performance_evaluable",
 )
 
+MODEL_TABLE_COLUMNS: tuple[str, ...] = (
+    "engine",
+    "block",
+    "model_name",
+    "selection_count",
+    "selection_assignable_count",
+    "selection_share_of_assignable",
+    "n_performance",
+    "n_clients",
+    "small_sample",
+    "historical_volume",
+    "volume_share",
+    "scp_wape",
+    "optimizer_wape",
+    "scp_bias",
+    "optimizer_bias",
+    "selected_engine_win_count",
+    "tie_count",
+    "selected_engine_win_rate",
+    "optimizer_improvement_vs_scp",
+    "optimizer_median_improvement_vs_scp",
+    "optimizer_abs_error_reduction_vs_scp",
+)
+
 
 class PortfolioContractError(ValueError):
     """Raised when the canonical event identity would not be unique."""
@@ -84,10 +117,20 @@ class PortfolioCoverage:
 
 
 @dataclass
+class PortfolioModelResult:
+    """Observed performance conditioned on model selection, never a model ranking."""
+
+    by_engine_block_model: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=MODEL_TABLE_COLUMNS),
+    )
+
+
+@dataclass
 class PortfolioAnalysisResult:
     availability: PortfolioAvailability
     events: PortfolioBlockEvents | None = None
     coverage: PortfolioCoverage | None = None
+    model_tables: PortfolioModelResult | None = None
 
     @classmethod
     def unavailable(
@@ -238,6 +281,144 @@ def build_portfolio_coverage(events: pd.DataFrame) -> PortfolioCoverage:
     return PortfolioCoverage(pd.DataFrame(rows, columns=COVERAGE_COLUMNS))
 
 
+def _period_metric_frame(events: pd.DataFrame, block: str) -> tuple[pd.DataFrame, PeriodColumns]:
+    """Adapt normalized event metrics to the already-validated period math API."""
+    pcols = period_columns(block)
+    return pd.DataFrame({
+        pcols.total_history: events["total_history"],
+        pcols.scp_total_abs_error: events["scp_total_abs_error"],
+        pcols.ml_total_abs_error: events["optimizer_total_abs_error"],
+        pcols.scp_total_signed_error: events["scp_total_signed_error"],
+        pcols.ml_total_signed_error: events["optimizer_total_signed_error"],
+    }), pcols
+
+
+def _performance_metrics(
+    group: pd.DataFrame,
+    engine: str,
+    block: str,
+    performance_history_denominator: float,
+) -> dict:
+    n_performance = len(group)
+    if n_performance == 0:
+        return {
+            "n_performance": 0,
+            "n_clients": 0,
+            "small_sample": True,
+            "historical_volume": 0.0,
+            "volume_share": 0.0 if performance_history_denominator > 0 else np.nan,
+            "scp_wape": np.nan,
+            "optimizer_wape": np.nan,
+            "scp_bias": np.nan,
+            "optimizer_bias": np.nan,
+            "selected_engine_win_count": 0,
+            "tie_count": 0,
+            "selected_engine_win_rate": np.nan,
+            "optimizer_improvement_vs_scp": np.nan,
+            "optimizer_median_improvement_vs_scp": np.nan,
+            "optimizer_abs_error_reduction_vs_scp": np.nan,
+        }
+
+    metric_frame, pcols = _period_metric_frame(group, block)
+    wape = period_wape_global(metric_frame, pcols)
+    bias = bias_aggregate(metric_frame, pcols)
+    winner = winner_distribution(group["winner_method"])
+    selected_method = "SCP" if engine == ENGINE_SCP_AUTO else "ML"
+    selected_wins = int(winner.get(selected_method, {}).get("n", 0))
+    tie_count = int(winner.get("TIE", {}).get("n", 0))
+    row_improvement, _ = relative_improvement_row(group["scp_wape"], group["optimizer_wape"])
+    historical_volume = wape["history_sum"]
+
+    return {
+        "n_performance": n_performance,
+        "n_clients": int(group["ID_CLIENT"].nunique()),
+        "small_sample": n_performance < MIN_SAMPLE_SIZE_FOR_STRONG_CONCLUSION,
+        "historical_volume": historical_volume,
+        "volume_share": (
+            historical_volume / performance_history_denominator
+            if performance_history_denominator > 0
+            else np.nan
+        ),
+        "scp_wape": wape["scp_wape_global"],
+        "optimizer_wape": wape["ml_wape_global"],
+        "scp_bias": bias.scp_bias_agg,
+        "optimizer_bias": bias.ml_bias_agg,
+        "selected_engine_win_count": selected_wins,
+        "tie_count": tie_count,
+        # Ties and any quality-audited noncanonical winner remain in this denominator.
+        "selected_engine_win_rate": selected_wins / n_performance,
+        "optimizer_improvement_vs_scp": wape["improvement_pct"],
+        "optimizer_median_improvement_vs_scp": (
+            float(row_improvement.median()) if row_improvement.notna().any() else np.nan
+        ),
+        "optimizer_abs_error_reduction_vs_scp": absolute_error_reduction_total(metric_frame, pcols),
+    }
+
+
+def _deterministic_model_order(table: pd.DataFrame) -> pd.DataFrame:
+    if table.empty:
+        return pd.DataFrame(columns=MODEL_TABLE_COLUMNS)
+    ordered = table.assign(
+        _engine_order=table["engine"].map({ENGINE_SCP_AUTO: 0, ENGINE_OPTIMIZER: 1}),
+        _block_order=table["block"].map({BLOCK_OLDER_3M: 0, BLOCK_RECENT_3M: 1}),
+        _model_order=table["model_name"].map(str),
+    ).sort_values(
+        ["_engine_order", "_block_order", "_model_order"],
+        kind="stable",
+    )
+    return ordered.drop(columns=["_engine_order", "_block_order", "_model_order"]).reset_index(drop=True)
+
+
+def build_portfolio_model_result(events: pd.DataFrame) -> PortfolioModelResult:
+    """Aggregate only engine + block + selected model for Phase 10B.3.
+
+    Selection counts use selection-assignable events. Performance metrics
+    use only performance-evaluable events and therefore describe observed
+    performance conditioned on selection, not intrinsic model quality.
+    Shares and win rates are fractions in [0, 1]; improvement remains the
+    existing signed percentage with fixed Optimizer-vs-SCP direction.
+    """
+    selection_events = events.loc[events["selection_evaluable"]].copy()
+    if selection_events.empty:
+        return PortfolioModelResult()
+
+    rows: list[dict] = []
+    for (engine, block), selection_scope in selection_events.groupby(
+        ["engine", "block"], sort=False, observed=True,
+    ):
+        selection_assignable_count = len(selection_scope)
+        performance_scope = selection_scope.loc[selection_scope["performance_evaluable"]]
+        performance_history_denominator = (
+            float(performance_scope["total_history"].sum())
+            if not performance_scope["total_history"].isna().any()
+            else np.nan
+        )
+
+        for model_name, model_selection in selection_scope.groupby(
+            "model_name", sort=False, observed=True,
+        ):
+            selection_count = len(model_selection)
+            model_performance = model_selection.loc[model_selection["performance_evaluable"]]
+            row = {
+                "engine": engine,
+                "block": block,
+                "model_name": model_name,
+                "selection_count": selection_count,
+                "selection_assignable_count": selection_assignable_count,
+                "selection_share_of_assignable": selection_count / selection_assignable_count,
+            }
+            row.update(_performance_metrics(
+                model_performance,
+                engine,
+                block,
+                performance_history_denominator,
+            ))
+            rows.append(row)
+
+    table = pd.DataFrame(rows, columns=MODEL_TABLE_COLUMNS)
+    return PortfolioModelResult(_deterministic_model_order(table))
+
+
 def build_portfolio_analysis(
     df: pd.DataFrame,
     candidate_mask: pd.Series,
@@ -275,6 +456,7 @@ def build_portfolio_analysis(
         availability=PortfolioAvailability(available=True),
         events=events,
         coverage=build_portfolio_coverage(events_df),
+        model_tables=build_portfolio_model_result(events_df),
     )
 
 
@@ -314,4 +496,5 @@ def combine_portfolio_analyses(
         availability=PortfolioAvailability(available=True),
         events=events,
         coverage=build_portfolio_coverage(events_df),
+        model_tables=build_portfolio_model_result(events_df),
     )
