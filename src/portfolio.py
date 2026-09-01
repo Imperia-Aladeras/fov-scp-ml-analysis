@@ -1,9 +1,9 @@
 """Canonical block events and conditioned portfolio analysis for Phase 10B.
 
 It contains the 10B.2 availability/event/coverage contract, the 10B.3
-aggregation by selected model and the explicit Optimizer-only family and
-classification adapters from 10B.4.  It does not implement stability or
-transitions, and it never falls back to legacy 6M metadata.
+aggregation by selected model, the Optimizer-only family/classification
+adapters from 10B.4 and the descriptive stability/transitions analysis from
+10B.5.  It never falls back to legacy 6M metadata.
 """
 
 from __future__ import annotations
@@ -31,6 +31,11 @@ ENGINE_SCP_AUTO = "SCP_AUTO"
 ENGINE_OPTIMIZER = "OPTIMIZER"
 BLOCK_OLDER_3M = "OLDER_3M"
 BLOCK_RECENT_3M = "RECENT_3M"
+STABILITY_TYPE_MODEL = "MODEL"
+STABILITY_TYPE_CLASSIFICATION = "CLASSIFICATION"
+STABILITY_STATE_STABLE = "STABLE"
+STABILITY_STATE_CHANGED = "CHANGED"
+STABILITY_STATE_NOT_EVALUABLE = "NOT_EVALUABLE"
 
 MODEL_METADATA_PRESENT = "PRESENT"
 MODEL_METADATA_MISSING = "MISSING"
@@ -172,6 +177,58 @@ OPTIMIZER_CLASSIFICATION_COVERAGE_COLUMNS: tuple[str, ...] = (
     "pair_assignment_rate",
 )
 
+STABILITY_SUMMARY_COLUMNS: tuple[str, ...] = (
+    "engine",
+    "n_evaluable",
+    "stable_count",
+    "changed_count",
+    "not_evaluable_count",
+    "stability_rate",
+)
+
+MODEL_STABILITY_BY_OLDER_MODEL_COLUMNS: tuple[str, ...] = (
+    "engine",
+    "model_name",
+    "n_evaluable",
+    "stable_count",
+    "changed_count",
+    "stability_rate",
+)
+
+TRANSITION_COLUMNS: tuple[str, ...] = (
+    "engine",
+    "older_value",
+    "recent_value",
+    "transition_count",
+    "n_evaluable",
+    "transition_share_of_evaluable",
+)
+
+STABILITY_PERFORMANCE_METRIC_COLUMNS: tuple[str, ...] = (
+    "n_performance",
+    "n_clients",
+    "small_sample",
+    "historical_volume",
+    "scp_wape",
+    "optimizer_wape",
+    "scp_bias",
+    "optimizer_bias",
+    "selected_engine_win_count",
+    "tie_count",
+    "selected_engine_win_rate",
+    "optimizer_improvement_vs_scp",
+    "optimizer_median_improvement_vs_scp",
+    "optimizer_abs_error_reduction_vs_scp",
+)
+
+STABILITY_PERFORMANCE_COLUMNS: tuple[str, ...] = (
+    "stability_type",
+    "engine",
+    "block",
+    "stability_state",
+    *STABILITY_PERFORMANCE_METRIC_COLUMNS,
+)
+
 
 class PortfolioContractError(ValueError):
     """Raised when the canonical event identity would not be unique."""
@@ -244,12 +301,37 @@ class OptimizerPortfolioResult:
 
 
 @dataclass
+class PortfolioStabilityAnalysis:
+    """Descriptive OLDER-to-RECENT persistence, never a causal comparison."""
+
+    model_summary: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=STABILITY_SUMMARY_COLUMNS),
+    )
+    model_by_older_model: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=MODEL_STABILITY_BY_OLDER_MODEL_COLUMNS),
+    )
+    model_transitions: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=TRANSITION_COLUMNS),
+    )
+    classification_summary: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=STABILITY_SUMMARY_COLUMNS),
+    )
+    classification_transitions: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=TRANSITION_COLUMNS),
+    )
+    performance_by_stability: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=STABILITY_PERFORMANCE_COLUMNS),
+    )
+
+
+@dataclass
 class PortfolioAnalysisResult:
     availability: PortfolioAvailability
     events: PortfolioBlockEvents | None = None
     coverage: PortfolioCoverage | None = None
     model_tables: PortfolioModelResult | None = None
     optimizer: OptimizerPortfolioResult | None = None
+    stability: PortfolioStabilityAnalysis | None = None
 
     @classmethod
     def unavailable(
@@ -519,6 +601,15 @@ def _deterministic_table_order(
     fixed_orders = {
         "engine": {ENGINE_SCP_AUTO: 0, ENGINE_OPTIMIZER: 1},
         "block": {BLOCK_OLDER_3M: 0, BLOCK_RECENT_3M: 1},
+        "stability_type": {
+            STABILITY_TYPE_MODEL: 0,
+            STABILITY_TYPE_CLASSIFICATION: 1,
+        },
+        "stability_state": {
+            STABILITY_STATE_STABLE: 0,
+            STABILITY_STATE_CHANGED: 1,
+            STABILITY_STATE_NOT_EVALUABLE: 2,
+        },
     }
     for index, column in enumerate(sort_columns):
         helper = f"_portfolio_sort_{index}"
@@ -717,12 +808,308 @@ def build_optimizer_portfolio_result(events: pd.DataFrame) -> OptimizerPortfolio
     )
 
 
+def _comparison_state(older: pd.Series, recent: pd.Series) -> pd.Series:
+    """Compare exact values; missing on either side is not evaluable."""
+    state = pd.Series(STABILITY_STATE_NOT_EVALUABLE, index=older.index, dtype="object")
+    evaluable = older.notna() & recent.notna()
+    state.loc[evaluable & older.eq(recent)] = STABILITY_STATE_STABLE
+    state.loc[evaluable & ~older.eq(recent)] = STABILITY_STATE_CHANGED
+    return state
+
+
+def _build_stability_pairs(events: pd.DataFrame) -> pd.DataFrame:
+    """Pair the two independent block events by canonical series key and engine."""
+    pair_event_key = ["source_series_key", "engine", "block"]
+    duplicated = events.duplicated(subset=pair_event_key, keep=False)
+    if duplicated.any():
+        raise PortfolioContractError(
+            "Portfolio stability requires at most one OLDER and one RECENT event "
+            "per source_series_key + engine."
+        )
+
+    value_columns = ["model_name", "optimizer_classification"]
+    older = events.loc[
+        events["block"] == BLOCK_OLDER_3M,
+        ["source_series_key", "engine", *value_columns],
+    ].rename(columns={
+        "model_name": "older_model",
+        "optimizer_classification": "older_classification",
+    })
+    recent = events.loc[
+        events["block"] == BLOCK_RECENT_3M,
+        ["source_series_key", "engine", *value_columns],
+    ].rename(columns={
+        "model_name": "recent_model",
+        "optimizer_classification": "recent_classification",
+    })
+    pairs = older.merge(
+        recent,
+        on=["source_series_key", "engine"],
+        how="outer",
+        sort=False,
+        validate="one_to_one",
+    )
+    pairs["model_stability_state"] = _comparison_state(
+        pairs["older_model"],
+        pairs["recent_model"],
+    )
+    pairs["classification_stability_state"] = _comparison_state(
+        pairs["older_classification"],
+        pairs["recent_classification"],
+    )
+    return pairs
+
+
+def _summary_rows(pairs: pd.DataFrame, state_column: str) -> list[dict]:
+    rows: list[dict] = []
+    for engine, scope in pairs.groupby("engine", sort=False, observed=True):
+        stable_count = int(scope[state_column].eq(STABILITY_STATE_STABLE).sum())
+        changed_count = int(scope[state_column].eq(STABILITY_STATE_CHANGED).sum())
+        not_evaluable_count = int(
+            scope[state_column].eq(STABILITY_STATE_NOT_EVALUABLE).sum()
+        )
+        n_evaluable = stable_count + changed_count
+        rows.append({
+            "engine": engine,
+            "n_evaluable": n_evaluable,
+            "stable_count": stable_count,
+            "changed_count": changed_count,
+            "not_evaluable_count": not_evaluable_count,
+            "stability_rate": stable_count / n_evaluable if n_evaluable else np.nan,
+        })
+    return rows
+
+
+def _build_model_stability_summary(pairs: pd.DataFrame) -> pd.DataFrame:
+    return _deterministic_table_order(
+        pd.DataFrame(
+            _summary_rows(pairs, "model_stability_state"),
+            columns=STABILITY_SUMMARY_COLUMNS,
+        ),
+        STABILITY_SUMMARY_COLUMNS,
+        ("engine",),
+    )
+
+
+def _build_classification_stability_summary(pairs: pd.DataFrame) -> pd.DataFrame:
+    optimizer_pairs = pairs.loc[pairs["engine"] == ENGINE_OPTIMIZER]
+    return _deterministic_table_order(
+        pd.DataFrame(
+            _summary_rows(optimizer_pairs, "classification_stability_state"),
+            columns=STABILITY_SUMMARY_COLUMNS,
+        ),
+        STABILITY_SUMMARY_COLUMNS,
+        ("engine",),
+    )
+
+
+def _build_model_stability_by_older_model(pairs: pd.DataFrame) -> pd.DataFrame:
+    evaluable = pairs.loc[
+        pairs["model_stability_state"].isin(
+            [STABILITY_STATE_STABLE, STABILITY_STATE_CHANGED]
+        )
+    ]
+    rows: list[dict] = []
+    for (engine, older_model), scope in evaluable.groupby(
+        ["engine", "older_model"],
+        sort=False,
+        observed=True,
+    ):
+        stable_count = int(
+            scope["model_stability_state"].eq(STABILITY_STATE_STABLE).sum()
+        )
+        changed_count = int(
+            scope["model_stability_state"].eq(STABILITY_STATE_CHANGED).sum()
+        )
+        n_evaluable = stable_count + changed_count
+        rows.append({
+            "engine": engine,
+            "model_name": older_model,
+            "n_evaluable": n_evaluable,
+            "stable_count": stable_count,
+            "changed_count": changed_count,
+            "stability_rate": stable_count / n_evaluable,
+        })
+    return _deterministic_table_order(
+        pd.DataFrame(rows, columns=MODEL_STABILITY_BY_OLDER_MODEL_COLUMNS),
+        MODEL_STABILITY_BY_OLDER_MODEL_COLUMNS,
+        ("engine", "model_name"),
+    )
+
+
+def _transition_rows(
+    pairs: pd.DataFrame,
+    *,
+    older_column: str,
+    recent_column: str,
+) -> list[dict]:
+    rows: list[dict] = []
+    for engine, engine_scope in pairs.groupby("engine", sort=False, observed=True):
+        n_evaluable = len(engine_scope)
+        for (older_value, recent_value), transition in engine_scope.groupby(
+            [older_column, recent_column],
+            sort=False,
+            observed=True,
+        ):
+            transition_count = len(transition)
+            rows.append({
+                "engine": engine,
+                "older_value": older_value,
+                "recent_value": recent_value,
+                "transition_count": transition_count,
+                "n_evaluable": n_evaluable,
+                "transition_share_of_evaluable": transition_count / n_evaluable,
+            })
+    return rows
+
+
+def _build_model_transitions(pairs: pd.DataFrame) -> pd.DataFrame:
+    evaluable = pairs.loc[
+        pairs["model_stability_state"].isin(
+            [STABILITY_STATE_STABLE, STABILITY_STATE_CHANGED]
+        )
+    ]
+    return _deterministic_table_order(
+        pd.DataFrame(
+            _transition_rows(
+                evaluable,
+                older_column="older_model",
+                recent_column="recent_model",
+            ),
+            columns=TRANSITION_COLUMNS,
+        ),
+        TRANSITION_COLUMNS,
+        ("engine", "older_value", "recent_value"),
+    )
+
+
+def _build_classification_transitions(pairs: pd.DataFrame) -> pd.DataFrame:
+    evaluable = pairs.loc[
+        (pairs["engine"] == ENGINE_OPTIMIZER)
+        & pairs["classification_stability_state"].isin(
+            [STABILITY_STATE_STABLE, STABILITY_STATE_CHANGED]
+        )
+    ]
+    return _deterministic_table_order(
+        pd.DataFrame(
+            _transition_rows(
+                evaluable,
+                older_column="older_classification",
+                recent_column="recent_classification",
+            ),
+            columns=TRANSITION_COLUMNS,
+        ),
+        TRANSITION_COLUMNS,
+        ("engine", "older_value", "recent_value"),
+    )
+
+
+def _stability_performance_rows(
+    paired_events: pd.DataFrame,
+    *,
+    stability_type: str,
+    state_column: str,
+) -> list[dict]:
+    eligible = paired_events.loc[
+        paired_events[state_column].isin(
+            [STABILITY_STATE_STABLE, STABILITY_STATE_CHANGED]
+        )
+        & paired_events["performance_evaluable"]
+    ]
+    if stability_type == STABILITY_TYPE_CLASSIFICATION:
+        eligible = eligible.loc[eligible["engine"] == ENGINE_OPTIMIZER]
+
+    rows: list[dict] = []
+    for (engine, block), performance_scope in eligible.groupby(
+        ["engine", "block"],
+        sort=False,
+        observed=True,
+    ):
+        history_denominator = (
+            float(performance_scope["total_history"].sum())
+            if not performance_scope["total_history"].isna().any()
+            else np.nan
+        )
+        for stability_state, state_scope in performance_scope.groupby(
+            state_column,
+            sort=False,
+            observed=True,
+        ):
+            metrics = _performance_metrics(
+                state_scope,
+                engine,
+                block,
+                history_denominator,
+            )
+            rows.append({
+                "stability_type": stability_type,
+                "engine": engine,
+                "block": block,
+                "stability_state": stability_state,
+                **{
+                    column: metrics[column]
+                    for column in STABILITY_PERFORMANCE_METRIC_COLUMNS
+                },
+            })
+    return rows
+
+
+def _build_performance_by_stability(
+    events: pd.DataFrame,
+    pairs: pd.DataFrame,
+) -> pd.DataFrame:
+    pair_states = pairs[[
+        "source_series_key",
+        "engine",
+        "model_stability_state",
+        "classification_stability_state",
+    ]]
+    paired_events = events.merge(
+        pair_states,
+        on=["source_series_key", "engine"],
+        how="left",
+        sort=False,
+        validate="many_to_one",
+    )
+    rows = _stability_performance_rows(
+        paired_events,
+        stability_type=STABILITY_TYPE_MODEL,
+        state_column="model_stability_state",
+    )
+    rows.extend(_stability_performance_rows(
+        paired_events,
+        stability_type=STABILITY_TYPE_CLASSIFICATION,
+        state_column="classification_stability_state",
+    ))
+    return _deterministic_table_order(
+        pd.DataFrame(rows, columns=STABILITY_PERFORMANCE_COLUMNS),
+        STABILITY_PERFORMANCE_COLUMNS,
+        ("stability_type", "engine", "block", "stability_state"),
+    )
+
+
+def build_portfolio_stability_analysis(events: pd.DataFrame) -> PortfolioStabilityAnalysis:
+    """Build descriptive persistence and transitions from canonical block events."""
+    if events.empty:
+        return PortfolioStabilityAnalysis()
+    _validate_event_cardinality(events)
+    pairs = _build_stability_pairs(events)
+    return PortfolioStabilityAnalysis(
+        model_summary=_build_model_stability_summary(pairs),
+        model_by_older_model=_build_model_stability_by_older_model(pairs),
+        model_transitions=_build_model_transitions(pairs),
+        classification_summary=_build_classification_stability_summary(pairs),
+        classification_transitions=_build_classification_transitions(pairs),
+        performance_by_stability=_build_performance_by_stability(events, pairs),
+    )
+
+
 def build_portfolio_analysis(
     df: pd.DataFrame,
     candidate_mask: pd.Series,
     block_metrics_masks: Mapping[str, pd.Series],
 ) -> PortfolioAnalysisResult:
-    """Build the available Phase 10B.2-10B.4 result for one valid client source."""
+    """Build the available Phase 10B.2-10B.5 result for one valid client source."""
     missing_columns = missing_portfolio_columns(df)
     if missing_columns:
         return PortfolioAnalysisResult.unavailable(
@@ -756,6 +1143,7 @@ def build_portfolio_analysis(
         coverage=build_portfolio_coverage(events_df),
         model_tables=build_portfolio_model_result(events_df),
         optimizer=build_optimizer_portfolio_result(events_df),
+        stability=build_portfolio_stability_analysis(events_df),
     )
 
 
@@ -797,4 +1185,5 @@ def combine_portfolio_analyses(
         coverage=build_portfolio_coverage(events_df),
         model_tables=build_portfolio_model_result(events_df),
         optimizer=build_optimizer_portfolio_result(events_df),
+        stability=build_portfolio_stability_analysis(events_df),
     )
