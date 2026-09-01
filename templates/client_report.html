@@ -117,69 +117,12 @@
 
 <section id="modelos" aria-labelledby="modelos-h">
   <h2 id="modelos-h">Modelos (semestre completo)</h2>
-  <h3>Modelo ML seleccionado</h3>
-  {% if page.ml_models %}
-  <div class="table-scroll">
-  <table>
-    <thead><tr><th scope="col">Modelo</th><th scope="col">N</th><th scope="col">% victoria ML</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora agregada</th><th scope="col">Mediana mejora</th><th scope="col">Reducción absoluta</th><th scope="col">% volumen histórico</th><th scope="col">Bias SCP</th><th scope="col">Bias ML</th><th scope="col">Muestra pequeña</th></tr></thead>
-    <tbody>
-      {% for r in page.ml_models %}
-      <tr>
-        <td>{{ r.categoria }}</td><td>{{ r.n }}</td><td>{{ r.tasa_victoria_ml }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td><td>{{ r.mejora_agregada }}</td><td>{{ r.mediana_mejora }}</td><td>{{ r.abs_error_reduction }}</td><td>{{ r.pct_of_history_volume }}</td>
-        <td>{% if r.scp_bias is defined %}{{ r.scp_bias }} ({{ r.scp_direction }}){% else %}N/D{% endif %}</td>
-        <td>{% if r.ml_bias is defined %}{{ r.ml_bias }} ({{ r.ml_direction }}){% else %}N/D{% endif %}</td>
-        <td>{{ "Sí" if r.muestra_pequena else "No" }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% else %}<p class="note">Sin datos de modelo ML para el universo comparable.</p>{% endif %}
-
-  <h3>Modelo SCP seleccionado</h3>
-  {% if page.scp_models %}
-  <div class="table-scroll">
-  <table>
-    <thead><tr><th scope="col">Modelo</th><th scope="col">N</th><th scope="col">% victoria ML</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora agregada</th><th scope="col">Mediana mejora</th><th scope="col">Reducción absoluta</th><th scope="col">% volumen histórico</th><th scope="col">Bias SCP</th><th scope="col">Bias ML</th><th scope="col">Muestra pequeña</th></tr></thead>
-    <tbody>
-      {% for r in page.scp_models %}
-      <tr>
-        <td>{{ r.categoria }}</td><td>{{ r.n }}</td><td>{{ r.tasa_victoria_ml }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td><td>{{ r.mejora_agregada }}</td><td>{{ r.mediana_mejora }}</td><td>{{ r.abs_error_reduction }}</td><td>{{ r.pct_of_history_volume }}</td>
-        <td>{% if r.scp_bias is defined %}{{ r.scp_bias }} ({{ r.scp_direction }}){% else %}N/D{% endif %}</td>
-        <td>{% if r.ml_bias is defined %}{{ r.ml_bias }} ({{ r.ml_direction }}){% else %}N/D{% endif %}</td>
-        <td>{{ "Sí" if r.muestra_pequena else "No" }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% else %}<p class="note">Sin datos de modelo SCP para el universo comparable.</p>{% endif %}
-  {% if page.phase8 and page.phase8.available %}<p class="note">{{ page.phase8.bias_note }}</p>{% endif %}
+  <p class="note">{{ page.ml_models.message }}</p>
 </section>
 
 <section id="clasificaciones" aria-labelledby="clasificaciones-h">
   <h2 id="clasificaciones-h">Clasificaciones (semestre completo)</h2>
-  {% if page.classifications %}
-  {% for col, rows in page.classifications.items() %}
-  <details class="chart-group">
-    <summary>{{ col }} ({{ rows | length }})</summary>
-    <div class="table-scroll">
-    <table>
-      <thead><tr><th scope="col">Categoría</th><th scope="col">N</th><th scope="col">% victoria ML</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora agregada</th><th scope="col">Mediana mejora</th><th scope="col">Reducción absoluta</th><th scope="col">% volumen histórico</th><th scope="col">Bias SCP</th><th scope="col">Bias ML</th></tr></thead>
-      <tbody>
-        {% for r in rows %}
-        <tr>
-          <td>{{ r.categoria }}</td><td>{{ r.n }}</td><td>{{ r.tasa_victoria_ml }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td><td>{{ r.mejora_agregada }}</td><td>{{ r.mediana_mejora }}</td><td>{{ r.abs_error_reduction }}</td><td>{{ r.pct_of_history_volume }}</td>
-          <td>{% if r.scp_bias is defined %}{{ r.scp_bias }} ({{ r.scp_direction }}){% else %}N/D{% endif %}</td>
-          <td>{% if r.ml_bias is defined %}{{ r.ml_bias }} ({{ r.ml_direction }}){% else %}N/D{% endif %}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    </div>
-  </details>
-  {% endfor %}
-  {% else %}<p class="note">Sin datos de clasificación para el universo comparable.</p>{% endif %}
+  <p class="note">{{ page.classifications.message }}</p>
 </section>
 
 <section id="fase8" aria-labelledby="fase8-h">
@@ -235,10 +178,10 @@
   {% if rows %}
   <div class="table-scroll">
   <table>
-    <thead><tr><th scope="col">ID_CONFIGURATION</th><th scope="col">{{ value_label }}</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Winner</th><th scope="col">Modelo SCP</th><th scope="col">Modelo ML</th></tr></thead>
+    <thead><tr><th scope="col">ID_CONFIGURATION</th><th scope="col">{{ value_label }}</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Winner</th></tr></thead>
     <tbody>
       {% for r in rows %}
-      <tr><td>{{ r.id_configuration }}</td><td>{{ r.valor }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td><td>{{ r.winner }}</td><td>{{ r.modelo_scp }}</td><td>{{ r.modelo_ml }}</td></tr>
+      <tr><td>{{ r.id_configuration }}</td><td>{{ r.valor }}</td><td>{{ r.wape_scp }}</td><td>{{ r.wape_ml }}</td><td>{{ r.winner }}</td></tr>
       {% endfor %}
     </tbody>
   </table>

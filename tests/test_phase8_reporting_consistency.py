@@ -122,41 +122,27 @@ def test_volume_bucket_low_group_consistent_across_excel_markdown_html(tmp_path:
     assert html_row["muestra_pequena"] == bool(core_row["small_sample"])
 
 
-def test_model_table_autoets_group_consistent_across_excel_markdown_html(tmp_path: Path):
+def test_legacy_model_analysis_is_suppressed_consistently_without_hiding_phase8_volume(tmp_path: Path):
     result = build_volume_bucket_client_result()
-    pr = result.periods["6M"]
-    core_row = pr.phase8.model_tables["ML_BEST_MODEL"]
-    core_row = core_row[core_row["category"] == "AutoETS"].iloc[0]
 
     xlsx_path = tmp_path / "client.xlsx"
     build_client_workbook(result, xlsx_path)
-    xlsx_rows = _xlsx_block_rows(xlsx_path, "08_models_and_win_rates", "category")
-    xlsx_row = next(r for r in xlsx_rows if r.get("category") == "AutoETS")
-    assert xlsx_row["n_comparable"] == core_row["n_comparable"]
-    assert xlsx_row["scp_wape_agg"] == pytest.approx(core_row["scp_wape_agg"])
-    assert xlsx_row["ml_wape_agg"] == pytest.approx(core_row["ml_wape_agg"])
-    assert xlsx_row["abs_error_reduction"] == pytest.approx(core_row["abs_error_reduction"])
-    assert xlsx_row["pct_of_history_volume"] == pytest.approx(core_row["pct_of_history_volume"])
-    assert xlsx_row["scp_bias_agg"] == pytest.approx(core_row["scp_bias_agg"])
-    assert xlsx_row["ml_bias_agg"] == pytest.approx(core_row["ml_bias_agg"])
-    assert xlsx_row["scp_direction"] == direction_label_es(core_row["scp_direction"])
+    wb = openpyxl.load_workbook(xlsx_path)
+    model_sheet = "\n".join(
+        str(cell) for row in wb["08_models_and_win_rates"].iter_rows(values_only=True)
+        for cell in row if cell is not None
+    )
+    assert "metadata legacy" in model_sheet
+    assert "OLDER_3M" in model_sheet and "RECENT_3M" in model_sheet
+    assert "AutoETS" not in model_sheet
 
     report = build_client_report(result)
-    md_row = _md_table_row(report, "## 10. Modelos ML", "## 11.", "AutoETS")
-    assert md_row["N"] == _fmt_num(core_row["n_comparable"])
-    assert md_row["WAPE SCP"] == _fmt_pct_fraction(core_row["scp_wape_agg"])
-    assert md_row["WAPE ML"] == _fmt_pct_fraction(core_row["ml_wape_agg"])
-    assert md_row["Reduccion absoluta"] == _fmt_num(core_row["abs_error_reduction"])
-    assert md_row["% volumen historico"] == _fmt_pct_scaled(core_row["pct_of_history_volume"])
-    assert md_row["Bias SCP"] == _fmt_signed_pct_fraction(core_row["scp_bias_agg"])
-    assert md_row["Direccion SCP"] == direction_label_es(core_row["scp_direction"])
+    model_section = report.split("## 10.")[1].split("## 11.")[0]
+    assert "metadata legacy" in model_section
+    assert "OLDER_3M" in model_section and "RECENT_3M" in model_section
+    assert "AutoETS" not in model_section
 
     page_vm = vm.build_client_page_vm(result)
-    html_row = next(r for r in page_vm["ml_models"] if r["categoria"] == "AutoETS")
-    assert html_row["n"] == _fmt_num(core_row["n_comparable"])
-    assert html_row["wape_scp"] == _fmt_pct_fraction(core_row["scp_wape_agg"])
-    assert html_row["wape_ml"] == _fmt_pct_fraction(core_row["ml_wape_agg"])
-    assert html_row["abs_error_reduction"] == _fmt_num(core_row["abs_error_reduction"])
-    assert html_row["pct_of_history_volume"] == _fmt_pct_scaled(core_row["pct_of_history_volume"])
-    assert html_row["scp_bias"] == _fmt_signed_pct_fraction(core_row["scp_bias_agg"])
-    assert html_row["scp_direction"] == direction_label_es(core_row["scp_direction"])
+    assert page_vm["ml_models"]["available"] is False
+    assert "metadata legacy" in page_vm["ml_models"]["message"]
+    assert page_vm["phase8"]["volume"]["rows"]

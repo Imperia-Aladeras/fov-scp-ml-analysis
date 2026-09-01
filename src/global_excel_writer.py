@@ -11,7 +11,7 @@ import pandas as pd
 from openpyxl.utils import get_column_letter
 
 from src.excel_writer import _dict_to_df, _stats_dict_to_df, autosize_columns, write_blocks
-from src.global_analysis import GlobalAnalysisResult, global_category_performance_table
+from src.global_analysis import GlobalAnalysisResult
 from src.periods import ALL_PERIODS, MONTHLY_PERIODS, visible_label
 from src.phase8_presentation import (
     BIAS_METHODOLOGY_NOTE,
@@ -236,40 +236,17 @@ def winner_distribution_table(result: GlobalAnalysisResult) -> pd.DataFrame:
 # --------------------------------------------------------------------------
 
 def models_and_win_rates_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.DataFrame]]:
-    # GlobalPeriodResult.phase8 (calculado una unica vez en global_analysis.py)
-    # es la fuente preferida -- ya incluye Bias y n_clients. Si es None (algun
-    # cliente sin backend COMPARISON_STATUS en 6M), se mantiene el
-    # comportamiento anterior a 8D, sin Bias.
-    phase8 = result.periods[MODEL_CLASSIFICATION_PERIOD].phase8
-    label = visible_label(MODEL_CLASSIFICATION_PERIOD)
-    if phase8 is not None:
-        ml_models = _translate_bias_directions(phase8.model_tables.get("ML_BEST_MODEL", pd.DataFrame()))
-        scp_models = _translate_bias_directions(phase8.model_tables.get("SCP_BEST_MODEL", pd.DataFrame()))
-    else:
-        ml_models = global_category_performance_table(result.client_results, MODEL_CLASSIFICATION_PERIOD, "ML_BEST_MODEL")
-        scp_models = global_category_performance_table(result.client_results, MODEL_CLASSIFICATION_PERIOD, "SCP_BEST_MODEL")
-    blocks = [
-        (f"Modelos ML (ML_BEST_MODEL) - {label} - todos los clientes", ml_models),
-        (f"Modelos SCP (SCP_BEST_MODEL) - {label} - todos los clientes", scp_models),
-    ]
-    if phase8 is not None:
-        blocks.append(("Nota metodologica - Bias", pd.DataFrame({"": [BIAS_METHODOLOGY_NOTE]})))
-    return blocks
+    return [("Nota", pd.DataFrame({
+        "": ["Analisis global por modelo no disponible: la metadata legacy no representa de forma fiable "
+             "los bloques OLDER_3M y RECENT_3M."]
+    }))]
 
 
 def classifications_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.DataFrame]]:
-    phase8 = result.periods[MODEL_CLASSIFICATION_PERIOD].phase8
-    label = visible_label(MODEL_CLASSIFICATION_PERIOD)
-    blocks = []
-    for col in ("ML_CLASSIFICATION", "ML_TYPE", "SERIES_CLASSIFICATION", "SCP_CLASSIFICATION"):
-        if phase8 is not None:
-            table = _translate_bias_directions(phase8.classification_tables.get(col, pd.DataFrame()))
-        else:
-            table = global_category_performance_table(result.client_results, MODEL_CLASSIFICATION_PERIOD, col)
-        blocks.append((f"{col} - {label} - todos los clientes", table))
-    if phase8 is not None:
-        blocks.append(("Nota metodologica - Bias", pd.DataFrame({"": [BIAS_METHODOLOGY_NOTE]})))
-    return blocks
+    return [("Nota", pd.DataFrame({
+        "": ["Analisis global por clasificacion no disponible: la metadata legacy no representa de forma fiable "
+             "los bloques OLDER_3M y RECENT_3M."]
+    }))]
 
 
 # --------------------------------------------------------------------------
@@ -418,17 +395,9 @@ def phase8_global_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.Dat
         volume_table = volume_table.rename(columns={"category": "VOLUME_BUCKET"})
     blocks.append((f"Volumen relativo global (VOLUME_BUCKET) - {label}", volume_table))
 
-    cross_table = _translate_bias_directions(phase8.classification_volume_cross)
-    if cross_table is not None and not cross_table.empty:
-        cross_table = cross_table.copy()
-        cross_table["VOLUME_BUCKET"] = cross_table["VOLUME_BUCKET"].map(volume_bucket_label_es)
-        # Reordena columnas SOLO por legibilidad (SERIES_CLASSIFICATION/VOLUME_BUCKET/n_clients
-        # primero): mismos valores, mismas columnas, nunca se recalcula ni se descarta ninguna.
-        front_cols = [c for c in ("SERIES_CLASSIFICATION", "VOLUME_BUCKET", "n_clients") if c in cross_table.columns]
-        cross_table = cross_table[front_cols + [c for c in cross_table.columns if c not in front_cols]]
     blocks.append((
-        f"SERIES_CLASSIFICATION x VOLUME_BUCKET - {label} - exclusivo global",
-        cross_table,
+        "Nota - SERIES_CLASSIFICATION x VOLUME_BUCKET",
+        pd.DataFrame({"": ["Cruce no disponible: SERIES_CLASSIFICATION es metadata legacy ambigua para 6M."]}),
     ))
 
     blocks.append((

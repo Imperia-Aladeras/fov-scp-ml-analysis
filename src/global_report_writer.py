@@ -14,7 +14,7 @@ import math
 
 import pandas as pd
 
-from src.global_analysis import GlobalAnalysisResult, global_category_performance_table
+from src.global_analysis import GlobalAnalysisResult
 from src.periods import ALL_PERIODS, MONTHLY_PERIODS, visible_label
 from src.phase8_presentation import (
     BIAS_METHODOLOGY_NOTE,
@@ -566,31 +566,10 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     # 16. Modelos que mas aportan
     a("## 16. Modelos que mas aportan")
     a("")
-    has_phase8_global = m6.phase8 is not None
-    if has_phase8_global:
-        ml_models = m6.phase8.model_tables.get("ML_BEST_MODEL", pd.DataFrame())
-        model_table_lines = _phase8_category_table_lines(ml_models, category_label="Modelo")
-    else:
-        ml_models = global_category_performance_table(result.client_results, MODEL_CLASSIFICATION_PERIOD, "ML_BEST_MODEL")
-        model_table_lines = _category_table_lines(ml_models)
-    a(f"Modelos ML por frecuencia y tasa de victoria en {visible_label(MODEL_CLASSIFICATION_PERIOD)} (todos los clientes):")
-    a("")
-    a("\n".join(model_table_lines))
-    a("")
-    # Modelos SCP (SCP_BEST_MODEL): la segunda perspectiva de modelo del
-    # diagnostico Fase 8 (phase8.model_tables), mostrada aqui -- junto a ML,
-    # en la seccion que ya existia para "modelos" -- en vez de duplicarla en
-    # la seccion 22, que no tenia tablas de modelo.
-    if has_phase8_global:
-        scp_models = m6.phase8.model_tables.get("SCP_BEST_MODEL", pd.DataFrame())
-        a(f"Modelos SCP (SCP_BEST_MODEL) por frecuencia y tasa de victoria en {visible_label(MODEL_CLASSIFICATION_PERIOD)} (todos los clientes):")
-        a("")
-        a("\n".join(_phase8_category_table_lines(scp_models, category_label="Modelo")))
-        a("")
-    a("La frecuencia de seleccion no implica mayor aportacion de valor: comparar tasa de victoria y mejora agregada.")
-    if has_phase8_global:
-        a("")
-        a(BIAS_METHODOLOGY_NOTE)
+    a(
+        "Análisis global por modelo no disponible: la metadata legacy no representa de forma fiable "
+        "los bloques OLDER_3M y RECENT_3M."
+    )
     a("")
     a("---")
     a("")
@@ -598,14 +577,10 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     # 17. Clasificaciones donde funciona mejor ML
     a("## 17. Clasificaciones donde funciona mejor ML")
     a("")
-    if has_phase8_global:
-        series_class = m6.phase8.classification_tables.get("SERIES_CLASSIFICATION", pd.DataFrame())
-    else:
-        series_class = global_category_performance_table(result.client_results, MODEL_CLASSIFICATION_PERIOD, "SERIES_CLASSIFICATION")
-    best = series_class[series_class["n_comparable"] >= 10].sort_values("win_rate_ml_pct", ascending=False).head(5) if not series_class.empty else series_class
-    a("Tipologias (SERIES_CLASSIFICATION) con mayor tasa de victoria ML (muestra >= 10 series):")
-    a("")
-    a("\n".join(_phase8_category_table_lines(best, category_label="Clasificacion") if has_phase8_global else _category_table_lines(best)))
+    a(
+        "Análisis global por clasificación no disponible: la metadata legacy no representa de forma fiable "
+        "los bloques OLDER_3M y RECENT_3M."
+    )
     a("")
     a("---")
     a("")
@@ -613,10 +588,10 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     # 18. Tipologias donde SCP sigue siendo mejor
     a("## 18. Tipologias donde SCP sigue siendo mejor")
     a("")
-    worst = series_class[series_class["n_comparable"] >= 10].sort_values("win_rate_ml_pct", ascending=True).head(5) if not series_class.empty else series_class
-    a("Tipologias (SERIES_CLASSIFICATION) con menor tasa de victoria ML (muestra >= 10 series):")
-    a("")
-    a("\n".join(_phase8_category_table_lines(worst, category_label="Clasificacion") if has_phase8_global else _category_table_lines(worst)))
+    a(
+        "Análisis global por clasificación no disponible: la metadata legacy no representa de forma fiable "
+        "los bloques OLDER_3M y RECENT_3M."
+    )
     a("")
     a("---")
     a("")
@@ -641,7 +616,8 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
         "El winner (`WINNER_METHOD_*`) se usa como fuente de verdad; el criterio exacto de empate relativo "
         "no esta documentado y no se reconstruye (ver informes individuales).",
         "Los clientes no proceden necesariamente del mismo ID_BATCH ni de la misma ejecucion (ver 15_data_quality_checks).",
-        "Modelos y clasificaciones globales se muestran unicamente para el semestre completo (6M).",
+        "El analisis global por modelos y clasificaciones no esta disponible porque la metadata legacy no "
+        "representa de forma fiable los bloques OLDER_3M y RECENT_3M.",
         "Los clientes sin ninguna serie comparable en un periodo SI se incluyen en cobertura, en calidad y en "
         "las tablas por cliente de ese periodo; unicamente quedan fuera del CALCULO de medias, medianas, "
         "WAPE, winners o mejoras de ese periodo por no tener performance calculable (ver seccion 1 y "
@@ -729,39 +705,17 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
             f"{_fmt_num(phase8.n_clients_with_not_assignable_volume)}."
         )
         a("")
-        # Clasificaciones completas (las 4 dimensiones, tablas ya calculadas en
-        # phase8.classification_tables, con Bias y n_clients cuando exista). Esta
-        # es la unica seccion donde aparecen ML_CLASSIFICATION/ML_TYPE/SCP_CLASSIFICATION
-        # y la SERIES_CLASSIFICATION COMPLETA (no filtrada): la seccion 17/18 ya
-        # muestra SERIES_CLASSIFICATION, pero solo un ranking filtrado (mejor/peor
-        # 5 con >=10 series), un proposito distinto de "la tabla completa", asi
-        # que no hay duplicacion de contenido entre ambas.
-        a("**Clasificaciones completas (ML_CLASSIFICATION, ML_TYPE, SERIES_CLASSIFICATION, SCP_CLASSIFICATION).**")
-        a("")
-        for col, label in (
-            ("ML_CLASSIFICATION", "ML_CLASSIFICATION"),
-            ("ML_TYPE", "ML_TYPE"),
-            ("SERIES_CLASSIFICATION", "SERIES_CLASSIFICATION"),
-            ("SCP_CLASSIFICATION", "SCP_CLASSIFICATION"),
-        ):
-            a(f"_{label}_")
-            a("")
-            a("\n".join(_phase8_category_table_lines(phase8.classification_tables.get(col, pd.DataFrame()), category_label="Clasificacion")))
-            a("")
-        a("**Clasificación de series x volumen relativo (SERIES_CLASSIFICATION x VOLUME_BUCKET, exclusivo del reporting global).**")
-        a("")
-        a("\n".join(_phase8_cross_table_lines(phase8.classification_volume_cross)))
-        cross_note = _phase8_cross_truncation_note(phase8.classification_volume_cross)
-        if cross_note:
-            a("")
-            a(cross_note)
+        a(
+            "Análisis global por modelos, clasificaciones y cruce SERIES_CLASSIFICATION x VOLUME_BUCKET "
+            "no disponible: la metadata legacy no representa de forma fiable los bloques OLDER_3M y RECENT_3M."
+        )
         a("")
         a(f"- {PHASE8_ONLY_6M_NOTE}")
         a(f"- {PHASE8_SMALL_SAMPLE_NOTE}")
         a(f"- {PHASE8_NO_ROUTING_NOTE}")
     else:
         a(
-            "Diagnóstico global Fase 8 (Bias, volumen relativo y clasificación x volumen) no disponible: "
+            "Diagnóstico global Fase 8 (Bias y volumen relativo) no disponible: "
             "al menos un cliente participante no tiene el diagnóstico Fase 8 calculado para 6M "
             "(backend COMPARISON_STATUS ausente)."
         )

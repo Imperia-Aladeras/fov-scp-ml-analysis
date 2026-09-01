@@ -205,7 +205,7 @@ def test_build_global_workbook_creates_sheet_17(tmp_path: Path):
     assert wb.sheetnames == EXPECTED_SHEETS
 
 
-def test_phase8_global_blocks_contains_bias_volume_cross_and_not_assignable_count():
+def test_phase8_global_blocks_contains_bias_volume_cross_notice_and_not_assignable_count():
     result = build_phase8_global_multi_client_analysis_result()
     blocks = phase8_global_blocks(result)
     titles = [t for t, _ in blocks]
@@ -218,6 +218,9 @@ def test_phase8_global_blocks_contains_bias_volume_cross_and_not_assignable_coun
     not_assignable_title = next(t for t in titles if "NOT_ASSIGNABLE" in t)
     not_assignable_table = next(df for t, df in blocks if t == not_assignable_title)
     assert not_assignable_table["N_CLIENTES_VOLUMEN_NOT_ASSIGNABLE"].iloc[0] == 1
+    cross_notice = next(df for t, df in blocks if t == "Nota - SERIES_CLASSIFICATION x VOLUME_BUCKET")[""].iloc[0]
+    assert "metadata legacy ambigua" in cross_notice
+    assert not any("SERIES_CLASSIFICATION" in df.columns for _, df in blocks)
 
 
 def test_phase8_global_volume_block_never_has_n_clients_column():
@@ -234,13 +237,13 @@ def test_phase8_global_volume_block_never_has_n_clients_column():
     assert "n_clients" not in {c.lower() for c in volume_table.columns}
 
 
-def test_phase8_global_cross_table_includes_not_assignable_row():
-    """El cruce global debe conservar filas SERIES_CLASSIFICATION x NOT_ASSIGNABLE tal cual las entrega el nucleo."""
+def test_phase8_global_cross_table_is_suppressed_without_removing_not_assignable_diagnostic():
     result = build_phase8_global_multi_client_analysis_result()
     blocks = phase8_global_blocks(result)
-    cross_title = next(t for t, _ in blocks if "SERIES_CLASSIFICATION x VOLUME_BUCKET" in t)
-    cross_table = next(df for t, df in blocks if t == cross_title)
-    assert (cross_table["VOLUME_BUCKET"] == "No asignable").any()
+    assert not any("SERIES_CLASSIFICATION" in df.columns for _, df in blocks)
+    assert any("Cruce no disponible" in str(df) for _, df in blocks)
+    not_assignable_table = next(df for title, df in blocks if "NOT_ASSIGNABLE" in title)
+    assert not_assignable_table["N_CLIENTES_VOLUMEN_NOT_ASSIGNABLE"].iloc[0] == 1
 
 
 def test_phase8_global_blocks_none_when_phase8_unavailable():
@@ -251,21 +254,21 @@ def test_phase8_global_blocks_none_when_phase8_unavailable():
     assert "no disponible" in blocks[0][1][""].iloc[0]
 
 
-def test_models_and_classifications_blocks_include_bias_when_phase8_available():
+def test_models_and_classifications_blocks_are_explicitly_unavailable_even_with_phase8():
     result = build_phase8_global_multi_client_analysis_result()
     ml_blocks = models_and_win_rates_blocks(result)
-    ml_models_table = ml_blocks[0][1]
-    assert "scp_bias_agg" in ml_models_table.columns
-    assert "n_clients" in ml_models_table.columns
-
     class_blocks = classifications_blocks(result)
-    series_class_table = next(df for t, df in class_blocks if t.startswith("SERIES_CLASSIFICATION"))
-    assert "scp_bias_agg" in series_class_table.columns
+    for blocks in (ml_blocks, class_blocks):
+        assert len(blocks) == 1 and blocks[0][0] == "Nota"
+        notice = blocks[0][1][""].iloc[0]
+        assert "metadata legacy" in notice
+        assert "OLDER_3M" in notice and "RECENT_3M" in notice
 
 
-def test_models_and_classifications_blocks_fall_back_without_bias_when_phase8_none():
+def test_models_and_classifications_blocks_keep_same_notice_when_phase8_none():
     result = analyze_global(build_phase8_global_missing_client_results())
     assert result.periods["6M"].phase8 is None
     ml_blocks = models_and_win_rates_blocks(result)
-    ml_models_table = ml_blocks[0][1]
-    assert "scp_bias_agg" not in ml_models_table.columns
+    class_blocks = classifications_blocks(result)
+    assert "metadata legacy" in ml_blocks[0][1][""].iloc[0]
+    assert "metadata legacy" in class_blocks[0][1][""].iloc[0]

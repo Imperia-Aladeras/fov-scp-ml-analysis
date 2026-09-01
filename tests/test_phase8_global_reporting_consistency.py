@@ -167,53 +167,34 @@ def test_volume_bucket_row_consistent_across_excel_markdown_html_view_model_and_
 # Fila de modelo (n_clients SI aplica)
 # --------------------------------------------------------------------------
 
-def test_model_table_row_consistent_across_excel_markdown_html_view_model_and_rendered_html(tmp_path: Path):
+def test_legacy_model_table_is_suppressed_across_excel_markdown_and_rendered_html(tmp_path: Path):
     result = build_phase8_global_multi_client_analysis_result()
     phase8 = result.periods["6M"].phase8
     core_table = phase8.model_tables["ML_BEST_MODEL"]
-    core_row = core_table[core_table["category"] == "AutoETS"].iloc[0]
-    assert "n_clients" in core_table.columns  # SI aplica para model_tables
+    assert "AutoETS" in set(core_table["category"])  # payload interno de compatibilidad
 
     xlsx_path = tmp_path / "global.xlsx"
     build_global_workbook(result, xlsx_path)
-    xlsx_rows = _xlsx_block_rows(xlsx_path, "11_models_and_win_rates", "category")
-    xlsx_row = next(r for r in xlsx_rows if r.get("category") == "AutoETS")
-    assert xlsx_row["n_clients"] == core_row["n_clients"]
-    assert xlsx_row["n_comparable"] == core_row["n_comparable"]
-    assert xlsx_row["scp_wape_agg"] == pytest.approx(core_row["scp_wape_agg"])
-    assert xlsx_row["ml_wape_agg"] == pytest.approx(core_row["ml_wape_agg"])
-    assert xlsx_row["scp_bias_agg"] == pytest.approx(core_row["scp_bias_agg"])
-    assert xlsx_row["ml_bias_agg"] == pytest.approx(core_row["ml_bias_agg"])
-    assert xlsx_row["scp_direction"] == direction_label_es(core_row["scp_direction"])
+    wb = openpyxl.load_workbook(xlsx_path)
+    excel_text = "\n".join(
+        str(cell) for row in wb["11_models_and_win_rates"].iter_rows(values_only=True)
+        for cell in row if cell is not None
+    )
+    assert "metadata legacy" in excel_text
+    assert "OLDER_3M" in excel_text and "RECENT_3M" in excel_text
+    assert "AutoETS" not in excel_text
 
     report = build_global_report(result)
     section_16 = report.split("## 16.")[1].split("## 17.")[0]
-    lines = [ln for ln in section_16.splitlines() if ln.strip().startswith("|")]
-    headers = [h.strip() for h in lines[0].strip("|").split("|")]
-    assert "N clientes" in headers  # SI aplica
-    md_row = None
-    for line in lines[2:]:
-        cells = [c.strip() for c in line.strip("|").split("|")]
-        if cells[0] == "AutoETS":
-            md_row = dict(zip(headers, cells))
-            break
-    assert md_row is not None
-    assert md_row["N clientes"] == _fmt_num(core_row["n_clients"])
-    assert md_row["N comparable"] == _fmt_num(core_row["n_comparable"])
-    assert md_row["Bias SCP"] == _fmt_signed_pct_fraction(core_row["scp_bias_agg"])
-    assert md_row["Direccion SCP"] == direction_label_es(core_row["scp_direction"])
-
-    phase8_global_vm = vm.build_phase8_global_vm(phase8)
-    html_row = next(r for r in phase8_global_vm["model_tables"]["ML_BEST_MODEL"] if r["categoria"] == "AutoETS")
-    assert html_row["n_clients"] == _fmt_num(core_row["n_clients"])
-    assert html_row["n"] == _fmt_num(core_row["n_comparable"])
-    assert html_row["scp_bias"] == _fmt_signed_pct_fraction(core_row["scp_bias_agg"])
-    assert html_row["scp_direction"] == direction_label_es(core_row["scp_direction"])
+    assert "metadata legacy" in section_16
+    assert "OLDER_3M" in section_16 and "RECENT_3M" in section_16
+    assert "AutoETS" not in section_16
 
     html = _render_global_html(result, tmp_path, "phase8_global_model_consistency_run")
     section = html.split('id="fase8-global"')[1].split("</section>")[0]
-    assert html_row["n_clients"] in section
-    assert html_row["scp_bias"] in section
+    assert "metadata legacy" in section
+    assert "OLDER_3M" in section and "RECENT_3M" in section
+    assert "AutoETS" not in section
 
 
 # --------------------------------------------------------------------------
@@ -221,57 +202,32 @@ def test_model_table_row_consistent_across_excel_markdown_html_view_model_and_re
 # fila SERIES_CLASSIFICATION x NOT_ASSIGNABLE.
 # --------------------------------------------------------------------------
 
-def test_cross_table_not_assignable_row_consistent_across_excel_markdown_html_view_model_and_rendered_html(tmp_path: Path):
+def test_legacy_cross_table_is_suppressed_while_not_assignable_remains_visible(tmp_path: Path):
     result = build_phase8_global_multi_client_analysis_result()
     phase8 = result.periods["6M"].phase8
     core_table = phase8.classification_volume_cross
-    assert "n_clients" in core_table.columns  # SI aplica para el cruce
-    core_row = core_table[
-        (core_table["SERIES_CLASSIFICATION"] == "lumpy") & (core_table["VOLUME_BUCKET"] == "NOT_ASSIGNABLE")
-    ].iloc[0]
+    assert "lumpy" in set(core_table["SERIES_CLASSIFICATION"])  # payload interno de compatibilidad
 
     xlsx_path = tmp_path / "global.xlsx"
     build_global_workbook(result, xlsx_path)
-    xlsx_rows = _xlsx_block_rows(xlsx_path, "17_phase8_global", "SERIES_CLASSIFICATION")
-    xlsx_row = next(r for r in xlsx_rows if r.get("SERIES_CLASSIFICATION") == "lumpy" and r.get("VOLUME_BUCKET") == "No asignable")
-    assert xlsx_row["n_clients"] == core_row["n_clients"]
-    assert xlsx_row["n_comparable"] == core_row["n_comparable"]
-    assert xlsx_row["scp_bias_agg"] == pytest.approx(core_row["scp_bias_agg"])
-    assert xlsx_row["ml_bias_agg"] == pytest.approx(core_row["ml_bias_agg"])
-    assert xlsx_row["scp_direction"] == direction_label_es(core_row["scp_direction"])
+    wb = openpyxl.load_workbook(xlsx_path)
+    excel_rows = list(wb["17_phase8_global"].iter_rows(values_only=True))
+    assert not any(row and row[0] == "SERIES_CLASSIFICATION" for row in excel_rows)
+    excel_text = "\n".join(str(cell) for row in excel_rows for cell in row if cell is not None)
+    assert "Cruce no disponible" in excel_text
+    assert "N_CLIENTES_VOLUMEN_NOT_ASSIGNABLE" in excel_text
 
     report = build_global_report(result)
     section_22 = report.split("## 22.")[1]
-    cross_section = section_22.split("SERIES_CLASSIFICATION x VOLUME_BUCKET")[1]
-    lines = [ln for ln in cross_section.splitlines() if ln.strip().startswith("|")]
-    headers = [h.strip() for h in lines[0].strip("|").split("|")]
-    md_row = None
-    for line in lines[2:]:
-        cells = [c.strip() for c in line.strip("|").split("|")]
-        if cells[0] == "lumpy" and cells[1] == "No asignable":
-            md_row = dict(zip(headers, cells))
-            break
-    assert md_row is not None, "fila lumpy/No asignable no encontrada en el cruce del markdown"
-    assert md_row["N clientes"] == _fmt_num(core_row["n_clients"])
-    assert md_row["N comparable"] == _fmt_num(core_row["n_comparable"])
-    assert md_row["Bias SCP"] == _fmt_signed_pct_fraction(core_row["scp_bias_agg"])
-    assert md_row["Direccion SCP"] == direction_label_es(core_row["scp_direction"])
-
-    phase8_global_vm = vm.build_phase8_global_vm(phase8)
-    html_row = next(
-        r for r in phase8_global_vm["classification_volume_cross"]
-        if r["clasificacion"] == "lumpy" and r["bucket"] == "No asignable"
-    )
-    assert html_row["n_clients"] == _fmt_num(core_row["n_clients"])
-    assert html_row["n"] == _fmt_num(core_row["n_comparable"])
-    assert html_row["scp_bias"] == _fmt_signed_pct_fraction(core_row["scp_bias_agg"])
-    assert html_row["scp_direction"] == direction_label_es(core_row["scp_direction"])
+    assert "metadata legacy" in section_22
+    assert "lumpy" not in section_22
+    assert "Clientes con volumen relativo no asignable" in section_22
 
     html = _render_global_html(result, tmp_path, "phase8_global_cross_consistency_run")
     section = html.split('id="fase8-global"')[1].split("</section>")[0]
-    assert "lumpy" in section
-    assert "No asignable" in section
-    assert html_row["n_clients"] in section
+    assert "metadata legacy" in section
+    assert "lumpy" not in section
+    assert "Clientes con volumen relativo no asignable" in section
 
 
 # --------------------------------------------------------------------------
@@ -359,21 +315,18 @@ def test_classification_volume_cross_absent_from_existing_individual_outputs(tmp
 # cuando phase8 esta disponible (cierre de Fase 8C/8D).
 # --------------------------------------------------------------------------
 
-def test_markdown_shows_both_model_tables_and_all_four_classification_tables(tmp_path: Path):
+def test_markdown_shows_explicit_notices_instead_of_legacy_model_and_classification_tables(tmp_path: Path):
     result = build_phase8_global_multi_client_analysis_result()
     report = build_global_report(result)
 
     section_16 = report.split("## 16.")[1].split("## 17.")[0]
-    assert "Modelos ML" in section_16 and "AutoETS" in section_16
-    assert "Modelos SCP" in section_16 and "x11 seasonal" in section_16
-    assert "Bias SCP" in section_16  # ambas tablas de modelo llevan Bias
+    assert "metadata legacy" in section_16
+    assert "AutoETS" not in section_16 and "x11 seasonal" not in section_16
 
     section_22 = report.split("## 22.")[1]
-    for label in ("ML_CLASSIFICATION", "ML_TYPE", "SERIES_CLASSIFICATION", "SCP_CLASSIFICATION"):
-        assert f"_{label}_" in section_22
-    # Las 4 tablas completas conservan smooth/erratic/intermittent/lumpy (no solo top-5/bottom-5).
-    for classification in ("smooth", "erratic", "intermittent"):
-        assert classification in section_22.split("SERIES_CLASSIFICATION x VOLUME_BUCKET")[0]
+    assert "metadata legacy" in section_22
+    for classification in ("smooth", "erratic", "intermittent", "lumpy"):
+        assert classification not in section_22
 
 
 def test_markdown_model_and_classification_tables_absent_without_bias_when_phase8_none(tmp_path: Path):
@@ -383,8 +336,7 @@ def test_markdown_model_and_classification_tables_absent_without_bias_when_phase
     assert "Modelos SCP" not in section_16  # comportamiento legacy exacto, sin fabricar nada nuevo
 
 
-def test_html_and_excel_still_show_both_models_and_four_classifications_after_markdown_fix(tmp_path: Path):
-    """No regresion: la correccion del Markdown no debe afectar a Excel/HTML, que ya los mostraban."""
+def test_html_and_excel_show_notices_instead_of_legacy_models_and_classifications(tmp_path: Path):
     result = build_phase8_global_multi_client_analysis_result()
 
     xlsx_path = tmp_path / "global.xlsx"
@@ -392,17 +344,19 @@ def test_html_and_excel_still_show_both_models_and_four_classifications_after_ma
     wb = openpyxl.load_workbook(xlsx_path)
     ws11 = wb["11_models_and_win_rates"]
     ws11_text = "\n".join(str(c) for row in ws11.iter_rows(values_only=True) for c in row if c is not None)
-    assert "Modelos ML" in ws11_text and "Modelos SCP" in ws11_text
+    assert "metadata legacy" in ws11_text
+    assert "AutoETS" not in ws11_text and "x11 seasonal" not in ws11_text
     ws12 = wb["12_classifications"]
     ws12_text = "\n".join(str(c) for row in ws12.iter_rows(values_only=True) for c in row if c is not None)
-    for col in ("ML_CLASSIFICATION", "ML_TYPE", "SERIES_CLASSIFICATION", "SCP_CLASSIFICATION"):
-        assert col in ws12_text
+    assert "metadata legacy" in ws12_text
+    for category in ("smooth", "erratic", "intermittent", "lumpy"):
+        assert category not in ws12_text
 
     html = _render_global_html(result, tmp_path, "phase8_global_parity_run")
     section = html.split('id="fase8-global"')[1].split("</section>")[0]
-    assert "Modelos ML:" in section and "Modelos SCP:" in section
-    for col in ("ML_CLASSIFICATION:", "ML_TYPE:", "SERIES_CLASSIFICATION:", "SCP_CLASSIFICATION:"):
-        assert col in section
+    assert "metadata legacy" in section
+    for category in ("AutoETS", "x11 seasonal", "smooth", "erratic", "intermittent", "lumpy"):
+        assert category not in section
 
 
 # --------------------------------------------------------------------------
@@ -410,42 +364,39 @@ def test_html_and_excel_still_show_both_models_and_four_classifications_after_ma
 # nunca "nan"/"None", nunca una fila/grupo aparte.
 # --------------------------------------------------------------------------
 
-def test_null_classification_renders_as_sin_clasificar_everywhere(tmp_path: Path):
+def test_null_classification_is_normalized_internally_but_never_rendered(tmp_path: Path):
     result = build_phase8_global_null_classification_analysis_result()
     phase8 = result.periods["6M"].phase8
     assert phase8 is not None
     core_table = phase8.classification_tables["SERIES_CLASSIFICATION"]
     assert list(core_table["category"]) == ["smooth", "(sin clasificar)"]  # 1 unica fila, no duplicada
-    core_row = core_table[core_table["category"] == "(sin clasificar)"].iloc[0]
-    assert core_row["n_comparable"] == 1
+    assert core_table.loc[core_table["category"] == "(sin clasificar)", "n_comparable"].iloc[0] == 1
 
     xlsx_path = tmp_path / "global.xlsx"
     build_global_workbook(result, xlsx_path)
     wb = openpyxl.load_workbook(xlsx_path)
     ws12_text = "\n".join(str(c) for row in wb["12_classifications"].iter_rows(values_only=True) for c in row if c is not None)
-    assert "(sin clasificar)" in ws12_text
+    assert "metadata legacy" in ws12_text
+    assert "(sin clasificar)" not in ws12_text
     assert "nan" not in ws12_text.lower()
     assert "none" not in ws12_text.lower()
 
     report = build_global_report(result)
     section_22 = report.split("## 22.")[1]
-    assert "(sin clasificar)" in section_22
+    assert "metadata legacy" in section_22
+    assert "(sin clasificar)" not in section_22
     assert "nan" not in section_22.lower()
     assert " none " not in f" {section_22.lower()} "
 
-    phase8_global_vm = vm.build_phase8_global_vm(phase8)
-    sc_rows = phase8_global_vm["classification_tables"]["SERIES_CLASSIFICATION"]
-    assert {r["categoria"] for r in sc_rows} == {"smooth", "(sin clasificar)"}
-
     html = _render_global_html(result, tmp_path, "phase8_global_null_class_run")
     section = html.split('id="fase8-global"')[1].split("</section>")[0]
-    assert "(sin clasificar)" in section
+    assert "metadata legacy" in section
+    assert "(sin clasificar)" not in section
     assert "nan" not in section.lower()
 
     # El cruce global tambien normaliza la clasificacion nula (mismo MISSING_CATEGORY_LABEL).
     cross = phase8.classification_volume_cross
     assert "(sin clasificar)" in set(cross["SERIES_CLASSIFICATION"])
-    assert "(sin clasificar)" in section.split("SERIES_CLASSIFICATION × VOLUME_BUCKET")[1]
 
 
 # --------------------------------------------------------------------------
@@ -477,7 +428,7 @@ def _inflate_cross_table_rows(phase8, n_target: int = 35):
     return inflated
 
 
-def test_cross_table_truncation_note_shown_in_markdown_and_html_when_more_rows_than_shown(tmp_path: Path):
+def test_inflated_cross_table_remains_suppressed_in_markdown_html_and_excel(tmp_path: Path):
     result = build_phase8_global_multi_client_analysis_result()
     phase8 = result.periods["6M"].phase8
     inflated = _inflate_cross_table_rows(phase8, n_target=35)
@@ -485,15 +436,23 @@ def test_cross_table_truncation_note_shown_in_markdown_and_html_when_more_rows_t
 
     report = build_global_report(result)
     section_22 = report.split("## 22.")[1]
-    assert "Mostrando 30 de 35 combinaciones" in section_22
-
-    phase8_global_vm = vm.build_phase8_global_vm(phase8)
-    assert phase8_global_vm["classification_volume_cross_total"] == 35
-    assert len(phase8_global_vm["classification_volume_cross"]) == 30
+    assert "metadata legacy" in section_22
+    assert "_dup" not in section_22
 
     html = _render_global_html(result, tmp_path, "phase8_global_truncation_run")
     section = html.split('id="fase8-global"')[1].split("</section>")[0]
-    assert "Mostrando 30 de 35 combinaciones" in section
+    assert "metadata legacy" in section
+    assert "_dup" not in section
+
+    xlsx_path = tmp_path / "global.xlsx"
+    build_global_workbook(result, xlsx_path)
+    wb = openpyxl.load_workbook(xlsx_path)
+    excel_text = "\n".join(
+        str(cell) for row in wb["17_phase8_global"].iter_rows(values_only=True)
+        for cell in row if cell is not None
+    )
+    assert "Cruce no disponible" in excel_text
+    assert "_dup" not in excel_text
 
 
 def test_cross_table_no_truncation_note_when_all_rows_shown(tmp_path: Path):
@@ -509,12 +468,14 @@ def test_cross_table_no_truncation_note_when_all_rows_shown(tmp_path: Path):
     assert phase8_global_vm["classification_volume_cross_total"] == len(phase8_global_vm["classification_volume_cross"])
 
 
-def test_excel_cross_table_never_truncated_even_when_markdown_html_truncate(tmp_path: Path):
+def test_excel_cross_table_is_never_rendered_even_when_internal_payload_is_large(tmp_path: Path):
     result = build_phase8_global_multi_client_analysis_result()
     phase8 = result.periods["6M"].phase8
     inflated = _inflate_cross_table_rows(phase8, n_target=35)
 
     xlsx_path = tmp_path / "global.xlsx"
     build_global_workbook(result, xlsx_path)
-    xlsx_rows = _xlsx_block_rows(xlsx_path, "17_phase8_global", "SERIES_CLASSIFICATION")
-    assert len(xlsx_rows) == len(inflated) == 35
+    wb = openpyxl.load_workbook(xlsx_path)
+    rows = list(wb["17_phase8_global"].iter_rows(values_only=True))
+    assert len(inflated) == 35
+    assert not any(row and row[0] == "SERIES_CLASSIFICATION" for row in rows)

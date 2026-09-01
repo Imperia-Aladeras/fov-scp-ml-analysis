@@ -209,12 +209,15 @@ def test_build_client_report_never_recomputes_pareto(monkeypatch):
 # Fase 8C: seccion 18 (Bias + volumen relativo) y Bias integrado en 10/11/12.
 # --------------------------------------------------------------------------
 
-def test_sections_10_11_12_include_bias_columns():
+def test_sections_10_11_12_show_explicit_legacy_metadata_unavailability():
     result = build_synthetic_client_result(with_data=True)
     report = build_client_report(result)
-    section_10 = report.split("## 10. Modelos ML")[1].split("## 11.")[0]
-    assert "Bias SCP" in section_10
-    assert "Direccion SCP" in section_10
+    for start, end in (("## 10.", "## 11."), ("## 11.", "## 12."), ("## 12.", "## 13.")):
+        section = report.split(start)[1].split(end)[0]
+        assert "metadata legacy" in section
+        assert "OLDER_3M" in section and "RECENT_3M" in section
+        assert "sin datos" not in section.lower()
+        assert "Bias SCP" not in section
 
 
 def test_section_18_present_with_bias_total_and_volume_not_assignable():

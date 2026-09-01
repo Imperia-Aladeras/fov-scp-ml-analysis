@@ -19,7 +19,7 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from src.client_analysis import ClientAnalysisResult
-from src.models import category_performance_table, top_absolute_impact, top_percentage_changes
+from src.models import top_absolute_impact, top_percentage_changes
 from src.periods import ALL_PERIODS, period_columns, visible_label
 from src.phase8 import NOT_ASSIGNABLE
 from src.phase8_presentation import (
@@ -350,60 +350,17 @@ def _translate_bias_directions(table: pd.DataFrame) -> pd.DataFrame:
 
 
 def models_and_win_rates_blocks(result: ClientAnalysisResult) -> list[tuple[str, pd.DataFrame]]:
-    df, pcols, mask = _period_df_and_mask(result, MODEL_CLASSIFICATION_PERIOD)
-    if df is None:
-        return [("Sin datos", pd.DataFrame())]
-    pr = result.periods.get(MODEL_CLASSIFICATION_PERIOD)
-    # PeriodResult.phase8 (calculado una unica vez en client_analysis.py) es
-    # la fuente preferida -- ya incluye Bias. Si es None (edge case: 6M sin
-    # backend COMPARISON_STATUS), se mantiene el comportamiento anterior a
-    # 8C, sin Bias, en vez de fallar.
-    if pr is not None and pr.phase8 is not None:
-        ml_models = _translate_bias_directions(pr.phase8.model_tables.get("ML_BEST_MODEL", pd.DataFrame()))
-        scp_models = _translate_bias_directions(pr.phase8.model_tables.get("SCP_BEST_MODEL", pd.DataFrame()))
-    else:
-        ml_models = category_performance_table(df, pcols, mask, "ML_BEST_MODEL")
-        scp_models = category_performance_table(df, pcols, mask, "SCP_BEST_MODEL")
-    blocks = [
-        (f"Modelos ML (ML_BEST_MODEL) - {visible_label(MODEL_CLASSIFICATION_PERIOD)}", ml_models),
-        (f"Modelos SCP (SCP_BEST_MODEL) - {visible_label(MODEL_CLASSIFICATION_PERIOD)}", scp_models),
-    ]
-    if ml_models.empty and scp_models.empty:
-        blocks.append(("Nota", pd.DataFrame({
-            "": ["Sin series comparables en 6M: no se calculan modelos ni tasas de victoria (no se inventan)."]
-        })))
-    elif pr is not None and pr.phase8 is not None:
-        blocks.append(("Nota metodologica - Bias", pd.DataFrame({"": [BIAS_METHODOLOGY_NOTE]})))
-    return blocks
+    return [("Nota", pd.DataFrame({
+        "": ["Analisis por modelo no disponible: la metadata legacy no representa de forma fiable "
+             "los bloques OLDER_3M y RECENT_3M."]
+    }))]
 
 
 def classifications_blocks(result: ClientAnalysisResult) -> list[tuple[str, pd.DataFrame]]:
-    df, pcols, mask = _period_df_and_mask(result, MODEL_CLASSIFICATION_PERIOD)
-    if df is None:
-        return [("Sin datos", pd.DataFrame())]
-    pr = result.periods.get(MODEL_CLASSIFICATION_PERIOD)
-    has_phase8 = pr is not None and pr.phase8 is not None
-    blocks = []
-    any_data = False
-    for col, label in (
-        ("ML_CLASSIFICATION", "ML_CLASSIFICATION"),
-        ("ML_TYPE", "ML_TYPE"),
-        ("SERIES_CLASSIFICATION", "SERIES_CLASSIFICATION"),
-        ("SCP_CLASSIFICATION", "SCP_CLASSIFICATION"),
-    ):
-        if has_phase8:
-            table = _translate_bias_directions(pr.phase8.classification_tables.get(col, pd.DataFrame()))
-        else:
-            table = category_performance_table(df, pcols, mask, col)
-        any_data = any_data or not table.empty
-        blocks.append((f"{label} - {visible_label(MODEL_CLASSIFICATION_PERIOD)}", table))
-    if not any_data:
-        blocks.append(("Nota", pd.DataFrame({
-            "": ["Sin series comparables en 6M: no se calculan clasificaciones (no se inventan)."]
-        })))
-    elif has_phase8:
-        blocks.append(("Nota metodologica - Bias", pd.DataFrame({"": [BIAS_METHODOLOGY_NOTE]})))
-    return blocks
+    return [("Nota", pd.DataFrame({
+        "": ["Analisis por clasificacion no disponible: la metadata legacy no representa de forma fiable "
+             "los bloques OLDER_3M y RECENT_3M."]
+    }))]
 
 
 # --------------------------------------------------------------------------

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
+import src.client_analysis as client_analysis
 from src.client_analysis import (
     COMPARISON_STATUS_NULL_BUCKET,
     PeriodResult,
@@ -18,6 +19,29 @@ from src.periods import ALL_PERIODS, period_columns
 from src.phase8 import Phase8ClientDiagnostics
 from tests.factories import build_synthetic_client_dataframe as build_factory_synthetic_client_dataframe
 from tests.factories import make_client_source
+
+
+def test_block_metadata_checks_are_integrated_only_for_quarter_blocks(monkeypatch):
+    calls = {"model": [], "pairing": []}
+    original_model_check = client_analysis.check_block_model_metadata_missing_for_pure_forecast
+    original_pairing_check = client_analysis.check_block_ml_metadata_pairing
+
+    def model_spy(file_label, df, period, pcols):
+        calls["model"].append(period)
+        return original_model_check(file_label, df, period, pcols)
+
+    def pairing_spy(file_label, df, period):
+        calls["pairing"].append(period)
+        return original_pairing_check(file_label, df, period)
+
+    monkeypatch.setattr(client_analysis, "check_block_model_metadata_missing_for_pure_forecast", model_spy)
+    monkeypatch.setattr(client_analysis, "check_block_ml_metadata_pairing", pairing_spy)
+
+    df = build_factory_synthetic_client_dataframe()
+    analyze_client(make_client_source(df, 99999, "Synthetic"))
+
+    assert calls["model"] == ["RECENT_3M", "OLDER_3M"]
+    assert calls["pairing"] == ["RECENT_3M", "OLDER_3M"]
 
 
 def _minimal_period_frame(period: str, history, scp_forecast, scp_abs_error, scp_wape,

@@ -91,7 +91,6 @@ def _ranking_columns(pcols: PeriodColumns) -> list[str]:
         "ID_CLIENT", "ID_CONFIGURATION", *RANKING_LEVEL_COLUMNS,
         pcols.total_history, pcols.scp_total_abs_error, pcols.ml_total_abs_error,
         pcols.scp_wape, pcols.ml_wape, pcols.winner_method,
-        "SCP_BEST_MODEL", "ML_BEST_MODEL", "SERIES_CLASSIFICATION",
     ]
 
 

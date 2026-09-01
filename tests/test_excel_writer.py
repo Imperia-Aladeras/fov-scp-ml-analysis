@@ -185,16 +185,14 @@ def test_pareto_absolute_impact_blocks_all_improvement_client_notes_empty_deteri
 # Fase 8C: Bias integrado en 08/09, hoja nueva 15_phase8_bias_volume.
 # --------------------------------------------------------------------------
 
-def test_models_and_win_rates_blocks_include_bias_columns():
+def test_models_and_win_rates_blocks_show_explicit_legacy_metadata_notice():
     result = build_synthetic_client_result(with_data=True)
     blocks = models_and_win_rates_blocks(result)
-    ml_table = next(df for title, df in blocks if "Modelos ML" in title)
-    for col in ("scp_bias_agg", "ml_bias_agg", "scp_direction", "ml_direction"):
-        assert col in ml_table.columns
-    # Direcciones ya traducidas a castellano en la capa de presentacion.
-    assert set(ml_table["scp_direction"]).issubset({
-        "Sobreprevisión", "Infraprevisión", "Sin sesgo agregado", "No evaluable",
-    })
+    assert len(blocks) == 1 and blocks[0][0] == "Nota"
+    notice = blocks[0][1][""].iloc[0]
+    assert "metadata legacy" in notice
+    assert "OLDER_3M" in notice and "RECENT_3M" in notice
+    assert "sin datos" not in notice.lower()
 
 
 def test_models_and_win_rates_blocks_reads_phase8_without_recomputing(monkeypatch):
@@ -205,15 +203,17 @@ def test_models_and_win_rates_blocks_reads_phase8_without_recomputing(monkeypatc
 
     monkeypatch.setattr("src.phase8.category_performance_table_with_bias", _boom)
     blocks = models_and_win_rates_blocks(result)
-    assert any("Modelos ML" in title for title, _ in blocks)
+    assert blocks[0][0] == "Nota"
 
 
-def test_classifications_blocks_include_bias_columns():
+def test_classifications_blocks_show_explicit_legacy_metadata_notice():
     result = build_synthetic_client_result(with_data=True)
     blocks = classifications_blocks(result)
-    series_table = next(df for title, df in blocks if title.startswith("SERIES_CLASSIFICATION"))
-    for col in ("scp_bias_agg", "ml_bias_agg", "scp_direction", "ml_direction"):
-        assert col in series_table.columns
+    assert len(blocks) == 1 and blocks[0][0] == "Nota"
+    notice = blocks[0][1][""].iloc[0]
+    assert "metadata legacy" in notice
+    assert "OLDER_3M" in notice and "RECENT_3M" in notice
+    assert "sin datos" not in notice.lower()
 
 
 def test_phase8_bias_volume_blocks_not_assignable_case():

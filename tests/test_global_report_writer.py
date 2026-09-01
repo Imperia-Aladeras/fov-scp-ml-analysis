@@ -180,7 +180,7 @@ def test_build_global_report_never_recomputes_pareto(monkeypatch):
 # 22. Diagnostico global Fase 8 (Fase 8D)
 # --------------------------------------------------------------------------
 
-def test_section_22_present_with_bias_volume_and_cross_when_phase8_available():
+def test_section_22_preserves_bias_volume_not_assignable_and_suppresses_cross():
     result = build_phase8_global_multi_client_analysis_result()
     report = build_global_report(result)
     assert "## 22. Diagnóstico global Fase 8" in report
@@ -191,8 +191,10 @@ def test_section_22_present_with_bias_volume_and_cross_when_phase8_available():
     assert "Volumen relativo global" in section_22
     assert "Clientes con volumen relativo no asignable" in section_22
     assert "1" in section_22.split("Clientes con volumen relativo no asignable")[1][:40]
-    assert "SERIES_CLASSIFICATION x VOLUME_BUCKET" in section_22
-    assert "No asignable" in section_22  # traduccion del bucket NOT_ASSIGNABLE en el cruce
+    assert "SERIES_CLASSIFICATION x VOLUME_BUCKET" in section_22  # aviso explicito, no tabla
+    assert "metadata legacy" in section_22
+    assert "OLDER_3M" in section_22 and "RECENT_3M" in section_22
+    assert "| Clasificacion |" not in section_22
 
 
 def test_section_22_never_leaks_raw_machine_codes_or_percent_small_sample():
@@ -229,16 +231,20 @@ def test_section_22_short_note_when_phase8_none():
     assert "Bias agregado SCP" not in section_22
 
 
-def test_sections_16_to_18_include_bias_columns_when_phase8_available():
+def test_sections_16_to_18_show_explicit_legacy_metadata_unavailability():
     result = build_phase8_global_multi_client_analysis_result()
     report = build_global_report(result)
-    section_16 = report.split("## 16.")[1].split("## 17.")[0]
-    assert "Bias SCP" in section_16
-    assert "N gana ML" in section_16
+    for start, end in (("## 16.", "## 17."), ("## 17.", "## 18."), ("## 18.", "## 19.")):
+        section = report.split(start)[1].split(end)[0]
+        assert "metadata legacy" in section
+        assert "OLDER_3M" in section and "RECENT_3M" in section
+        assert "sin datos" not in section.lower()
+        assert "Bias SCP" not in section
 
 
-def test_sections_16_to_18_fall_back_to_legacy_table_when_phase8_none():
+def test_sections_16_to_18_do_not_fall_back_to_legacy_table_when_phase8_none():
     result = analyze_global(build_phase8_global_missing_client_results())
     report = build_global_report(result)
     section_16 = report.split("## 16.")[1].split("## 17.")[0]
     assert "Bias SCP" not in section_16
+    assert "metadata legacy" in section_16

@@ -435,9 +435,6 @@ def _ranking_table_vm(df, value_col: str, signed: bool = True, top_n: int = 10) 
             "wape_scp": fmt_pct_fraction(r.get(scp_wape_col)) if scp_wape_col else NA_TEXT,
             "wape_ml": fmt_pct_fraction(r.get(ml_wape_col)) if ml_wape_col else NA_TEXT,
             "winner": str(r.get(winner_col, NA_TEXT)) if winner_col else NA_TEXT,
-            "modelo_scp": str(r.get("SCP_BEST_MODEL", "") or NA_TEXT),
-            "modelo_ml": str(r.get("ML_BEST_MODEL", "") or NA_TEXT),
-            "clasificacion": str(r.get("SERIES_CLASSIFICATION", "") or NA_TEXT),
         })
     return rows
 
@@ -709,7 +706,7 @@ def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
     junto a display_name en el texto del enlace porque el catalogo no
     garantiza nombres unicos entre ID_CLIENT distintos.
     """
-    from src.models import category_performance_table, top_absolute_impact, top_percentage_changes
+    from src.models import top_absolute_impact, top_percentage_changes
     from src.periods import period_columns
 
     source = result.source
@@ -769,6 +766,22 @@ def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
     vm["monthly"] = [
         _period_block_vm(result.periods.get(f"M{i}"), f"M{i}") for i in range(1, 7)
     ]
+    model_unavailable = {
+        "available": False,
+        "message": (
+            "Análisis por modelo no disponible: la metadata legacy no representa de forma fiable "
+            "los bloques OLDER_3M y RECENT_3M."
+        ),
+    }
+    vm["ml_models"] = dict(model_unavailable)
+    vm["scp_models"] = dict(model_unavailable)
+    vm["classifications"] = {
+        "available": False,
+        "message": (
+            "Análisis por clasificación no disponible: la metadata legacy no representa de forma fiable "
+            "los bloques OLDER_3M y RECENT_3M."
+        ),
+    }
 
     if no_comparable_anywhere:
         vm["conclusion"] = (
@@ -784,27 +797,7 @@ def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
     mask_6m = m6.comparable_mask if m6 is not None else None
     has_6m_data = df is not None and mask_6m is not None and mask_6m.any()
 
-    # Modelos/clasificaciones: PeriodResult.phase8 (calculado una unica vez en
-    # client_analysis.py) es la fuente preferida -- ya incluye Bias. Si es
-    # None (edge case: 6M sin backend COMPARISON_STATUS), se mantiene el
-    # comportamiento anterior a 8C (categoria sin Bias) en vez de fallar.
-    has_phase8 = m6 is not None and m6.phase8 is not None
     if has_6m_data:
-        if has_phase8:
-            vm["ml_models"] = _category_table_vm(m6.phase8.model_tables.get("ML_BEST_MODEL", pd.DataFrame()))
-            vm["scp_models"] = _category_table_vm(m6.phase8.model_tables.get("SCP_BEST_MODEL", pd.DataFrame()))
-            vm["classifications"] = {
-                col: _category_table_vm(m6.phase8.classification_tables.get(col, pd.DataFrame()))
-                for col in ("ML_CLASSIFICATION", "ML_TYPE", "SERIES_CLASSIFICATION", "SCP_CLASSIFICATION")
-            }
-        else:
-            vm["ml_models"] = _category_table_vm(category_performance_table(df, pcols_6m, mask_6m, "ML_BEST_MODEL"))
-            vm["scp_models"] = _category_table_vm(category_performance_table(df, pcols_6m, mask_6m, "SCP_BEST_MODEL"))
-            vm["classifications"] = {
-                col: _category_table_vm(category_performance_table(df, pcols_6m, mask_6m, col))
-                for col in ("ML_CLASSIFICATION", "ML_TYPE", "SERIES_CLASSIFICATION", "SCP_CLASSIFICATION")
-            }
-        vm["classifications"] = {k: v for k, v in vm["classifications"].items() if v}
         top_improve, top_worsen = top_percentage_changes(df, pcols_6m, mask_6m, n=10)
         vm["top_improvements"] = _ranking_table_vm(top_improve, "ML_IMPROVEMENT_VS_SCP_PCT")
         vm["top_deteriorations"] = _ranking_table_vm(top_worsen, "ML_IMPROVEMENT_VS_SCP_PCT")
@@ -816,8 +809,6 @@ def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
         # ya calculado una unica vez en client_analysis.py.
         vm["pareto"] = _pareto_analysis_vm(m6.pareto)
     else:
-        vm["ml_models"] = vm["scp_models"] = []
-        vm["classifications"] = {}
         vm["top_improvements"] = vm["top_deteriorations"] = []
         vm["top_abs_reductions"] = vm["top_abs_increases"] = []
         vm["pareto"] = _pareto_analysis_vm(None)
@@ -841,7 +832,8 @@ def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
     limitations = [
         "El winner (WINNER_METHOD_*) se usa como fuente de verdad; el criterio exacto de empate relativo "
         "no está documentado y no se reconstruye.",
-        "Modelos y clasificaciones se muestran únicamente para el semestre completo (6M).",
+        "El análisis por modelos y clasificaciones no está disponible porque la metadata legacy no representa "
+        "de forma fiable los bloques OLDER_3M y RECENT_3M.",
         "Los valores extremos de WAPE o de mejora relativa no se recortan silenciosamente en las "
         "estadísticas: se conservan y se señalan en los chequeos de calidad.",
         "Este informe es retrospectivo (backtesting) y no garantiza comportamiento futuro.",

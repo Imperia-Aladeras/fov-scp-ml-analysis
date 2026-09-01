@@ -498,6 +498,67 @@ def check_comparable_without_forecasts(
     )
 
 
+def check_block_model_metadata_missing_for_pure_forecast(
+    file_label: str, df: pd.DataFrame, period: str, pcols: PeriodColumns,
+) -> list[QualityIssue]:
+    """
+    Un forecast puro de OLDER_3M/RECENT_3M debe conservar la metadata de
+    modelo del mismo motor y bloque. Las columnas de metadata son aditivas:
+    si no existen fisicamente (CSV historico), el motor no se audita.
+    """
+    issues: list[QualityIssue] = []
+    checks = (
+        ("SCP", pcols.scp_total_forecast, f"SCP_MODEL_{period}"),
+        ("ML", pcols.ml_total_forecast, f"ML_BEST_MODEL_{period}"),
+    )
+    for method, forecast_col, model_col in checks:
+        if forecast_col not in df.columns or model_col not in df.columns:
+            continue
+        bad = df[forecast_col].notna() & df[model_col].isna()
+        n_bad = int(bad.sum())
+        if n_bad == 0:
+            continue
+        sample_ids = df.loc[bad, "ID_CONFIGURATION"].tolist()[:10] if "ID_CONFIGURATION" in df.columns else []
+        issues.append(QualityIssue(
+            Severity.ERROR, "BLOCK_MODEL_METADATA_MISSING_FOR_PURE_FORECAST",
+            f"{n_bad} filas con forecast puro {method} en {period} pero sin metadata {model_col}.",
+            scope="period", details={
+                "file": file_label, "period": period, "method": method,
+                "forecast_column": forecast_col, "model_column": model_col,
+                "n_bad": n_bad, "sample_ids": sample_ids,
+            },
+        ))
+    return issues
+
+
+def check_block_ml_metadata_pairing(
+    file_label: str, df: pd.DataFrame, period: str,
+) -> QualityIssue | None:
+    """
+    El modelo y la clasificacion ML de un bloque forman una pareja: ambos
+    presentes o ambos nulos. Si alguna columna no existe, se trata como un
+    CSV historico y no se intenta reconstruir metadata ausente.
+    """
+    model_col = f"ML_BEST_MODEL_{period}"
+    classification_col = f"ML_CLASSIFICATION_{period}"
+    if model_col not in df.columns or classification_col not in df.columns:
+        return None
+    bad = df[model_col].isna() != df[classification_col].isna()
+    n_bad = int(bad.sum())
+    if n_bad == 0:
+        return None
+    sample_ids = df.loc[bad, "ID_CONFIGURATION"].tolist()[:10] if "ID_CONFIGURATION" in df.columns else []
+    return QualityIssue(
+        Severity.ERROR, "BLOCK_ML_METADATA_PAIRING_MISMATCH",
+        f"{n_bad} filas en {period} con {model_col}/{classification_col} presentes de forma asimetrica.",
+        scope="period", details={
+            "file": file_label, "period": period, "model_column": model_col,
+            "classification_column": classification_col, "n_bad": n_bad,
+            "sample_ids": sample_ids,
+        },
+    )
+
+
 def check_ml_exclusion_reason_present(file_label: str, df: pd.DataFrame) -> QualityIssue | None:
     if "HAS_ML_EXCLUDED" not in df.columns or "ML_EXCLUSION_REASON" not in df.columns:
         return None

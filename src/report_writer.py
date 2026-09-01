@@ -16,7 +16,6 @@ import pandas as pd
 
 from src.client_analysis import ClientAnalysisResult, PeriodResult
 from src.models import (
-    category_performance_table,
     top_absolute_impact,
     top_percentage_changes,
 )
@@ -184,7 +183,7 @@ def _pareto_concentration_line(group, label: str) -> str:
 def _ranking_table_lines(df: pd.DataFrame, value_col: str, value_fmt) -> list[str]:
     if df.empty:
         return ["_Sin datos (sin series comparables)._"]
-    headers = ["ID_CONFIGURATION", value_col, "WAPE SCP", "WAPE ML", "Winner", "Modelo SCP", "Modelo ML", "Clasificacion"]
+    headers = ["ID_CONFIGURATION", value_col, "WAPE SCP", "WAPE ML", "Winner"]
     rows = []
     for _, r in df.head(10).iterrows():
         scp_wape_col = next((c for c in df.columns if "SCP_WAPE" in c), None)
@@ -195,8 +194,6 @@ def _ranking_table_lines(df: pd.DataFrame, value_col: str, value_fmt) -> list[st
             _fmt_pct_fraction(r.get(scp_wape_col)) if scp_wape_col else "n/d",
             _fmt_pct_fraction(r.get(ml_wape_col)) if ml_wape_col else "n/d",
             str(r.get(winner_col, "")) if winner_col else "n/d",
-            str(r.get("SCP_BEST_MODEL", "")), str(r.get("ML_BEST_MODEL", "")),
-            str(r.get("SERIES_CLASSIFICATION", "")),
         ])
     return _table_from_rows(headers, rows)
 
@@ -453,33 +450,17 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     pcols_6m = period_columns(MODEL_CLASSIFICATION_PERIOD)
     mask_6m = m6.comparable_mask if m6 is not None else None
     has_6m_data = df is not None and mask_6m is not None and mask_6m.any()
-    # PeriodResult.phase8 (calculado una unica vez en client_analysis.py) es
-    # la fuente preferida para modelos/clasificaciones -- ya incluye Bias.
-    # Si es None (edge case: 6M sin backend COMPARISON_STATUS), se mantiene
-    # el comportamiento anterior a 8C (categoria sin Bias) en vez de fallar.
+    # PeriodResult.phase8 (calculado una unica vez en client_analysis.py)
+    # conserva el diagnostico independiente de Bias/volumen de la seccion 18.
     has_phase8 = m6 is not None and m6.phase8 is not None
 
     # 10. Modelos ML
     a("## 10. Modelos ML")
     a("")
-    if has_6m_data:
-        ml_models = (
-            m6.phase8.model_tables.get("ML_BEST_MODEL", pd.DataFrame()) if has_phase8
-            else category_performance_table(df, pcols_6m, mask_6m, "ML_BEST_MODEL")
-        )
-        a(f"Modelos seleccionados por ML en {visible_label(MODEL_CLASSIFICATION_PERIOD)} (top 10 por frecuencia):")
-        a("")
-        a("\n".join(_category_table_lines(ml_models)))
-        a("")
-        a(
-            "La frecuencia de seleccion no implica que ese modelo aporte mas valor: comparar la tasa de "
-            "victoria y la mejora agregada, no solo el conteo."
-        )
-        if has_phase8:
-            a("")
-            a(BIAS_METHODOLOGY_NOTE)
-    else:
-        a(_no_data_line(visible_label(MODEL_CLASSIFICATION_PERIOD)))
+    a(
+        "Análisis por modelo ML no disponible: la metadata legacy no representa de forma fiable "
+        "los bloques OLDER_3M y RECENT_3M."
+    )
     a("")
     a("---")
     a("")
@@ -487,16 +468,10 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     # 11. Modelos SCP
     a("## 11. Modelos SCP")
     a("")
-    if has_6m_data:
-        scp_models = (
-            m6.phase8.model_tables.get("SCP_BEST_MODEL", pd.DataFrame()) if has_phase8
-            else category_performance_table(df, pcols_6m, mask_6m, "SCP_BEST_MODEL")
-        )
-        a(f"Modelos SCP en {visible_label(MODEL_CLASSIFICATION_PERIOD)} (top 10 por frecuencia), incluye contra que compite ML:")
-        a("")
-        a("\n".join(_category_table_lines(scp_models)))
-    else:
-        a(_no_data_line(visible_label(MODEL_CLASSIFICATION_PERIOD)))
+    a(
+        "Análisis por modelo SCP no disponible: la metadata legacy no representa de forma fiable "
+        "los bloques OLDER_3M y RECENT_3M."
+    )
     a("")
     a("---")
     a("")
@@ -504,30 +479,10 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     # 12. Clasificaciones
     a("## 12. Clasificaciones")
     a("")
-    if has_6m_data:
-        for col, label in (
-            ("ML_CLASSIFICATION", "ML_CLASSIFICATION"), ("ML_TYPE", "ML_TYPE"),
-            ("SERIES_CLASSIFICATION", "SERIES_CLASSIFICATION"), ("SCP_CLASSIFICATION", "SCP_CLASSIFICATION"),
-        ):
-            table = (
-                m6.phase8.classification_tables.get(col, pd.DataFrame()) if has_phase8
-                else category_performance_table(df, pcols_6m, mask_6m, col)
-            )
-            if table.empty:
-                continue
-            a(f"**{label}** (top 10):")
-            a("")
-            a("\n".join(_category_table_lines(table)))
-            a("")
-        a(
-            "Las categorias con menos de 10 series comparables se marcan como muestra pequena: no se "
-            "deben extraer conclusiones fuertes de ellas."
-        )
-        if has_phase8:
-            a("")
-            a(BIAS_METHODOLOGY_NOTE)
-    else:
-        a(_no_data_line(visible_label(MODEL_CLASSIFICATION_PERIOD)))
+    a(
+        "Análisis por clasificación no disponible: la metadata legacy no representa de forma fiable "
+        "los bloques OLDER_3M y RECENT_3M."
+    )
     a("")
     a("---")
     a("")
@@ -608,7 +563,8 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     limitations = [
         "El winner (`WINNER_METHOD_*`) se usa como fuente de verdad; el criterio exacto de empate relativo "
         "(relativeDiff < 0.0001) no esta documentado en el repositorio y no se reconstruye.",
-        "Modelos y clasificaciones se muestran unicamente para el semestre completo (6M), no para cada periodo.",
+        "El analisis por modelos y clasificaciones no esta disponible porque la metadata legacy no representa "
+        "de forma fiable los bloques OLDER_3M y RECENT_3M.",
         "Los valores extremos de WAPE o de mejora relativa (series con historico muy pequeno) no se recortan "
         "silenciosamente: se conservan en las estadisticas y se senalan en los chequeos de calidad.",
         "Este informe es retrospectivo (backtesting) y no garantiza comportamiento futuro.",

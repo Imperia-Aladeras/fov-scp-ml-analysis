@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from src.charts import CHART_SUBFOLDERS, generate_client_charts, generate_impact_and_risk_charts
+from src.charts import (
+    CHART_SUBFOLDERS,
+    generate_classifications_charts,
+    generate_client_charts,
+    generate_impact_and_risk_charts,
+    generate_models_charts,
+)
 from tests.factories import build_multi_client_results, build_synthetic_client_result, build_volume_bucket_client_result
 
 
@@ -13,6 +19,15 @@ def test_generate_client_charts_creates_files_on_disk(tmp_path: Path):
     for path_str in generated:
         assert Path(path_str).exists()
         assert Path(path_str).stat().st_size > 0
+    assert not any("models" in Path(path).parts or "classifications" in Path(path).parts for path in generated)
+
+
+def test_legacy_model_and_classification_chart_families_generate_nothing(tmp_path: Path):
+    result = build_synthetic_client_result(with_data=True)
+    assert generate_models_charts(result, tmp_path / "models") == []
+    assert generate_classifications_charts(result, tmp_path / "classifications") == []
+    assert not (tmp_path / "models").exists()
+    assert not (tmp_path / "classifications").exists()
 
 
 def test_generate_client_charts_covers_coverage_folder_even_without_comparable_series(tmp_path: Path):

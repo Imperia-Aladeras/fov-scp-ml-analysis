@@ -25,7 +25,7 @@ from src.charts import (
     _pareto_bar_chart,
     _save_close,
 )
-from src.global_analysis import GlobalAnalysisResult, global_category_performance_table, _global_series_improvement_values
+from src.global_analysis import GlobalAnalysisResult, _global_series_improvement_values
 from src.periods import MONTHLY_PERIODS, visible_label
 from src.phase8_presentation import sort_volume_table, volume_bucket_label_es
 
@@ -230,33 +230,11 @@ def generate_clients_charts(result: GlobalAnalysisResult, out_dir: Path) -> list
 # --------------------------------------------------------------------------
 
 def generate_models_charts(result: GlobalAnalysisResult, out_dir: Path) -> list[str]:
-    table = global_category_performance_table(result.client_results, MODEL_CLASSIFICATION_PERIOD, "ML_BEST_MODEL")
-    if table.empty:
-        return []
-    table = table.sort_values("n_comparable", ascending=False).head(10).iloc[::-1]
-    fig, ax = _new_fig((8.5, 5))
-    bars = ax.barh(table["category"], table["win_rate_ml_pct"], color=COLOR_ML)
-    for bar, n in zip(bars, table["n_comparable"]):
-        ax.text(bar.get_width(), bar.get_y() + bar.get_height() / 2, f" n={n}", va="center", fontsize=8, color="#52514e")
-    ax.set_xlim(0, 100)
-    ax.set_xlabel("Tasa de victoria ML (%)", color="#52514e", fontsize=9)
-    _apply_title(ax, "Modelos ML y tasa de victoria (todos los clientes)", visible_label(MODEL_CLASSIFICATION_PERIOD))
-    return [_save_close(fig, out_dir / "01_global_models_win_rate.png")]
+    return []
 
 
 def generate_classifications_charts(result: GlobalAnalysisResult, out_dir: Path) -> list[str]:
-    table = global_category_performance_table(result.client_results, MODEL_CLASSIFICATION_PERIOD, "SERIES_CLASSIFICATION")
-    if table.empty:
-        return []
-    table = table.sort_values("n_comparable", ascending=False).head(10).iloc[::-1]
-    fig, ax = _new_fig((8.5, 5))
-    bars = ax.barh(table["category"], table["win_rate_ml_pct"], color=COLOR_ML)
-    for bar, n in zip(bars, table["n_comparable"]):
-        ax.text(bar.get_width(), bar.get_y() + bar.get_height() / 2, f" n={n}", va="center", fontsize=8, color="#52514e")
-    ax.set_xlim(0, 100)
-    ax.set_xlabel("Tasa de victoria ML (%)", color="#52514e", fontsize=9)
-    _apply_title(ax, "SERIES_CLASSIFICATION y tasa de victoria (todos los clientes)", visible_label(MODEL_CLASSIFICATION_PERIOD))
-    return [_save_close(fig, out_dir / "01_global_classifications_win_rate.png")]
+    return []
 
 
 # --------------------------------------------------------------------------

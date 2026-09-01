@@ -412,19 +412,21 @@ def test_global_pareto_series_display_name_is_presentation_only():
     assert list(table["ID_CLIENT"]) == [70001]
 
 
-def test_global_pareto_series_raises_when_required_context_column_missing():
+def test_global_pareto_series_does_not_require_legacy_classification_context():
     """
-    Fail-fast (sin filtrado silencioso): si a un cliente le falta una
-    columna declarada en id_cols_wanted (aqui SERIES_CLASSIFICATION, parte
-    de _ranking_columns), global_pareto_series debe fallar claramente via
-    build_pareto_analysis, no descartar la columna en silencio.
+    SERIES_CLASSIFICATION ya no forma parte de _ranking_columns: retirarla no
+    altera el Pareto ni su identidad, orden o valor numerico.
     """
     df = _build_single_client_df(70001, history=1000.0, scp_abs_error=100.0, ml_abs_error=50.0, winner="ML")
     df = df.drop(columns=["SERIES_CLASSIFICATION"])
     result = analyze_client(make_client_source(df, 70001, "ClientMissingColumn"))
 
-    with pytest.raises(ValueError, match="SERIES_CLASSIFICATION"):
-        global_pareto_series([result], "6M")
+    pareto = global_pareto_series([result], "6M")
+    row = pareto.improvement.table.iloc[0]
+    assert row["ID_CLIENT"] == 70001
+    assert row["ID_CONFIGURATION"] == 1
+    assert row["ABS_ERROR_REDUCTION"] == pytest.approx(50.0)
+    assert "SERIES_CLASSIFICATION" not in pareto.improvement.table.columns
 
 
 def test_global_pareto_clients_uses_precomputed_abs_error_reduction_total(monkeypatch):

@@ -403,7 +403,7 @@ def test_global_page_shows_numerator_and_denominator_for_clients_that_improve(tm
 # Seguridad
 # --------------------------------------------------------------------------
 
-def test_malicious_model_name_is_escaped_not_executed(tmp_path: Path):
+def test_malicious_legacy_model_name_is_not_rendered_at_all(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     _write_client_csv(
@@ -417,7 +417,9 @@ def test_malicious_model_name_is_escaped_not_executed(tmp_path: Path):
     assert exit_code == 0
     html = (output_root / "xss_run" / "clients" / "10204-sklum" / "index.html").read_text(encoding="utf-8")
     assert "<script>alert" not in html
-    assert "&lt;script&gt;alert(&#34;x&#34;)&lt;/script&gt;" in html or "&lt;script&gt;alert" in html
+    assert "&lt;script&gt;alert" not in html
+    assert "metadata legacy" in html
+    assert "OLDER_3M" in html and "RECENT_3M" in html
 
 
 def test_ampersand_in_client_label_is_escaped_in_text_and_links(tmp_path: Path):
@@ -1130,8 +1132,17 @@ def test_build_client_page_vm_phase8_none_is_safe():
     result.periods["6M"].phase8 = None
     page_vm = vm.build_client_page_vm(result)
     assert page_vm["phase8"] == {"available": False}
-    # Modelos/clasificaciones deben seguir funcionando sin Bias (comportamiento anterior a 8C).
-    assert page_vm["ml_models"] or page_vm["ml_models"] == []
+    assert page_vm["ml_models"]["available"] is False
+    assert "metadata legacy" in page_vm["ml_models"]["message"]
+
+
+def test_client_ranking_view_model_keeps_only_numeric_and_identifier_fields():
+    result = build_synthetic_client_result(with_data=True)
+    page_vm = vm.build_client_page_vm(result)
+
+    for key in ("top_improvements", "top_deteriorations", "top_abs_reductions", "top_abs_increases"):
+        assert page_vm[key]
+        assert set(page_vm[key][0]) == {"id_configuration", "valor", "wape_scp", "wape_ml", "winner"}
 
 
 def test_build_client_page_vm_omits_phase8_when_no_comparable_series_anywhere():

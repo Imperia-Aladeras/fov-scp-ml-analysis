@@ -10,8 +10,10 @@ from src.global_charts import (
     CHART_SUBFOLDERS,
     _chart_global_bias_by_volume_bucket,
     contribution_colors,
+    generate_classifications_charts,
     generate_global_charts,
     generate_impact_and_risk_charts,
+    generate_models_charts,
     pareto_client_chart_label,
     pareto_series_chart_label,
 )
@@ -34,6 +36,15 @@ def test_generate_global_charts_creates_files_on_disk(tmp_path: Path):
     for path_str in generated:
         assert Path(path_str).exists()
         assert Path(path_str).stat().st_size > 0
+    assert not any("models" in Path(path).parts or "classifications" in Path(path).parts for path in generated)
+
+
+def test_global_legacy_model_and_classification_chart_families_generate_nothing(tmp_path: Path):
+    result = build_global_analysis_result()
+    assert generate_models_charts(result, tmp_path / "models") == []
+    assert generate_classifications_charts(result, tmp_path / "classifications") == []
+    assert not (tmp_path / "models").exists()
+    assert not (tmp_path / "classifications").exists()
 
 
 def test_chart_subfolders_constant_matches_spec():

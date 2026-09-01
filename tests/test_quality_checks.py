@@ -7,6 +7,8 @@ from src.quality_checks import (
     check_aggregate_vs_monthly_sum,
     check_bias_reconstruction,
     check_batch_heterogeneity,
+    check_block_ml_metadata_pairing,
+    check_block_model_metadata_missing_for_pure_forecast,
     check_both_zero_wape_is_tie,
     check_comparable_missing_wape_inputs,
     check_comparable_without_forecasts,
@@ -29,6 +31,75 @@ from src.quality_checks import (
     _INFINITE_CHECK_ATTRS,
     _NEGATIVE_DOMAIN_FIELDS,
 )
+
+
+def test_block_model_metadata_missing_detects_scp_and_ml_independently():
+    pcols = period_columns("OLDER_3M")
+    df = pd.DataFrame({
+        "ID_CONFIGURATION": [101, 202],
+        pcols.scp_total_forecast: [30.0, None],
+        pcols.ml_total_forecast: [None, 25.0],
+        "SCP_MODEL_OLDER_3M": [None, None],
+        "ML_BEST_MODEL_OLDER_3M": [None, None],
+    })
+
+    issues = check_block_model_metadata_missing_for_pure_forecast("f.csv", df, "OLDER_3M", pcols)
+
+    assert {issue.details["method"] for issue in issues} == {"SCP", "ML"}
+    assert all(issue.severity == Severity.ERROR for issue in issues)
+    assert all(issue.code == "BLOCK_MODEL_METADATA_MISSING_FOR_PURE_FORECAST" for issue in issues)
+    assert {issue.details["sample_ids"][0] for issue in issues} == {101, 202}
+
+
+def test_block_model_metadata_missing_does_not_make_historical_columns_mandatory():
+    pcols = period_columns("RECENT_3M")
+    df = pd.DataFrame({
+        "ID_CONFIGURATION": [101],
+        pcols.scp_total_forecast: [30.0],
+        pcols.ml_total_forecast: [25.0],
+    })
+
+    assert check_block_model_metadata_missing_for_pure_forecast("f.csv", df, "RECENT_3M", pcols) == []
+
+
+def test_block_model_metadata_missing_never_reconstructs_from_legacy_6m_columns():
+    pcols = period_columns("RECENT_3M")
+    df = pd.DataFrame({
+        "ID_CONFIGURATION": [101],
+        pcols.scp_total_forecast: [30.0],
+        pcols.ml_total_forecast: [25.0],
+        "SCP_MODEL_RECENT_3M": [None],
+        "ML_BEST_MODEL_RECENT_3M": [None],
+        "SCP_BEST_MODEL": ["LegacySCP"],
+        "ML_BEST_MODEL": ["LegacyML"],
+    })
+
+    issues = check_block_model_metadata_missing_for_pure_forecast("f.csv", df, "RECENT_3M", pcols)
+    assert {issue.details["method"] for issue in issues} == {"SCP", "ML"}
+
+
+def test_block_ml_metadata_pairing_covers_both_mismatch_directions_and_valid_pairs():
+    df = pd.DataFrame({
+        "ID_CONFIGURATION": [101, 202, 303, 404],
+        "ML_BEST_MODEL_OLDER_3M": ["AutoETS", None, "AutoARIMA", None],
+        "ML_CLASSIFICATION_OLDER_3M": [None, "smooth", "erratic", None],
+    })
+
+    issue = check_block_ml_metadata_pairing("f.csv", df, "OLDER_3M")
+
+    assert issue is not None
+    assert issue.severity == Severity.ERROR
+    assert issue.code == "BLOCK_ML_METADATA_PAIRING_MISMATCH"
+    assert issue.details["n_bad"] == 2
+    assert issue.details["sample_ids"] == [101, 202]
+
+
+def test_block_ml_metadata_pairing_missing_physical_column_is_backward_compatible():
+    only_model = pd.DataFrame({"ML_BEST_MODEL_RECENT_3M": ["AutoETS"]})
+    only_classification = pd.DataFrame({"ML_CLASSIFICATION_RECENT_3M": ["smooth"]})
+
+    assert check_block_ml_metadata_pairing("f.csv", only_model, "RECENT_3M") is None
+    assert check_block_ml_metadata_pairing("f.csv", only_classification, "RECENT_3M") is None
 
 
 def test_structural_input_error_exposes_code_and_message():

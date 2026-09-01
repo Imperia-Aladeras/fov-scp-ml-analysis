@@ -68,6 +68,31 @@ def test_top_rankings_empty_when_no_comparable_rows():
     assert top_improve.empty and top_worsen.empty
 
 
+def test_rankings_keep_numeric_contract_and_drop_only_legacy_decorators():
+    df = build_synthetic_client_dataframe()
+    pcols = period_columns("6M")
+    mask = df["COMPARISON_STATUS"] == "COMPARABLE"
+
+    top_reduction, top_increase = top_absolute_impact(df, pcols, mask, n=5)
+    top_improve, top_worsen = top_percentage_changes(df, pcols, mask, n=5)
+
+    rankings = (top_reduction, top_increase, top_improve, top_worsen)
+    forbidden = {"SCP_BEST_MODEL", "ML_BEST_MODEL", "SERIES_CLASSIFICATION"}
+    required = {
+        "ID_CONFIGURATION", pcols.total_history, pcols.scp_total_abs_error,
+        pcols.ml_total_abs_error, pcols.scp_wape, pcols.ml_wape, pcols.winner_method,
+    }
+    for ranking in rankings:
+        assert forbidden.isdisjoint(ranking.columns)
+        assert required.issubset(ranking.columns)
+
+    assert top_reduction["ID_CONFIGURATION"].tolist() == [1001, 1002]
+    assert top_increase["ID_CONFIGURATION"].tolist() == [1002, 1001]
+    assert top_improve["ID_CONFIGURATION"].tolist() == [1001, 1002]
+    assert top_worsen["ID_CONFIGURATION"].tolist() == [1002, 1001]
+    assert top_reduction["ABS_ERROR_REDUCTION"].tolist() == [60.0, -120.0]
+
+
 def test_pareto_absolute_impact_top1_consistent_with_top_absolute_impact():
     df = build_synthetic_client_dataframe()
     pcols = period_columns("6M")

@@ -63,6 +63,8 @@ from src.quality_checks import (
     Severity,
     check_aggregate_vs_monthly_sum,
     check_bias_reconstruction,
+    check_block_ml_metadata_pairing,
+    check_block_model_metadata_missing_for_pure_forecast,
     check_both_zero_wape_is_tie,
     check_comparable_missing_wape_inputs,
     check_comparable_without_forecasts,
@@ -368,6 +370,9 @@ def _analyze_period(df: pd.DataFrame, candidate_mask: pd.Series, period: str, fi
     quality.add(check_comparable_without_forecasts(
         file_label, period, comparable_mask, df[pcols.scp_total_forecast], df[pcols.ml_total_forecast]
     ))
+    if period in ("OLDER_3M", "RECENT_3M"):
+        quality.extend(check_block_model_metadata_missing_for_pure_forecast(file_label, df, period, pcols))
+        quality.add(check_block_ml_metadata_pairing(file_label, df, period))
     # Fase 9B (METRIC_001/002/003): period-level, varian por PeriodColumns.
     quality.extend(check_negative_nonnegative_metrics(file_label, df, period, pcols))
     quality.extend(check_infinite_backend_metrics(file_label, df, period, pcols))

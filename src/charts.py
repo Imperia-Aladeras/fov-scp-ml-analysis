@@ -275,7 +275,6 @@ def generate_semester_charts(result: ClientAnalysisResult, out_dir: Path) -> lis
         (lambda: _chart_winner_distribution("6M", result, out_dir, "02_winner_distribution.png"), None),
         (lambda: _chart_improvement_histogram("6M", result, out_dir, "03_improvement_distribution.png"), None),
         (lambda: _chart_abs_error_reduction("6M", result, out_dir, "04_abs_error_reduction.png"), None),
-        (lambda: _chart_model_win_rates("6M", result, out_dir, "05_models_win_rate.png"), None),
     ):
         path = fn()
         if path:
@@ -405,52 +404,11 @@ def generate_monthly_charts(result: ClientAnalysisResult, out_dir: Path) -> list
 # --------------------------------------------------------------------------
 
 def generate_models_charts(result: ClientAnalysisResult, out_dir: Path) -> list[str]:
-    df = result.source.dataframe
-    pr = result.periods.get(MODEL_CLASSIFICATION_PERIOD)
-    if df is None or pr is None or pr.comparable_mask is None or pr.n_comparable == 0:
-        return []
-    pcols = period_columns(MODEL_CLASSIFICATION_PERIOD)
-    generated = []
-
-    path = _chart_model_win_rates(MODEL_CLASSIFICATION_PERIOD, result, out_dir, "01_ml_models_win_rate.png")
-    if path:
-        generated.append(path)
-
-    scp_table = category_performance_table(df, pcols, pr.comparable_mask, "SCP_BEST_MODEL")
-    if not scp_table.empty:
-        table = scp_table.sort_values("n_comparable", ascending=False).head(8).iloc[::-1]
-        fig, ax = _new_fig((8, 4.5))
-        bars = ax.barh(table["category"], table["n_comparable"], color=COLOR_SCP)
-        for bar, n in zip(bars, table["n_comparable"]):
-            ax.text(bar.get_width(), bar.get_y() + bar.get_height() / 2, f" n={n}", va="center", fontsize=8, color=COLOR_TEXT_SECONDARY)
-        ax.set_xlabel("Series comparables", color=COLOR_TEXT_SECONDARY, fontsize=9)
-        _apply_title(ax, f"Modelos SCP por frecuencia - {visible_label(MODEL_CLASSIFICATION_PERIOD)}", f"{_client_tag(result)}")
-        generated.append(_save_close(fig, out_dir / "02_scp_models_frequency.png"))
-
-    return generated
+    return []
 
 
 def generate_classifications_charts(result: ClientAnalysisResult, out_dir: Path) -> list[str]:
-    df = result.source.dataframe
-    pr = result.periods.get(MODEL_CLASSIFICATION_PERIOD)
-    if df is None or pr is None or pr.comparable_mask is None or pr.n_comparable == 0:
-        return []
-    pcols = period_columns(MODEL_CLASSIFICATION_PERIOD)
-    generated = []
-    for idx, col in enumerate(("SERIES_CLASSIFICATION", "ML_CLASSIFICATION"), start=1):
-        table = category_performance_table(df, pcols, pr.comparable_mask, col)
-        if table.empty:
-            continue
-        table = table.sort_values("n_comparable", ascending=False).head(8).iloc[::-1]
-        fig, ax = _new_fig((8, 4.5))
-        bars = ax.barh(table["category"], table["win_rate_ml_pct"], color=COLOR_ML)
-        for bar, n in zip(bars, table["n_comparable"]):
-            ax.text(bar.get_width(), bar.get_y() + bar.get_height() / 2, f" n={n}", va="center", fontsize=8, color=COLOR_TEXT_SECONDARY)
-        ax.set_xlim(0, 100)
-        ax.set_xlabel("Tasa de victoria ML (%)", color=COLOR_TEXT_SECONDARY, fontsize=9)
-        _apply_title(ax, f"{col} - tasa de victoria ML", f"{_client_tag(result)} | {visible_label(MODEL_CLASSIFICATION_PERIOD)}")
-        generated.append(_save_close(fig, out_dir / f"{idx:02d}_{col.lower()}_win_rate.png"))
-    return generated
+    return []
 
 
 # --------------------------------------------------------------------------
