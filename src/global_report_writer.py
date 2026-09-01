@@ -15,7 +15,9 @@ import math
 import pandas as pd
 
 from src.global_analysis import GlobalAnalysisResult
+from src.global_portfolio_view import build_global_portfolio_view
 from src.periods import ALL_PERIODS, MONTHLY_PERIODS, visible_label
+from src.portfolio_presentation import prepare_portfolio_presentation
 from src.phase8_presentation import (
     BIAS_METHODOLOGY_NOTE,
     PHASE8_NO_ROUTING_NOTE,
@@ -35,6 +37,7 @@ from src.report_writer import (
     _fmt_signed_pct_scaled,
     _pareto_concentration_line,
     _pareto_table_lines,
+    _portfolio_md_table,
     _table_from_rows,
 )
 
@@ -563,35 +566,125 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     a("---")
     a("")
 
-    # 16. Modelos que mas aportan
-    a("## 16. Modelos que mas aportan")
-    a("")
-    a(
-        "Análisis global por modelo no disponible: la metadata legacy no representa de forma fiable "
-        "los bloques OLDER_3M y RECENT_3M."
+    portfolio_view = build_global_portfolio_view(
+        prepare_portfolio_presentation(result.portfolio)
     )
+
+    # 16. Seleccion observada global
+    a("## 16. Selección observada y performance condicionada")
+    a("")
+    a(portfolio_view["message"])
+    a("")
+    if not portfolio_view["available"]:
+        if portfolio_view["missing_required_columns"]:
+            missing = ", ".join(f"`{column}`" for column in portfolio_view["missing_required_columns"])
+            a(f"Metadata específica ausente: {missing}.")
+    else:
+        a("La asignación de modelo y la población con performance evaluable son universos distintos.")
+        a("")
+        a("\n".join(_portfolio_md_table([
+            ("Motor", "engine"), ("Período", "block"), ("Base", "n_base_series"),
+            ("Eventos", "n_structural_events"), ("Modelo informado", "n_model_present"),
+            ("Modelo ausente", "n_model_missing"), ("Cobertura", "selection_assignment_rate"),
+            ("Métricas evaluables", "n_block_metrics_evaluable"),
+            ("Performance evaluable", "n_performance_evaluable"),
+        ], portfolio_view["coverage"])))
+        if portfolio_view["has_assignments"]:
+            for group in portfolio_view["models"]:
+                a("")
+                a(f"**{group['engine']} · {group['block']}** — selecciones más frecuentes.")
+                a("")
+                a("\n".join(_portfolio_md_table([
+                    ("Modelo", "model_name"), ("Selecciones", "selection_count"),
+                    ("Cuota", "selection_share_of_assignable"), ("N performance", "n_performance"),
+                    ("N clientes", "n_clients"), ("Muestra", "sample_note"),
+                    ("WAPE Auto", "scp_wape"), ("WAPE Optimizer", "optimizer_wape"),
+                    ("Mejora Optimizer vs Auto", "optimizer_improvement_vs_scp"),
+                ], group["rows"])))
+        else:
+            a("_Sin asignaciones observadas; la cobertura anterior sigue siendo informativa._")
+    a("")
+    a(portfolio_view["methodology_note"])
+    a("")
+    a("Detalle completo: hojas `11_models_and_win_rates` y `19_portfolio_events` del Excel global.")
     a("")
     a("---")
     a("")
 
-    # 17. Clasificaciones donde funciona mejor ML
-    a("## 17. Clasificaciones donde funciona mejor ML")
+    # 17. Portfolio Optimizer
+    a("## 17. Portfolio Optimizer: familias y clasificación")
     a("")
-    a(
-        "Análisis global por clasificación no disponible: la metadata legacy no representa de forma fiable "
-        "los bloques OLDER_3M y RECENT_3M."
-    )
+    if not portfolio_view["available"]:
+        a(portfolio_view["message"])
+    elif not portfolio_view["has_assignments"]:
+        a("Sin asignaciones observadas; no hay familias ni pares clasificación–modelo que resumir.")
+    else:
+        for group in portfolio_view["families"]:
+            a(f"**Familias · {group['block']}**")
+            a("")
+            a("\n".join(_portfolio_md_table([
+                ("Familia", "family"), ("Selecciones", "selection_count"),
+                ("Cuota", "selection_share_of_assignable"), ("N performance", "n_performance"),
+                ("N clientes", "n_clients"), ("Muestra", "sample_note"),
+                ("WAPE Auto", "scp_wape"), ("WAPE Optimizer", "optimizer_wape"),
+                ("Mejora Optimizer vs Auto", "optimizer_improvement_vs_scp"),
+            ], group["rows"])))
+            a("")
+        a("Los cruces usan la población pair-assignable, distinta del total de eventos Optimizer.")
+        a("")
+        a("\n".join(_portfolio_md_table([
+            ("Período", "block"), ("Clasificación informada", "n_classification_present"),
+            ("Clasificación ausente", "n_classification_missing"),
+            ("Cobertura clasificación", "classification_assignment_rate"),
+            ("Pares asignables", "n_pair_assignable"), ("Cobertura pares", "pair_assignment_rate"),
+        ], portfolio_view["classification_coverage"])))
+        a("")
+        a("Las selecciones frecuentes por clasificación × modelo y clasificación × familia se muestran en HTML; Excel conserva los cruces completos.")
+    a("")
+    a("Detalle completo: hoja `12_classifications` del Excel global.")
     a("")
     a("---")
     a("")
 
-    # 18. Tipologias donde SCP sigue siendo mejor
-    a("## 18. Tipologias donde SCP sigue siendo mejor")
+    # 18. Estabilidad global
+    a("## 18. Estabilidad, transiciones y performance descriptiva")
     a("")
-    a(
-        "Análisis global por clasificación no disponible: la metadata legacy no representa de forma fiable "
-        "los bloques OLDER_3M y RECENT_3M."
-    )
+    if not portfolio_view["available"]:
+        a(portfolio_view["message"])
+    elif not portfolio_view["has_assignments"]:
+        a("Sin asignaciones observadas; no hay parejas evaluables para estabilidad.")
+    else:
+        a(portfolio_view["stability_note"])
+        a("")
+        a("\n".join(_portfolio_md_table([
+            ("Motor", "engine"), ("Evaluables", "n_evaluable"), ("Estables", "stable_count"),
+            ("Cambiaron", "changed_count"), ("No evaluables", "not_evaluable_count"),
+            ("Tasa estabilidad", "stability_rate"),
+        ], portfolio_view["model_stability"])))
+        a("")
+        a("Transiciones de modelo más frecuentes; las diagonales representan estabilidad válida:")
+        a("")
+        a("\n".join(_portfolio_md_table([
+            ("Motor", "engine"), ("Anterior", "older_value"), ("Reciente", "recent_value"),
+            ("Transiciones", "transition_count"), ("Cuota", "transition_share_of_evaluable"),
+        ], portfolio_view["model_transitions"]["rows"])))
+        if portfolio_view["model_transitions"]["truncated"]:
+            a("")
+            a("La tabla muestra las transiciones más frecuentes por motor; Excel conserva la matriz completa.")
+        a("")
+        a("Performance descriptiva por estabilidad:")
+        a("")
+        a("\n".join(_portfolio_md_table([
+            ("Dimensión", "stability_type"), ("Motor", "engine"), ("Período", "block"),
+            ("Estado", "stability_state"), ("N performance", "n_performance"),
+            ("N clientes", "n_clients"), ("Muestra", "sample_note"),
+            ("WAPE Auto", "scp_wape"), ("WAPE Optimizer", "optimizer_wape"),
+            ("Mejora Optimizer vs Auto", "optimizer_improvement_vs_scp"),
+        ], portfolio_view["performance_by_stability"])))
+        a("")
+        a(portfolio_view["small_sample_note"])
+    a("")
+    a("Detalle completo: hoja `18_portfolio_stability` del Excel global.")
     a("")
     a("---")
     a("")
@@ -616,8 +709,7 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
         "El winner (`WINNER_METHOD_*`) se usa como fuente de verdad; el criterio exacto de empate relativo "
         "no esta documentado y no se reconstruye (ver informes individuales).",
         "Los clientes no proceden necesariamente del mismo ID_BATCH ni de la misma ejecucion (ver 15_data_quality_checks).",
-        "El analisis global por modelos y clasificaciones no esta disponible porque la metadata legacy no "
-        "representa de forma fiable los bloques OLDER_3M y RECENT_3M.",
+        "La seleccion observada por periodo es descriptiva y no constituye una recomendacion de routing.",
         "Los clientes sin ninguna serie comparable en un periodo SI se incluyen en cobertura, en calidad y en "
         "las tablas por cliente de ese periodo; unicamente quedan fuera del CALCULO de medias, medianas, "
         "WAPE, winners o mejoras de ese periodo por no tener performance calculable (ver seccion 1 y "
@@ -706,8 +798,8 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
         )
         a("")
         a(
-            "Análisis global por modelos, clasificaciones y cruce SERIES_CLASSIFICATION x VOLUME_BUCKET "
-            "no disponible: la metadata legacy no representa de forma fiable los bloques OLDER_3M y RECENT_3M."
+            "El cruce SERIES_CLASSIFICATION x VOLUME_BUCKET sigue no disponible: "
+            "SERIES_CLASSIFICATION es metadata legacy ambigua para 6M."
         )
         a("")
         a(f"- {PHASE8_ONLY_6M_NOTE}")

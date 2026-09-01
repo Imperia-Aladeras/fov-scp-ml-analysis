@@ -34,7 +34,9 @@ import jinja2
 from src import html_view_models as vm
 from src.client_analysis import ClientAnalysisResult
 from src.global_analysis import GlobalAnalysisResult
+from src.global_portfolio_view import build_global_portfolio_view
 from src.html_formatters import encode_url_path, to_posix
+from src.portfolio_presentation import prepare_portfolio_presentation
 from src.run_config import RunConfig
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -194,6 +196,9 @@ def generate_html_report(
     ]
 
     phase8_global = vm.build_phase8_global_vm(global_result.periods["6M"].phase8)
+    global_portfolio = build_global_portfolio_view(
+        prepare_portfolio_presentation(global_result.portfolio)
+    )
     quality_audit = vm.build_metric_audit_vm(ordered_results)
 
     global_context = {
@@ -205,6 +210,7 @@ def generate_html_report(
         "methodology": vm.METHODOLOGY_NOTES,
         "chart_groups": global_chart_groups,
         "phase8_global": phase8_global,
+        "global_portfolio": global_portfolio,
         "quality_audit": quality_audit,
         "global_excel_url": global_excel_url, "global_md_url": global_md_url,
         "exec_files": exec_files,

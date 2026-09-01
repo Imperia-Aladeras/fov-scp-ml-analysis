@@ -63,14 +63,14 @@ _PERFORMANCE_COLUMNS = (
 )
 
 
-def _formatted_rows(dataframe: pd.DataFrame, columns: Iterable[str]) -> list[dict[str, str]]:
+def format_portfolio_rows(dataframe: pd.DataFrame, columns: Iterable[str]) -> list[dict[str, str]]:
     return [
         {column: format_portfolio_value(column, row[column]) for column in columns}
         for _, row in dataframe.iterrows()
     ]
 
 
-def _sample_label(row: pd.Series) -> str:
+def portfolio_sample_label(row: pd.Series) -> str:
     sample = performance_sample_presentation(int(row["n_performance"]), bool(row["small_sample"]))
     return sample.label or ""
 
@@ -84,9 +84,9 @@ def _compact_models(dataframe: pd.DataFrame, limit: int) -> list[dict]:
             ["selection_count", "model_name"], ascending=[False, True], kind="stable",
         )
         shown = ordered.head(limit)
-        rows = _formatted_rows(shown, _MODEL_COLUMNS)
+        rows = format_portfolio_rows(shown, _MODEL_COLUMNS)
         for payload, (_, source_row) in zip(rows, shown.iterrows()):
-            payload["sample_note"] = _sample_label(source_row)
+            payload["sample_note"] = portfolio_sample_label(source_row)
         groups.append({
             "engine": str(engine),
             "block": str(block),
@@ -97,7 +97,12 @@ def _compact_models(dataframe: pd.DataFrame, limit: int) -> list[dict]:
     return groups
 
 
-def _compact_transitions(dataframe: pd.DataFrame, limit: int) -> dict:
+def compact_portfolio_transitions(
+    dataframe: pd.DataFrame,
+    limit: int,
+    *,
+    columns: Iterable[str] = _TRANSITION_COLUMNS,
+) -> dict:
     shown_groups = []
     for _, group in dataframe.groupby("engine", sort=False, dropna=False):
         ordered_group = group.sort_values(
@@ -108,7 +113,7 @@ def _compact_transitions(dataframe: pd.DataFrame, limit: int) -> dict:
         shown_groups.append(ordered_group.head(limit))
     shown = pd.concat(shown_groups, ignore_index=True) if shown_groups else dataframe.head(0)
     return {
-        "rows": _formatted_rows(shown, _TRANSITION_COLUMNS),
+        "rows": format_portfolio_rows(shown, columns),
         "total_rows": len(dataframe),
         "truncated": len(dataframe) > len(shown),
         "limit_per_engine": limit,
@@ -142,33 +147,33 @@ def build_client_portfolio_view(portfolio, *, compact_limit: int = 8) -> dict:
         return view
 
     tables = presentation.tables
-    view["coverage"] = _formatted_rows(tables[SCHEMA_COVERAGE].dataframe, _COVERAGE_COLUMNS)
+    view["coverage"] = format_portfolio_rows(tables[SCHEMA_COVERAGE].dataframe, _COVERAGE_COLUMNS)
     view["models"] = _compact_models(tables[SCHEMA_MODELS].dataframe, compact_limit)
 
     families = tables[SCHEMA_FAMILIES].dataframe
-    view["families"] = _formatted_rows(families, _FAMILY_COLUMNS)
+    view["families"] = format_portfolio_rows(families, _FAMILY_COLUMNS)
     for payload, (_, source_row) in zip(view["families"], families.iterrows()):
-        payload["sample_note"] = _sample_label(source_row)
+        payload["sample_note"] = portfolio_sample_label(source_row)
 
-    view["classification_coverage"] = _formatted_rows(
+    view["classification_coverage"] = format_portfolio_rows(
         tables[SCHEMA_CLASSIFICATION_COVERAGE].dataframe,
         _CLASSIFICATION_COVERAGE_COLUMNS,
     )
-    view["model_stability"] = _formatted_rows(
+    view["model_stability"] = format_portfolio_rows(
         tables[SCHEMA_MODEL_STABILITY_SUMMARY].dataframe, _STABILITY_COLUMNS,
     )
-    view["model_transitions"] = _compact_transitions(
+    view["model_transitions"] = compact_portfolio_transitions(
         tables[SCHEMA_MODEL_TRANSITIONS].dataframe, compact_limit,
     )
-    view["classification_stability"] = _formatted_rows(
+    view["classification_stability"] = format_portfolio_rows(
         tables[SCHEMA_CLASSIFICATION_STABILITY].dataframe, _STABILITY_COLUMNS,
     )
-    view["classification_transitions"] = _compact_transitions(
+    view["classification_transitions"] = compact_portfolio_transitions(
         tables[SCHEMA_CLASSIFICATION_TRANSITIONS].dataframe, compact_limit,
     )
 
     performance = tables[SCHEMA_PERFORMANCE_BY_STABILITY].dataframe
-    view["performance_by_stability"] = _formatted_rows(performance, _PERFORMANCE_COLUMNS)
+    view["performance_by_stability"] = format_portfolio_rows(performance, _PERFORMANCE_COLUMNS)
     for payload, (_, source_row) in zip(view["performance_by_stability"], performance.iterrows()):
-        payload["sample_note"] = _sample_label(source_row)
+        payload["sample_note"] = portfolio_sample_label(source_row)
     return view

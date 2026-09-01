@@ -1,5 +1,5 @@
 """
-Generacion del Excel global (18 pestanas, 00_readme..17_phase8_global).
+Generacion del Excel global (20 pestanas, 00_readme..19_portfolio_events).
 Comparativa entre todos los clientes con fichero valido.
 """
 
@@ -10,9 +10,38 @@ from pathlib import Path
 import pandas as pd
 from openpyxl.utils import get_column_letter
 
-from src.excel_writer import _dict_to_df, _stats_dict_to_df, autosize_columns, write_blocks
+from src.client_portfolio_view import PORTFOLIO_STABILITY_DESCRIPTIVE_NOTE
+from src.excel_writer import (
+    _dict_to_df,
+    _portfolio_column_number_format,
+    _portfolio_excel_dataframe,
+    _portfolio_status_blocks,
+    _portfolio_table_block,
+    _stats_dict_to_df,
+    autosize_columns,
+    write_blocks,
+)
 from src.global_analysis import GlobalAnalysisResult
 from src.periods import ALL_PERIODS, MONTHLY_PERIODS, visible_label
+from src.portfolio import ENGINE_OPTIMIZER, ENGINE_SCP_AUTO
+from src.portfolio_presentation import (
+    ENGINE_LABELS,
+    SCHEMA_CANONICAL_EVENTS,
+    SCHEMA_CLASSIFICATION_COVERAGE,
+    SCHEMA_CLASSIFICATION_FAMILY,
+    SCHEMA_CLASSIFICATION_MODEL,
+    SCHEMA_CLASSIFICATION_STABILITY,
+    SCHEMA_CLASSIFICATION_TRANSITIONS,
+    SCHEMA_COVERAGE,
+    SCHEMA_FAMILIES,
+    SCHEMA_MODEL_STABILITY_SUMMARY,
+    SCHEMA_MODEL_TRANSITIONS,
+    SCHEMA_MODELS,
+    SCHEMA_PERFORMANCE_BY_STABILITY,
+    SCHEMA_STABILITY_BY_OLDER_MODEL,
+    PreparedPortfolioTable,
+    prepare_portfolio_presentation,
+)
 from src.phase8_presentation import (
     BIAS_METHODOLOGY_NOTE,
     PHASE8_NO_ROUTING_NOTE,
@@ -92,8 +121,9 @@ def readme_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.DataFrame]
         "fuera del CALCULO de medias/medianas/WAPE/winners/mejoras de ese periodo (perspectivas 1-4) por no",
         "tener performance calculable, nunca de forma silenciosa: siempre se indica cuantos son.",
         "",
-        "Modelos y clasificaciones (pestanas 11 y 12): semestre completo (6M), agregando todas las",
-        "series comparables de todos los clientes.",
+        "Seleccion observada y estabilidad por periodo (pestanas 11, 12, 18 y 19): agregacion global",
+        "calculada desde eventos canonicos combinados. No es una media de metricas por cliente ni una",
+        "recomendacion de routing.",
         "",
         "Periodos (nombre tecnico -> etiqueta visible):",
         *[f"  {p} -> {visible_label(p)}" for p in ALL_PERIODS],
@@ -235,18 +265,78 @@ def winner_distribution_table(result: GlobalAnalysisResult) -> pd.DataFrame:
 # 11_models_and_win_rates / 12_classifications
 # --------------------------------------------------------------------------
 
-def models_and_win_rates_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.DataFrame]]:
-    return [("Nota", pd.DataFrame({
-        "": ["Analisis global por modelo no disponible: la metadata legacy no representa de forma fiable "
-             "los bloques OLDER_3M y RECENT_3M."]
-    }))]
+def models_and_win_rates_blocks(
+    result: GlobalAnalysisResult, presentation=None,
+) -> list[tuple[str, pd.DataFrame]]:
+    presentation = presentation or prepare_portfolio_presentation(result.portfolio)
+    blocks = _portfolio_status_blocks(presentation)
+    if not presentation.availability.available:
+        return blocks
+    blocks.append(_portfolio_table_block(presentation, SCHEMA_COVERAGE))
+    models = presentation.tables[SCHEMA_MODELS]
+    for engine_key in (ENGINE_SCP_AUTO, ENGINE_OPTIMIZER):
+        engine = ENGINE_LABELS[engine_key]
+        filtered = PreparedPortfolioTable(
+            schema=models.schema,
+            dataframe=models.dataframe[models.dataframe["engine"] == engine].reset_index(drop=True),
+        )
+        blocks.append((f"Modelos globales - {engine}", _portfolio_excel_dataframe(filtered)))
+    blocks.append(_portfolio_table_block(presentation, SCHEMA_FAMILIES))
+    blocks.append(("Nota metodologica", pd.DataFrame({"": [
+        presentation.methodology_note, presentation.small_sample_note,
+    ]})))
+    return blocks
 
 
-def classifications_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.DataFrame]]:
-    return [("Nota", pd.DataFrame({
-        "": ["Analisis global por clasificacion no disponible: la metadata legacy no representa de forma fiable "
-             "los bloques OLDER_3M y RECENT_3M."]
-    }))]
+def classifications_blocks(
+    result: GlobalAnalysisResult, presentation=None,
+) -> list[tuple[str, pd.DataFrame]]:
+    presentation = presentation or prepare_portfolio_presentation(result.portfolio)
+    blocks = _portfolio_status_blocks(presentation)
+    if not presentation.availability.available:
+        return blocks
+    for key in (
+        SCHEMA_CLASSIFICATION_COVERAGE,
+        SCHEMA_CLASSIFICATION_MODEL,
+        SCHEMA_CLASSIFICATION_FAMILY,
+    ):
+        blocks.append(_portfolio_table_block(presentation, key))
+    blocks.append(("Nota metodologica", pd.DataFrame({"": [presentation.methodology_note]})))
+    return blocks
+
+
+def portfolio_stability_blocks(
+    result: GlobalAnalysisResult, presentation=None,
+) -> list[tuple[str, pd.DataFrame]]:
+    presentation = presentation or prepare_portfolio_presentation(result.portfolio)
+    blocks = _portfolio_status_blocks(presentation)
+    if not presentation.availability.available:
+        return blocks
+    for key in (
+        SCHEMA_MODEL_STABILITY_SUMMARY,
+        SCHEMA_STABILITY_BY_OLDER_MODEL,
+        SCHEMA_MODEL_TRANSITIONS,
+        SCHEMA_CLASSIFICATION_STABILITY,
+        SCHEMA_CLASSIFICATION_TRANSITIONS,
+        SCHEMA_PERFORMANCE_BY_STABILITY,
+    ):
+        blocks.append(_portfolio_table_block(presentation, key))
+    blocks.append(("Notas metodologicas", pd.DataFrame({"": [
+        PORTFOLIO_STABILITY_DESCRIPTIVE_NOTE,
+        presentation.small_sample_note,
+    ]})))
+    return blocks
+
+
+def portfolio_events_blocks(
+    result: GlobalAnalysisResult, presentation=None,
+) -> list[tuple[str, pd.DataFrame]]:
+    presentation = presentation or prepare_portfolio_presentation(result.portfolio)
+    blocks = _portfolio_status_blocks(presentation)
+    if not presentation.availability.available:
+        return blocks
+    blocks.append(_portfolio_table_block(presentation, SCHEMA_CANONICAL_EVENTS))
+    return blocks
 
 
 # --------------------------------------------------------------------------
@@ -490,6 +580,7 @@ def data_quality_checks_blocks(result: GlobalAnalysisResult) -> list[tuple[str, 
 
 def build_global_workbook(result: GlobalAnalysisResult, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    portfolio_presentation = prepare_portfolio_presentation(result.portfolio)
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         write_blocks(writer, "00_readme", readme_blocks(result))
         write_blocks(writer, "01_executive_summary", [("Resumen ejecutivo global por periodo", executive_summary_table(result))])
@@ -502,13 +593,31 @@ def build_global_workbook(result: GlobalAnalysisResult, output_path: Path) -> No
         write_blocks(writer, "08_client_improvement_stats", [("Estadistica de mejora ENTRE CLIENTES (peso igual) por periodo", client_improvement_stats_table(result))])
         write_blocks(writer, "09_series_improvement_stats", [("Estadistica de mejora POR SERIE (todos los clientes juntos) por periodo", series_improvement_stats_table(result))])
         write_blocks(writer, "10_winner_distribution", [("Distribucion global de ganadores por periodo", winner_distribution_table(result))])
-        write_blocks(writer, "11_models_and_win_rates", models_and_win_rates_blocks(result))
-        write_blocks(writer, "12_classifications", classifications_blocks(result))
+        write_blocks(
+            writer, "11_models_and_win_rates",
+            models_and_win_rates_blocks(result, portfolio_presentation),
+            number_format_resolver=_portfolio_column_number_format,
+        )
+        write_blocks(
+            writer, "12_classifications",
+            classifications_blocks(result, portfolio_presentation),
+            number_format_resolver=_portfolio_column_number_format,
+        )
         write_blocks(writer, "13_absolute_impact", absolute_impact_blocks(result))
         write_blocks(writer, "14_exclusions", exclusions_blocks(result))
         write_blocks(writer, "15_data_quality_checks", data_quality_checks_blocks(result))
         write_blocks(writer, "16_pareto_absolute_impact", pareto_absolute_impact_blocks(result))
         write_blocks(writer, "17_phase8_global", phase8_global_blocks(result))
+        write_blocks(
+            writer, "18_portfolio_stability",
+            portfolio_stability_blocks(result, portfolio_presentation),
+            number_format_resolver=_portfolio_column_number_format,
+        )
+        write_blocks(
+            writer, "19_portfolio_events",
+            portfolio_events_blocks(result, portfolio_presentation),
+            number_format_resolver=_portfolio_column_number_format,
+        )
 
         for sheet_name in writer.sheets:
             autosize_columns(writer, sheet_name)

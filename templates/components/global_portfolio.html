@@ -1,0 +1,102 @@
+<section id="portfolio-global" aria-labelledby="portfolio-global-h">
+  <h2 id="portfolio-global-h">Selección observada y estabilidad por período</h2>
+  <p class="note">{{ global_portfolio.message }}</p>
+
+  {% if not global_portfolio.available %}
+    {% if global_portfolio.missing_required_columns %}
+    <details><summary>Metadata específica ausente</summary><p class="note">{{ global_portfolio.missing_required_columns | join(", ") }}</p></details>
+    {% endif %}
+  {% else %}
+    {% if global_portfolio.coverage %}
+    <h3>Cobertura global de selección</h3>
+    <p class="note">La asignación de modelo y la población con performance evaluable son universos distintos.</p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Motor</th><th>Período</th><th>Series base</th><th>Eventos estructurales</th><th>Modelo informado</th><th>Modelo ausente</th><th>Cobertura asignación</th><th>Métricas evaluables</th><th>Performance evaluable</th></tr></thead>
+      <tbody>{% for r in global_portfolio.coverage %}<tr><td>{{ r.engine }}</td><td>{{ r.block }}</td><td>{{ r.n_base_series }}</td><td>{{ r.n_structural_events }}</td><td>{{ r.n_model_present }}</td><td>{{ r.n_model_missing }}</td><td>{{ r.selection_assignment_rate }}</td><td>{{ r.n_block_metrics_evaluable }}</td><td>{{ r.n_performance_evaluable }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+
+    {% if global_portfolio.has_assignments %}
+    <h3>Selecciones de modelo más frecuentes</h3>
+    <p class="note">Ordenadas únicamente por selecciones observadas; no constituyen un ranking de performance.</p>
+    {% for group in global_portfolio.models %}
+      <h4>{{ group.engine }} · {{ group.block }}</h4>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Modelo</th><th>Selecciones</th><th>Cuota</th><th>N performance</th><th>N clientes</th><th>Muestra</th><th>Volumen</th><th>Cuota volumen</th><th>WAPE Auto</th><th>WAPE Optimizer</th><th>Bias Auto</th><th>Bias Optimizer</th><th>Victoria motor analizado</th><th>Mejora Optimizer vs Auto</th><th>Reducción absoluta Optimizer vs Auto</th></tr></thead>
+        <tbody>{% for r in group.rows %}<tr><td>{{ r.model_name }}</td><td>{{ r.selection_count }}</td><td>{{ r.selection_share_of_assignable }}</td><td>{{ r.n_performance }}</td><td>{{ r.n_clients }}</td><td>{{ r.sample_note or "Sin advertencia" }}</td><td>{{ r.historical_volume }}</td><td>{{ r.volume_share }}</td><td>{{ r.scp_wape }}</td><td>{{ r.optimizer_wape }}</td><td>{{ r.scp_bias }}</td><td>{{ r.optimizer_bias }}</td><td>{{ r.selected_engine_win_rate }}</td><td>{{ r.optimizer_improvement_vs_scp }}</td><td>{{ r.optimizer_abs_error_reduction_vs_scp }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+      {% if group.truncated %}<p class="note">Se muestran {{ group.limit }} de {{ group.total_rows }} selecciones por frecuencia; Excel conserva todas.</p>{% endif %}
+    {% endfor %}
+
+    <h3>Familias del Optimizer</h3>
+    {% for group in global_portfolio.families %}
+      <h4>{{ group.block }}</h4>
+      <div class="table-scroll"><table><thead><tr><th>Familia</th><th>Selecciones</th><th>Cuota</th><th>N performance</th><th>N clientes</th><th>Muestra</th><th>Volumen</th><th>Cuota volumen</th><th>WAPE Auto</th><th>WAPE Optimizer</th><th>Bias Auto</th><th>Bias Optimizer</th><th>Victoria Optimizer</th><th>Mejora Optimizer vs Auto</th><th>Reducción absoluta</th></tr></thead>
+        <tbody>{% for r in group.rows %}<tr><td>{{ r.family }}</td><td>{{ r.selection_count }}</td><td>{{ r.selection_share_of_assignable }}</td><td>{{ r.n_performance }}</td><td>{{ r.n_clients }}</td><td>{{ r.sample_note or "Sin advertencia" }}</td><td>{{ r.historical_volume }}</td><td>{{ r.volume_share }}</td><td>{{ r.scp_wape }}</td><td>{{ r.optimizer_wape }}</td><td>{{ r.scp_bias }}</td><td>{{ r.optimizer_bias }}</td><td>{{ r.selected_engine_win_rate }}</td><td>{{ r.optimizer_improvement_vs_scp }}</td><td>{{ r.optimizer_abs_error_reduction_vs_scp }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+      {% if group.truncated %}<p class="note">Se muestran {{ group.limit }} de {{ group.total_rows }} familias por frecuencia; Excel conserva todas.</p>{% endif %}
+    {% endfor %}
+
+    <h3>Clasificación del Optimizer</h3>
+    <p class="note">Los cruces usan la población de pares clasificación–modelo asignables, distinta del total de eventos Optimizer.</p>
+    <div class="table-scroll"><table><thead><tr><th>Período</th><th>Eventos Optimizer</th><th>Modelo informado</th><th>Modelo ausente</th><th>Clasificación informada</th><th>Clasificación ausente</th><th>Cobertura clasificación</th><th>Pares asignables</th><th>Cobertura pares</th></tr></thead>
+      <tbody>{% for r in global_portfolio.classification_coverage %}<tr><td>{{ r.block }}</td><td>{{ r.n_optimizer_events }}</td><td>{{ r.n_model_present }}</td><td>{{ r.n_model_missing }}</td><td>{{ r.n_classification_present }}</td><td>{{ r.n_classification_missing }}</td><td>{{ r.classification_assignment_rate }}</td><td>{{ r.n_pair_assignable }}</td><td>{{ r.pair_assignment_rate }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+
+    {% for group in global_portfolio.classification_models %}
+      <h4>Clasificación × modelo · {{ group.block }}</h4>
+      <div class="table-scroll"><table><thead><tr><th>Clasificación</th><th>Modelo</th><th>Selecciones</th><th>Cuota pair-assignable</th><th>N performance</th><th>N clientes</th><th>Muestra</th><th>Victoria Optimizer</th><th>Mejora Optimizer vs Auto</th></tr></thead>
+        <tbody>{% for r in group.rows %}<tr><td>{{ r.optimizer_classification }}</td><td>{{ r.model_name }}</td><td>{{ r.selection_count }}</td><td>{{ r.selection_share_of_assignable }}</td><td>{{ r.n_performance }}</td><td>{{ r.n_clients }}</td><td>{{ r.sample_note or "Sin advertencia" }}</td><td>{{ r.selected_engine_win_rate }}</td><td>{{ r.optimizer_improvement_vs_scp }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+      {% if group.truncated %}<p class="note">Selecciones más frecuentes: {{ group.limit }} de {{ group.total_rows }}; detalle completo en Excel.</p>{% endif %}
+    {% endfor %}
+
+    {% for group in global_portfolio.classification_families %}
+      <h4>Clasificación × familia · {{ group.block }}</h4>
+      <div class="table-scroll"><table><thead><tr><th>Clasificación</th><th>Familia</th><th>Selecciones</th><th>Cuota pair-assignable</th><th>N performance</th><th>N clientes</th><th>Muestra</th><th>Victoria Optimizer</th><th>Mejora Optimizer vs Auto</th></tr></thead>
+        <tbody>{% for r in group.rows %}<tr><td>{{ r.optimizer_classification }}</td><td>{{ r.family }}</td><td>{{ r.selection_count }}</td><td>{{ r.selection_share_of_assignable }}</td><td>{{ r.n_performance }}</td><td>{{ r.n_clients }}</td><td>{{ r.sample_note or "Sin advertencia" }}</td><td>{{ r.selected_engine_win_rate }}</td><td>{{ r.optimizer_improvement_vs_scp }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+      {% if group.truncated %}<p class="note">Selecciones más frecuentes: {{ group.limit }} de {{ group.total_rows }}; detalle completo en Excel.</p>{% endif %}
+    {% endfor %}
+
+    <h3>Estabilidad entre períodos</h3>
+    <p class="note">{{ global_portfolio.stability_note }}</p>
+    <div class="table-scroll"><table><thead><tr><th>Motor</th><th>Evaluables</th><th>Estables</th><th>Cambiaron</th><th>No evaluables</th><th>Tasa estabilidad</th></tr></thead>
+      <tbody>{% for r in global_portfolio.model_stability %}<tr><td>{{ r.engine }}</td><td>{{ r.n_evaluable }}</td><td>{{ r.stable_count }}</td><td>{{ r.changed_count }}</td><td>{{ r.not_evaluable_count }}</td><td>{{ r.stability_rate }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+
+    <h4>Cohortes por modelo del período anterior</h4>
+    <p class="note">“Modelo” identifica la asignación observada en 3 meses anteriores (M6–M4), no un modelo principal de 6M. Se ordena por parejas evaluables, nunca por tasa de estabilidad.</p>
+    {% for group in global_portfolio.older_model_cohorts %}
+      <h5>{{ group.engine }}</h5><div class="table-scroll"><table><thead><tr><th>Modelo anterior</th><th>Evaluables</th><th>Estables</th><th>Cambiaron</th><th>Tasa estabilidad</th></tr></thead>
+        <tbody>{% for r in group.rows %}<tr><td>{{ r.model_name }}</td><td>{{ r.n_evaluable }}</td><td>{{ r.stable_count }}</td><td>{{ r.changed_count }}</td><td>{{ r.stability_rate }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+      {% if group.truncated %}<p class="note">Se muestran {{ group.limit }} de {{ group.total_rows }} cohortes por número de evaluables.</p>{% endif %}
+    {% endfor %}
+
+    <h4>Transiciones de modelo más frecuentes</h4>
+    <div class="table-scroll"><table><thead><tr><th>Motor</th><th>Anterior</th><th>Reciente</th><th>Transiciones</th><th>Evaluables</th><th>Cuota</th></tr></thead>
+      <tbody>{% for r in global_portfolio.model_transitions.rows %}<tr><td>{{ r.engine }}</td><td>{{ r.older_value }}</td><td>{{ r.recent_value }}</td><td>{{ r.transition_count }}</td><td>{{ r.n_evaluable }}</td><td>{{ r.transition_share_of_evaluable }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% if global_portfolio.model_transitions.truncated %}<p class="note">Se muestran hasta {{ global_portfolio.model_transitions.limit_per_engine }} transiciones por motor, ordenadas solo por frecuencia; Excel conserva todas.</p>{% endif %}
+
+    <h4>Estabilidad y transiciones de clasificación del Optimizer</h4>
+    <div class="table-scroll"><table><thead><tr><th>Motor</th><th>Evaluables</th><th>Estables</th><th>Cambiaron</th><th>No evaluables</th><th>Tasa estabilidad</th></tr></thead>
+      <tbody>{% for r in global_portfolio.classification_stability %}<tr><td>{{ r.engine }}</td><td>{{ r.n_evaluable }}</td><td>{{ r.stable_count }}</td><td>{{ r.changed_count }}</td><td>{{ r.not_evaluable_count }}</td><td>{{ r.stability_rate }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    <div class="table-scroll"><table><thead><tr><th>Motor</th><th>Clasificación anterior</th><th>Clasificación reciente</th><th>Transiciones</th><th>Evaluables</th><th>Cuota</th></tr></thead>
+      <tbody>{% for r in global_portfolio.classification_transitions.rows %}<tr><td>{{ r.engine }}</td><td>{{ r.older_value }}</td><td>{{ r.recent_value }}</td><td>{{ r.transition_count }}</td><td>{{ r.n_evaluable }}</td><td>{{ r.transition_share_of_evaluable }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% if global_portfolio.classification_transitions.truncated %}<p class="note">Se muestran hasta {{ global_portfolio.classification_transitions.limit_per_engine }} transiciones por motor, ordenadas solo por frecuencia; Excel conserva todas.</p>{% endif %}
+
+    <h4>Performance descriptiva por estabilidad</h4>
+    <div class="table-scroll"><table><thead><tr><th>Dimensión</th><th>Motor</th><th>Período</th><th>Estado</th><th>N performance</th><th>N clientes</th><th>Muestra</th><th>Volumen</th><th>WAPE Auto</th><th>WAPE Optimizer</th><th>Bias Auto</th><th>Bias Optimizer</th><th>Victoria motor analizado</th><th>Mejora Optimizer vs Auto</th><th>Reducción absoluta</th></tr></thead>
+      <tbody>{% for r in global_portfolio.performance_by_stability %}<tr><td>{{ r.stability_type }}</td><td>{{ r.engine }}</td><td>{{ r.block }}</td><td>{{ r.stability_state }}</td><td>{{ r.n_performance }}</td><td>{{ r.n_clients }}</td><td>{{ r.sample_note or "Sin advertencia" }}</td><td>{{ r.historical_volume }}</td><td>{{ r.scp_wape }}</td><td>{{ r.optimizer_wape }}</td><td>{{ r.scp_bias }}</td><td>{{ r.optimizer_bias }}</td><td>{{ r.selected_engine_win_rate }}</td><td>{{ r.optimizer_improvement_vs_scp }}</td><td>{{ r.optimizer_abs_error_reduction_vs_scp }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% else %}<p class="note">Sin asignaciones observadas; la cobertura anterior sigue siendo informativa.</p>{% endif %}
+  {% endif %}
+
+  <p class="note">{{ global_portfolio.methodology_note }}</p>
+  {% if global_portfolio.available %}<p class="note">{{ global_portfolio.small_sample_note }}</p>{% endif %}
+  {% if global_excel_url %}<p><a href="{{ global_excel_url | encode_url_path }}">Abrir el detalle completo en el Excel global</a></p>{% endif %}
+</section>

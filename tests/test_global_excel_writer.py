@@ -28,7 +28,7 @@ EXPECTED_SHEETS = [
     "07_global_period_summary", "08_client_improvement_stats", "09_series_improvement_stats",
     "10_winner_distribution", "11_models_and_win_rates", "12_classifications",
     "13_absolute_impact", "14_exclusions", "15_data_quality_checks", "16_pareto_absolute_impact",
-    "17_phase8_global",
+    "17_phase8_global", "18_portfolio_stability", "19_portfolio_events",
 ]
 
 
@@ -254,15 +254,15 @@ def test_phase8_global_blocks_none_when_phase8_unavailable():
     assert "no disponible" in blocks[0][1][""].iloc[0]
 
 
-def test_models_and_classifications_blocks_are_explicitly_unavailable_even_with_phase8():
+def test_models_and_classifications_blocks_show_portfolio_unavailable_even_with_phase8():
     result = build_phase8_global_multi_client_analysis_result()
     ml_blocks = models_and_win_rates_blocks(result)
     class_blocks = classifications_blocks(result)
     for blocks in (ml_blocks, class_blocks):
-        assert len(blocks) == 1 and blocks[0][0] == "Nota"
+        assert blocks[0][0] == "Estado del analisis"
         notice = blocks[0][1][""].iloc[0]
-        assert "metadata legacy" in notice
-        assert "OLDER_3M" in notice and "RECENT_3M" in notice
+        assert "Análisis de selección por bloques no disponible" in notice
+        assert any(title == "Metadata especifica ausente" for title, _ in blocks)
 
 
 def test_models_and_classifications_blocks_keep_same_notice_when_phase8_none():
@@ -270,5 +270,5 @@ def test_models_and_classifications_blocks_keep_same_notice_when_phase8_none():
     assert result.periods["6M"].phase8 is None
     ml_blocks = models_and_win_rates_blocks(result)
     class_blocks = classifications_blocks(result)
-    assert "metadata legacy" in ml_blocks[0][1][""].iloc[0]
-    assert "metadata legacy" in class_blocks[0][1][""].iloc[0]
+    assert "selección por bloques no disponible" in ml_blocks[0][1][""].iloc[0]
+    assert "selección por bloques no disponible" in class_blocks[0][1][""].iloc[0]

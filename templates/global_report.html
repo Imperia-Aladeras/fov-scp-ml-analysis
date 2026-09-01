@@ -226,6 +226,8 @@
 </div>
 {% endmacro %}
 
+{% include "components/global_portfolio.html" %}
+
 <section id="fase8-global" aria-labelledby="fase8-global-h">
   <h2 id="fase8-global-h">Diagnóstico global Fase 8 (6M): Bias y volumen relativo</h2>
   {% if phase8_global and phase8_global.available %}
@@ -244,12 +246,6 @@
   {{ phase8_table(phase8_global.volume.rows) }}
   {% else %}<p class="note">Sin datos de volumen relativo para el universo comparable global.</p>{% endif %}
   <p class="note">Ver el gráfico "Bias agregado SCP vs ML por volumen relativo (global)" en la sección <a href="#graficos">Impacto, riesgos y diagnósticos</a> (cuando exista: un bucket sin Bias finito en algún método no se representa en el gráfico, pero sí en esta tabla).</p>
-
-  <h3>Modelos (ML_BEST_MODEL / SCP_BEST_MODEL)</h3>
-  <p class="note">Análisis global por modelo no disponible: la metadata legacy no representa de forma fiable los bloques OLDER_3M y RECENT_3M.</p>
-
-  <h3>Clasificaciones</h3>
-  <p class="note">Análisis global por clasificación no disponible: la metadata legacy no representa de forma fiable los bloques OLDER_3M y RECENT_3M.</p>
 
   <h3>SERIES_CLASSIFICATION × VOLUME_BUCKET (exclusivo del reporting global)</h3>
   <p class="note">Cruce no disponible: SERIES_CLASSIFICATION es metadata legacy ambigua para 6M.</p>

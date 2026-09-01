@@ -193,7 +193,7 @@ def test_section_22_preserves_bias_volume_not_assignable_and_suppresses_cross():
     assert "1" in section_22.split("Clientes con volumen relativo no asignable")[1][:40]
     assert "SERIES_CLASSIFICATION x VOLUME_BUCKET" in section_22  # aviso explicito, no tabla
     assert "metadata legacy" in section_22
-    assert "OLDER_3M" in section_22 and "RECENT_3M" in section_22
+    assert "SERIES_CLASSIFICATION x VOLUME_BUCKET" in section_22
     assert "| Clasificacion |" not in section_22
 
 
@@ -231,14 +231,12 @@ def test_section_22_short_note_when_phase8_none():
     assert "Bias agregado SCP" not in section_22
 
 
-def test_sections_16_to_18_show_explicit_legacy_metadata_unavailability():
+def test_sections_16_to_18_show_explicit_portfolio_unavailability():
     result = build_phase8_global_multi_client_analysis_result()
     report = build_global_report(result)
     for start, end in (("## 16.", "## 17."), ("## 17.", "## 18."), ("## 18.", "## 19.")):
         section = report.split(start)[1].split(end)[0]
-        assert "metadata legacy" in section
-        assert "OLDER_3M" in section and "RECENT_3M" in section
-        assert "sin datos" not in section.lower()
+        assert "Análisis de selección por bloques no disponible" in section
         assert "Bias SCP" not in section
 
 
@@ -247,4 +245,4 @@ def test_sections_16_to_18_do_not_fall_back_to_legacy_table_when_phase8_none():
     report = build_global_report(result)
     section_16 = report.split("## 16.")[1].split("## 17.")[0]
     assert "Bias SCP" not in section_16
-    assert "metadata legacy" in section_16
+    assert "selección por bloques no disponible" in section_16

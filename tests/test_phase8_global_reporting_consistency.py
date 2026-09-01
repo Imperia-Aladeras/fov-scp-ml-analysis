@@ -180,20 +180,20 @@ def test_legacy_model_table_is_suppressed_across_excel_markdown_and_rendered_htm
         str(cell) for row in wb["11_models_and_win_rates"].iter_rows(values_only=True)
         for cell in row if cell is not None
     )
-    assert "metadata legacy" in excel_text
-    assert "OLDER_3M" in excel_text and "RECENT_3M" in excel_text
+    assert "selección por bloques no disponible" in excel_text
+    assert "ML_BEST_MODEL_OLDER_3M" in excel_text and "ML_BEST_MODEL_RECENT_3M" in excel_text
     assert "AutoETS" not in excel_text
 
     report = build_global_report(result)
     section_16 = report.split("## 16.")[1].split("## 17.")[0]
-    assert "metadata legacy" in section_16
-    assert "OLDER_3M" in section_16 and "RECENT_3M" in section_16
+    assert "selección por bloques no disponible" in section_16
+    assert "ML_BEST_MODEL_OLDER_3M" in section_16 and "ML_BEST_MODEL_RECENT_3M" in section_16
     assert "AutoETS" not in section_16
 
     html = _render_global_html(result, tmp_path, "phase8_global_model_consistency_run")
-    section = html.split('id="fase8-global"')[1].split("</section>")[0]
-    assert "metadata legacy" in section
-    assert "OLDER_3M" in section and "RECENT_3M" in section
+    section = html.split('id="portfolio-global"')[1].split("</section>")[0]
+    assert "selección por bloques no disponible" in section
+    assert "ML_BEST_MODEL_OLDER_3M" in section and "ML_BEST_MODEL_RECENT_3M" in section
     assert "AutoETS" not in section
 
 
@@ -320,7 +320,7 @@ def test_markdown_shows_explicit_notices_instead_of_legacy_model_and_classificat
     report = build_global_report(result)
 
     section_16 = report.split("## 16.")[1].split("## 17.")[0]
-    assert "metadata legacy" in section_16
+    assert "selección por bloques no disponible" in section_16
     assert "AutoETS" not in section_16 and "x11 seasonal" not in section_16
 
     section_22 = report.split("## 22.")[1]
@@ -344,17 +344,17 @@ def test_html_and_excel_show_notices_instead_of_legacy_models_and_classification
     wb = openpyxl.load_workbook(xlsx_path)
     ws11 = wb["11_models_and_win_rates"]
     ws11_text = "\n".join(str(c) for row in ws11.iter_rows(values_only=True) for c in row if c is not None)
-    assert "metadata legacy" in ws11_text
+    assert "selección por bloques no disponible" in ws11_text
     assert "AutoETS" not in ws11_text and "x11 seasonal" not in ws11_text
     ws12 = wb["12_classifications"]
     ws12_text = "\n".join(str(c) for row in ws12.iter_rows(values_only=True) for c in row if c is not None)
-    assert "metadata legacy" in ws12_text
+    assert "selección por bloques no disponible" in ws12_text
     for category in ("smooth", "erratic", "intermittent", "lumpy"):
         assert category not in ws12_text
 
     html = _render_global_html(result, tmp_path, "phase8_global_parity_run")
-    section = html.split('id="fase8-global"')[1].split("</section>")[0]
-    assert "metadata legacy" in section
+    section = html.split('id="portfolio-global"')[1].split("</section>")[0]
+    assert "selección por bloques no disponible" in section
     for category in ("AutoETS", "x11 seasonal", "smooth", "erratic", "intermittent", "lumpy"):
         assert category not in section
 
@@ -376,7 +376,7 @@ def test_null_classification_is_normalized_internally_but_never_rendered(tmp_pat
     build_global_workbook(result, xlsx_path)
     wb = openpyxl.load_workbook(xlsx_path)
     ws12_text = "\n".join(str(c) for row in wb["12_classifications"].iter_rows(values_only=True) for c in row if c is not None)
-    assert "metadata legacy" in ws12_text
+    assert "selección por bloques no disponible" in ws12_text
     assert "(sin clasificar)" not in ws12_text
     assert "nan" not in ws12_text.lower()
     assert "none" not in ws12_text.lower()
