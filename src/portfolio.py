@@ -1,9 +1,9 @@
-"""Canonical block events for the Phase 10B portfolio analysis.
+"""Canonical block events and conditioned portfolio analysis for Phase 10B.
 
-It contains the 10B.2 availability/event/coverage contract and the explicit
-10B.3 aggregation by selected model.  It does not know about families,
-classification analysis or stability, and it never falls back to legacy 6M
-metadata.
+It contains the 10B.2 availability/event/coverage contract, the 10B.3
+aggregation by selected model and the explicit Optimizer-only family and
+classification adapters from 10B.4.  It does not implement stability or
+transitions, and it never falls back to legacy 6M metadata.
 """
 
 from __future__ import annotations
@@ -37,6 +37,53 @@ MODEL_METADATA_MISSING = "MISSING"
 CLASSIFICATION_PRESENT = "PRESENT"
 CLASSIFICATION_MISSING = "MISSING"
 CLASSIFICATION_NOT_APPLICABLE = "NOT_APPLICABLE"
+FAMILY_MAPPING_MAPPED = "MAPPED"
+FAMILY_MAPPING_UNMAPPED = "UNMAPPED"
+FAMILY_MAPPING_NOT_EVALUABLE = "NOT_EVALUABLE"
+FAMILY_MAPPING_NOT_APPLICABLE = "NOT_APPLICABLE"
+FAMILY_UNMAPPED = "UNMAPPED"
+
+# Reporting-owned, explicit copy of the family metadata declared by the
+# Optimizer registry/wrappers.  Unknown selected models remain analytically
+# assignable as UNMAPPED; names are never parsed or normalized heuristically.
+OPTIMIZER_MODEL_FAMILY: dict[str, str] = {
+    "Naive": "baselines",
+    "SeasonalNaive": "baselines",
+    "HistoricAverage": "baselines",
+    "SES": "baselines",
+    "RandomWalkWithDrift": "baselines",
+    "WindowAverage": "baselines",
+    "SeasonalWindowAverage": "baselines",
+    "MovingAverage3M": "baselines",
+    "MovingAverage12M": "baselines",
+    "AutoETS": "classical",
+    "AutoARIMA": "classical",
+    "AutoTheta": "classical",
+    "AutoCES": "classical",
+    "ARIMA": "classical",
+    "Holt": "classical",
+    "HoltWinters": "classical",
+    "Prophet": "classical",
+    "ADIDA": "intermittent",
+    "CrostonClassic": "intermittent",
+    "CrostonOptimized": "intermittent",
+    "CrostonSBA": "intermittent",
+    "IMAPA": "intermittent",
+    "TSB": "intermittent",
+    "LocalCrostonClassic": "intermittent",
+    "LocalCrostonOptimized": "intermittent",
+    "LocalTSB": "intermittent",
+    "LGBMRegressor": "ml",
+    "Lasso": "ml",
+    "Ridge": "ml",
+    "ElasticNet": "ml",
+    "HuberRegressor": "ml",
+    "PoissonRegressor": "ml",
+    "XGBRegressor": "ml",
+    "CatBoostRegressor": "ml",
+    "RandomForestRegressor": "ml",
+    "HistGBDTRegressor": "ml",
+}
 
 AVAILABILITY_BLOCK_METADATA_COLUMNS_MISSING = "BLOCK_METADATA_COLUMNS_MISSING"
 AVAILABILITY_SOURCE_UNAVAILABLE = "SOURCE_UNAVAILABLE"
@@ -65,10 +112,7 @@ COVERAGE_COLUMNS: tuple[str, ...] = (
     "n_performance_evaluable",
 )
 
-MODEL_TABLE_COLUMNS: tuple[str, ...] = (
-    "engine",
-    "block",
-    "model_name",
+CONDITIONED_METRIC_COLUMNS: tuple[str, ...] = (
     "selection_count",
     "selection_assignable_count",
     "selection_share_of_assignable",
@@ -87,6 +131,45 @@ MODEL_TABLE_COLUMNS: tuple[str, ...] = (
     "optimizer_improvement_vs_scp",
     "optimizer_median_improvement_vs_scp",
     "optimizer_abs_error_reduction_vs_scp",
+)
+
+MODEL_TABLE_COLUMNS: tuple[str, ...] = (
+    "engine",
+    "block",
+    "model_name",
+    *CONDITIONED_METRIC_COLUMNS,
+)
+
+FAMILY_TABLE_COLUMNS: tuple[str, ...] = (
+    "block",
+    "family",
+    *CONDITIONED_METRIC_COLUMNS,
+)
+
+CLASSIFICATION_MODEL_TABLE_COLUMNS: tuple[str, ...] = (
+    "block",
+    "optimizer_classification",
+    "model_name",
+    *CONDITIONED_METRIC_COLUMNS,
+)
+
+CLASSIFICATION_FAMILY_TABLE_COLUMNS: tuple[str, ...] = (
+    "block",
+    "optimizer_classification",
+    "family",
+    *CONDITIONED_METRIC_COLUMNS,
+)
+
+OPTIMIZER_CLASSIFICATION_COVERAGE_COLUMNS: tuple[str, ...] = (
+    "block",
+    "n_optimizer_events",
+    "n_model_present",
+    "n_model_missing",
+    "n_classification_present",
+    "n_classification_missing",
+    "classification_assignment_rate",
+    "n_pair_assignable",
+    "pair_assignment_rate",
 )
 
 
@@ -125,12 +208,48 @@ class PortfolioModelResult:
     )
 
 
+@dataclass(frozen=True)
+class OptimizerFamilyEnrichment:
+    """Auditable family outcome for one Optimizer selected-model value."""
+
+    family: str | None
+    family_mapping_status: str
+
+
+@dataclass
+class OptimizerClassificationCoverage:
+    by_block: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(
+            columns=OPTIMIZER_CLASSIFICATION_COVERAGE_COLUMNS,
+        ),
+    )
+
+
+@dataclass
+class OptimizerPortfolioResult:
+    """Optimizer-only descriptive views conditioned on observed selection."""
+
+    family_tables: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=FAMILY_TABLE_COLUMNS),
+    )
+    classification_model_tables: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=CLASSIFICATION_MODEL_TABLE_COLUMNS),
+    )
+    classification_family_tables: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=CLASSIFICATION_FAMILY_TABLE_COLUMNS),
+    )
+    classification_coverage: OptimizerClassificationCoverage = field(
+        default_factory=OptimizerClassificationCoverage,
+    )
+
+
 @dataclass
 class PortfolioAnalysisResult:
     availability: PortfolioAvailability
     events: PortfolioBlockEvents | None = None
     coverage: PortfolioCoverage | None = None
     model_tables: PortfolioModelResult | None = None
+    optimizer: OptimizerPortfolioResult | None = None
 
     @classmethod
     def unavailable(
@@ -176,6 +295,38 @@ _EVENT_SPECS: tuple[_EventSpec, ...] = (
 def missing_portfolio_columns(df: pd.DataFrame) -> tuple[str, ...]:
     """Return missing 10B columns without changing the global CSV schema contract."""
     return tuple(column for column in PORTFOLIO_REQUIRED_COLUMNS if column not in df.columns)
+
+
+def optimizer_family_enrichment(model_name: object) -> OptimizerFamilyEnrichment:
+    """Map one Optimizer model using only the explicit registry-derived table."""
+    if pd.isna(model_name):
+        return OptimizerFamilyEnrichment(None, FAMILY_MAPPING_NOT_EVALUABLE)
+    family = OPTIMIZER_MODEL_FAMILY.get(model_name)
+    if family is None:
+        return OptimizerFamilyEnrichment(FAMILY_UNMAPPED, FAMILY_MAPPING_UNMAPPED)
+    return OptimizerFamilyEnrichment(family, FAMILY_MAPPING_MAPPED)
+
+
+def enrich_optimizer_family_events(events: pd.DataFrame) -> pd.DataFrame:
+    """Add Optimizer family metadata without changing event cardinality or names."""
+    enriched = events.copy()
+    optimizer = enriched["engine"].eq(ENGINE_OPTIMIZER)
+    model_present = enriched["model_name"].notna()
+    mapped_family = enriched["model_name"].map(OPTIMIZER_MODEL_FAMILY)
+    mapped = optimizer & model_present & mapped_family.notna()
+    unmapped = optimizer & model_present & mapped_family.isna()
+
+    enriched["family"] = pd.Series(pd.NA, index=enriched.index, dtype="object")
+    enriched.loc[mapped, "family"] = mapped_family.loc[mapped]
+    enriched.loc[unmapped, "family"] = FAMILY_UNMAPPED
+
+    enriched["family_mapping_status"] = FAMILY_MAPPING_NOT_APPLICABLE
+    enriched.loc[optimizer & ~model_present, "family_mapping_status"] = (
+        FAMILY_MAPPING_NOT_EVALUABLE
+    )
+    enriched.loc[mapped, "family_mapping_status"] = FAMILY_MAPPING_MAPPED
+    enriched.loc[unmapped, "family_mapping_status"] = FAMILY_MAPPING_UNMAPPED
+    return enriched
 
 
 def _validate_source_cardinality(source_df: pd.DataFrame) -> None:
@@ -355,18 +506,72 @@ def _performance_metrics(
     }
 
 
-def _deterministic_model_order(table: pd.DataFrame) -> pd.DataFrame:
+def _deterministic_table_order(
+    table: pd.DataFrame,
+    output_columns: tuple[str, ...],
+    sort_columns: tuple[str, ...],
+) -> pd.DataFrame:
     if table.empty:
-        return pd.DataFrame(columns=MODEL_TABLE_COLUMNS)
-    ordered = table.assign(
-        _engine_order=table["engine"].map({ENGINE_SCP_AUTO: 0, ENGINE_OPTIMIZER: 1}),
-        _block_order=table["block"].map({BLOCK_OLDER_3M: 0, BLOCK_RECENT_3M: 1}),
-        _model_order=table["model_name"].map(str),
-    ).sort_values(
-        ["_engine_order", "_block_order", "_model_order"],
-        kind="stable",
+        return pd.DataFrame(columns=output_columns)
+
+    ordered = table.copy()
+    helper_columns: list[str] = []
+    fixed_orders = {
+        "engine": {ENGINE_SCP_AUTO: 0, ENGINE_OPTIMIZER: 1},
+        "block": {BLOCK_OLDER_3M: 0, BLOCK_RECENT_3M: 1},
+    }
+    for index, column in enumerate(sort_columns):
+        helper = f"_portfolio_sort_{index}"
+        helper_columns.append(helper)
+        mapping = fixed_orders.get(column)
+        ordered[helper] = ordered[column].map(mapping) if mapping else ordered[column].map(str)
+    ordered = ordered.sort_values(helper_columns, kind="stable")
+    return ordered.drop(columns=helper_columns).reset_index(drop=True)[list(output_columns)]
+
+
+def _conditioned_rows_for_scope(
+    selection_scope: pd.DataFrame,
+    *,
+    engine: str,
+    block: str,
+    dimension_columns: tuple[str, ...],
+) -> list[dict]:
+    """Shared 10B math for an already-explicit, selection-assignable scope."""
+    if selection_scope.empty:
+        return []
+
+    selection_assignable_count = len(selection_scope)
+    performance_scope = selection_scope.loc[selection_scope["performance_evaluable"]]
+    performance_history_denominator = (
+        float(performance_scope["total_history"].sum())
+        if not performance_scope["total_history"].isna().any()
+        else np.nan
     )
-    return ordered.drop(columns=["_engine_order", "_block_order", "_model_order"]).reset_index(drop=True)
+    grouper: str | list[str] = (
+        dimension_columns[0] if len(dimension_columns) == 1 else list(dimension_columns)
+    )
+
+    rows: list[dict] = []
+    for keys, selected_group in selection_scope.groupby(
+        grouper,
+        sort=False,
+        observed=True,
+    ):
+        key_values = keys if isinstance(keys, tuple) else (keys,)
+        row = dict(zip(dimension_columns, key_values))
+        row.update({
+            "selection_count": len(selected_group),
+            "selection_assignable_count": selection_assignable_count,
+            "selection_share_of_assignable": len(selected_group) / selection_assignable_count,
+        })
+        row.update(_performance_metrics(
+            selected_group.loc[selected_group["performance_evaluable"]],
+            engine,
+            block,
+            performance_history_denominator,
+        ))
+        rows.append(row)
+    return rows
 
 
 def build_portfolio_model_result(events: pd.DataFrame) -> PortfolioModelResult:
@@ -386,37 +591,130 @@ def build_portfolio_model_result(events: pd.DataFrame) -> PortfolioModelResult:
     for (engine, block), selection_scope in selection_events.groupby(
         ["engine", "block"], sort=False, observed=True,
     ):
-        selection_assignable_count = len(selection_scope)
-        performance_scope = selection_scope.loc[selection_scope["performance_evaluable"]]
-        performance_history_denominator = (
-            float(performance_scope["total_history"].sum())
-            if not performance_scope["total_history"].isna().any()
-            else np.nan
+        scope_rows = _conditioned_rows_for_scope(
+            selection_scope,
+            engine=engine,
+            block=block,
+            dimension_columns=("model_name",),
         )
-
-        for model_name, model_selection in selection_scope.groupby(
-            "model_name", sort=False, observed=True,
-        ):
-            selection_count = len(model_selection)
-            model_performance = model_selection.loc[model_selection["performance_evaluable"]]
-            row = {
-                "engine": engine,
-                "block": block,
-                "model_name": model_name,
-                "selection_count": selection_count,
-                "selection_assignable_count": selection_assignable_count,
-                "selection_share_of_assignable": selection_count / selection_assignable_count,
-            }
-            row.update(_performance_metrics(
-                model_performance,
-                engine,
-                block,
-                performance_history_denominator,
-            ))
-            rows.append(row)
+        rows.extend({"engine": engine, "block": block, **row} for row in scope_rows)
 
     table = pd.DataFrame(rows, columns=MODEL_TABLE_COLUMNS)
-    return PortfolioModelResult(_deterministic_model_order(table))
+    return PortfolioModelResult(_deterministic_table_order(
+        table,
+        MODEL_TABLE_COLUMNS,
+        ("engine", "block", "model_name"),
+    ))
+
+
+def build_optimizer_classification_coverage(
+    events: pd.DataFrame,
+) -> OptimizerClassificationCoverage:
+    """Report block-specific classification and pair assignment without categories."""
+    optimizer_events = events.loc[events["engine"] == ENGINE_OPTIMIZER]
+    rows: list[dict] = []
+    for block, block_scope in optimizer_events.groupby("block", sort=False, observed=True):
+        n_events = len(block_scope)
+        model_present = block_scope["selection_evaluable"].astype(bool)
+        classification_present = block_scope["optimizer_classification"].notna()
+        pair_assignable = model_present & classification_present
+        n_model_present = int(model_present.sum())
+        n_classification_present = int(classification_present.sum())
+        n_pair_assignable = int(pair_assignable.sum())
+        rows.append({
+            "block": block,
+            "n_optimizer_events": n_events,
+            "n_model_present": n_model_present,
+            "n_model_missing": n_events - n_model_present,
+            "n_classification_present": n_classification_present,
+            "n_classification_missing": n_events - n_classification_present,
+            "classification_assignment_rate": (
+                n_classification_present / n_events if n_events else np.nan
+            ),
+            "n_pair_assignable": n_pair_assignable,
+            "pair_assignment_rate": n_pair_assignable / n_events if n_events else np.nan,
+        })
+    table = pd.DataFrame(rows, columns=OPTIMIZER_CLASSIFICATION_COVERAGE_COLUMNS)
+    return OptimizerClassificationCoverage(_deterministic_table_order(
+        table,
+        OPTIMIZER_CLASSIFICATION_COVERAGE_COLUMNS,
+        ("block",),
+    ))
+
+
+def _build_optimizer_family_table(events: pd.DataFrame) -> pd.DataFrame:
+    selection_events = events.loc[
+        (events["engine"] == ENGINE_OPTIMIZER)
+        & events["selection_evaluable"]
+    ]
+    rows: list[dict] = []
+    for block, block_scope in selection_events.groupby("block", sort=False, observed=True):
+        scope_rows = _conditioned_rows_for_scope(
+            block_scope,
+            engine=ENGINE_OPTIMIZER,
+            block=block,
+            dimension_columns=("family",),
+        )
+        rows.extend({"block": block, **row} for row in scope_rows)
+    return _deterministic_table_order(
+        pd.DataFrame(rows, columns=FAMILY_TABLE_COLUMNS),
+        FAMILY_TABLE_COLUMNS,
+        ("block", "family"),
+    )
+
+
+def _optimizer_pair_assignable_events(events: pd.DataFrame) -> pd.DataFrame:
+    return events.loc[
+        (events["engine"] == ENGINE_OPTIMIZER)
+        & events["selection_evaluable"]
+        & events["optimizer_classification"].notna()
+    ]
+
+
+def _build_optimizer_classification_model_table(events: pd.DataFrame) -> pd.DataFrame:
+    pair_events = _optimizer_pair_assignable_events(events)
+    rows: list[dict] = []
+    for block, block_scope in pair_events.groupby("block", sort=False, observed=True):
+        scope_rows = _conditioned_rows_for_scope(
+            block_scope,
+            engine=ENGINE_OPTIMIZER,
+            block=block,
+            dimension_columns=("optimizer_classification", "model_name"),
+        )
+        rows.extend({"block": block, **row} for row in scope_rows)
+    return _deterministic_table_order(
+        pd.DataFrame(rows, columns=CLASSIFICATION_MODEL_TABLE_COLUMNS),
+        CLASSIFICATION_MODEL_TABLE_COLUMNS,
+        ("block", "optimizer_classification", "model_name"),
+    )
+
+
+def _build_optimizer_classification_family_table(events: pd.DataFrame) -> pd.DataFrame:
+    pair_events = _optimizer_pair_assignable_events(events)
+    rows: list[dict] = []
+    for block, block_scope in pair_events.groupby("block", sort=False, observed=True):
+        scope_rows = _conditioned_rows_for_scope(
+            block_scope,
+            engine=ENGINE_OPTIMIZER,
+            block=block,
+            dimension_columns=("optimizer_classification", "family"),
+        )
+        rows.extend({"block": block, **row} for row in scope_rows)
+    return _deterministic_table_order(
+        pd.DataFrame(rows, columns=CLASSIFICATION_FAMILY_TABLE_COLUMNS),
+        CLASSIFICATION_FAMILY_TABLE_COLUMNS,
+        ("block", "optimizer_classification", "family"),
+    )
+
+
+def build_optimizer_portfolio_result(events: pd.DataFrame) -> OptimizerPortfolioResult:
+    """Build the three explicit 10B.4 Optimizer views and classification coverage."""
+    return OptimizerPortfolioResult(
+        family_tables=_build_optimizer_family_table(events),
+        classification_model_tables=_build_optimizer_classification_model_table(events),
+        classification_family_tables=_build_optimizer_classification_family_table(events),
+        classification_coverage=build_optimizer_classification_coverage(events),
+    )
 
 
 def build_portfolio_analysis(
@@ -424,7 +722,7 @@ def build_portfolio_analysis(
     candidate_mask: pd.Series,
     block_metrics_masks: Mapping[str, pd.Series],
 ) -> PortfolioAnalysisResult:
-    """Build the complete 10B.2 result for one already-valid client source."""
+    """Build the available Phase 10B.2-10B.4 result for one valid client source."""
     missing_columns = missing_portfolio_columns(df)
     if missing_columns:
         return PortfolioAnalysisResult.unavailable(
@@ -443,7 +741,7 @@ def build_portfolio_analysis(
         block_mask = block_metrics_masks[spec.block].reindex(source_df.index, fill_value=False)
         frames.append(_build_event_frame(source_df, source_keys, spec, block_mask))
 
-    events_df = pd.concat(frames, ignore_index=True)
+    events_df = enrich_optimizer_family_events(pd.concat(frames, ignore_index=True))
     _validate_event_cardinality(events_df)
     expected_events = len(source_df) * len(_EVENT_SPECS)
     if len(events_df) != expected_events:
@@ -457,6 +755,7 @@ def build_portfolio_analysis(
         events=events,
         coverage=build_portfolio_coverage(events_df),
         model_tables=build_portfolio_model_result(events_df),
+        optimizer=build_optimizer_portfolio_result(events_df),
     )
 
 
@@ -497,4 +796,5 @@ def combine_portfolio_analyses(
         events=events,
         coverage=build_portfolio_coverage(events_df),
         model_tables=build_portfolio_model_result(events_df),
+        optimizer=build_optimizer_portfolio_result(events_df),
     )
