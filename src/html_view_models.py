@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from src.client_portfolio_view import build_client_portfolio_view
 from src.html_formatters import (
     NA_TEXT,
     fmt_bool_si_no,
@@ -734,6 +735,7 @@ def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
         ],
         "prev_client": prev_client,
         "next_client": next_client,
+        "portfolio": build_client_portfolio_view(result.portfolio),
         "comparison_status_distribution": [
             {"status": k, "n": fmt_int(v), "pct": fmt_pct_scaled(v / result.n_candidates * 100 if result.n_candidates else float("nan"))}
             for k, v in sorted(result.comparison_status_distribution.items(), key=lambda kv: -kv[1])
@@ -766,23 +768,6 @@ def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
     vm["monthly"] = [
         _period_block_vm(result.periods.get(f"M{i}"), f"M{i}") for i in range(1, 7)
     ]
-    model_unavailable = {
-        "available": False,
-        "message": (
-            "Análisis por modelo no disponible: la metadata legacy no representa de forma fiable "
-            "los bloques OLDER_3M y RECENT_3M."
-        ),
-    }
-    vm["ml_models"] = dict(model_unavailable)
-    vm["scp_models"] = dict(model_unavailable)
-    vm["classifications"] = {
-        "available": False,
-        "message": (
-            "Análisis por clasificación no disponible: la metadata legacy no representa de forma fiable "
-            "los bloques OLDER_3M y RECENT_3M."
-        ),
-    }
-
     if no_comparable_anywhere:
         vm["conclusion"] = (
             f"No es posible concluir sobre la mejora de ML frente a SCP para este cliente: ninguna de sus "
@@ -832,8 +817,7 @@ def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
     limitations = [
         "El winner (WINNER_METHOD_*) se usa como fuente de verdad; el criterio exacto de empate relativo "
         "no está documentado y no se reconstruye.",
-        "El análisis por modelos y clasificaciones no está disponible porque la metadata legacy no representa "
-        "de forma fiable los bloques OLDER_3M y RECENT_3M.",
+        "La selección observada por período es descriptiva y no constituye una recomendación de routing.",
         "Los valores extremos de WAPE o de mejora relativa no se recortan silenciosamente en las "
         "estadísticas: se conservan y se señalan en los chequeos de calidad.",
         "Este informe es retrospectivo (backtesting) y no garantiza comportamiento futuro.",

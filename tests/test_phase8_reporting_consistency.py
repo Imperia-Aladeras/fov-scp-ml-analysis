@@ -122,7 +122,7 @@ def test_volume_bucket_low_group_consistent_across_excel_markdown_html(tmp_path:
     assert html_row["muestra_pequena"] == bool(core_row["small_sample"])
 
 
-def test_legacy_model_analysis_is_suppressed_consistently_without_hiding_phase8_volume(tmp_path: Path):
+def test_unavailable_portfolio_is_reported_consistently_without_hiding_phase8_volume(tmp_path: Path):
     result = build_volume_bucket_client_result()
 
     xlsx_path = tmp_path / "client.xlsx"
@@ -132,17 +132,17 @@ def test_legacy_model_analysis_is_suppressed_consistently_without_hiding_phase8_
         str(cell) for row in wb["08_models_and_win_rates"].iter_rows(values_only=True)
         for cell in row if cell is not None
     )
-    assert "metadata legacy" in model_sheet
-    assert "OLDER_3M" in model_sheet and "RECENT_3M" in model_sheet
+    assert "selección por bloques no disponible" in model_sheet
+    assert "ML_BEST_MODEL_OLDER_3M" in model_sheet and "ML_BEST_MODEL_RECENT_3M" in model_sheet
     assert "AutoETS" not in model_sheet
 
     report = build_client_report(result)
     model_section = report.split("## 10.")[1].split("## 11.")[0]
-    assert "metadata legacy" in model_section
-    assert "OLDER_3M" in model_section and "RECENT_3M" in model_section
+    assert "selección por bloques no disponible" in model_section
+    assert "ML_BEST_MODEL_OLDER_3M" in model_section and "ML_BEST_MODEL_RECENT_3M" in model_section
     assert "AutoETS" not in model_section
 
     page_vm = vm.build_client_page_vm(result)
-    assert page_vm["ml_models"]["available"] is False
-    assert "metadata legacy" in page_vm["ml_models"]["message"]
+    assert page_vm["portfolio"]["available"] is False
+    assert "selección por bloques no disponible" in page_vm["portfolio"]["message"]
     assert page_vm["phase8"]["volume"]["rows"]

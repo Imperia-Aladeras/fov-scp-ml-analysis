@@ -1,5 +1,5 @@
 """
-Generacion del Excel individual por cliente (16 pestanas, 00_readme..15_phase8_bias_volume).
+Generacion del Excel individual por cliente (18 pestanas, 00_readme..17_portfolio_events).
 
 Formato aplicado (ver docs/analysis_requirements.md, seccion "Formato Excel"):
 freeze panes en la primera fila, encabezados en negrita con relleno discreto,
@@ -22,6 +22,7 @@ from src.client_analysis import ClientAnalysisResult
 from src.models import top_absolute_impact, top_percentage_changes
 from src.periods import ALL_PERIODS, period_columns, visible_label
 from src.phase8 import NOT_ASSIGNABLE
+from src.portfolio import ENGINE_OPTIMIZER, ENGINE_SCP_AUTO
 from src.phase8_presentation import (
     BIAS_METHODOLOGY_NOTE,
     PHASE8_NO_ROUTING_NOTE,
@@ -35,6 +36,27 @@ from src.phase8_presentation import (
     volume_not_assignable_reason_es,
 )
 from src.quality_presentation import issue_period, metric_audit_friendly_label
+from src.client_portfolio_view import PORTFOLIO_STABILITY_DESCRIPTIVE_NOTE
+from src.portfolio_presentation import (
+    COLUMN_PRESENTATIONS,
+    ENGINE_LABELS,
+    SCHEMA_CANONICAL_EVENTS,
+    SCHEMA_CLASSIFICATION_COVERAGE,
+    SCHEMA_CLASSIFICATION_FAMILY,
+    SCHEMA_CLASSIFICATION_MODEL,
+    SCHEMA_CLASSIFICATION_STABILITY,
+    SCHEMA_CLASSIFICATION_TRANSITIONS,
+    SCHEMA_COVERAGE,
+    SCHEMA_FAMILIES,
+    SCHEMA_MODEL_STABILITY_SUMMARY,
+    SCHEMA_MODEL_TRANSITIONS,
+    SCHEMA_MODELS,
+    SCHEMA_PERFORMANCE_BY_STABILITY,
+    SCHEMA_STABILITY_BY_OLDER_MODEL,
+    PortfolioValueKind,
+    PreparedPortfolioTable,
+    prepare_portfolio_presentation,
+)
 
 TITLE_FONT = Font(bold=True, size=11, color="1F3864")
 HEADER_FONT = Font(bold=True)
@@ -55,7 +77,15 @@ def _column_number_format(col_name: str) -> str | None:
     return None
 
 
-def write_blocks(writer: pd.ExcelWriter, sheet_name: str, blocks: list[tuple[str, pd.DataFrame]]) -> None:
+def write_blocks(
+    writer: pd.ExcelWriter,
+    sheet_name: str,
+    blocks: list[tuple[str, pd.DataFrame]],
+    *,
+    number_format_resolver=None,
+) -> None:
+    if number_format_resolver is None:
+        number_format_resolver = _column_number_format
     startrow = 0
     for title, block_df in blocks:
         pd.DataFrame({title: []}).to_excel(writer, sheet_name=sheet_name, startrow=startrow, index=False, header=True)
@@ -69,7 +99,7 @@ def write_blocks(writer: pd.ExcelWriter, sheet_name: str, blocks: list[tuple[str
                 cell = ws.cell(row=header_row, column=col_idx)
                 cell.font = HEADER_FONT
                 cell.fill = HEADER_FILL
-                number_format = _column_number_format(str(col_name))
+                number_format = number_format_resolver(str(col_name))
                 if number_format:
                     for row_idx in range(header_row + 1, header_row + 1 + len(block_df)):
                         ws.cell(row=row_idx, column=col_idx).number_format = number_format
@@ -167,9 +197,9 @@ def readme_blocks(result: ClientAnalysisResult) -> list[tuple[str, pd.DataFrame]
         "repositorio. No se reconstruye ni se inventa ese umbral: solo se audita el caso totalmente",
         "especificado de ambos WAPE=0.",
         "",
-        "Modelos y clasificaciones (pestanas 08 y 09): se muestran para el semestre completo (6M),",
-        "la ventana mas representativa del cliente. 'Veces seleccionado' se calcula sobre el universo",
-        "comparable de 6M, no sobre el total de candidatas.",
+        "Seleccion observada y estabilidad por periodo (pestanas 08, 09, 16 y 17): se leen de la",
+        "metadata especifica OLDER_3M y RECENT_3M. La frecuencia de seleccion no es un ranking",
+        "universal de modelos ni una recomendacion de routing.",
         "",
         "Limitaciones:",
         "  No se afirma mejora generalizada de ML basandose unicamente en el WAPE global: revisar",
@@ -180,8 +210,9 @@ def readme_blocks(result: ClientAnalysisResult) -> list[tuple[str, pd.DataFrame]
     if no_comparable_anywhere:
         lines.append(
             "  Este cliente NO tiene ninguna serie comparable en ningun periodo (ver 02_coverage_status "
-            "para el motivo). Las pestanas de performance (03-09, 11, 12) se muestran vacias por diseno: "
-            "es un caso valido de cobertura/diagnostico, no un error, y no se inventan metricas."
+            "para el motivo). Las pestanas de performance (03-07, 11, 12) se muestran vacias por diseno; "
+            "08 y 09 pueden conservar cobertura de seleccion sin inventar performance. Es un caso valido "
+            "de cobertura/diagnostico, no un error."
         )
     return [("README", pd.DataFrame({"": lines}))]
 
@@ -349,18 +380,127 @@ def _translate_bias_directions(table: pd.DataFrame) -> pd.DataFrame:
     return table
 
 
-def models_and_win_rates_blocks(result: ClientAnalysisResult) -> list[tuple[str, pd.DataFrame]]:
-    return [("Nota", pd.DataFrame({
-        "": ["Analisis por modelo no disponible: la metadata legacy no representa de forma fiable "
-             "los bloques OLDER_3M y RECENT_3M."]
-    }))]
+_PORTFOLIO_EXCEL_FORMATS_BY_KIND = {
+    PortfolioValueKind.DATETIME: "dd/mm/yyyy hh:mm:ss",
+    PortfolioValueKind.INTEGER: "#,##0",
+    PortfolioValueKind.ABSOLUTE_NUMBER: "#,##0.0",
+    PortfolioValueKind.RATIO_PERCENT: "0.0%",
+    PortfolioValueKind.SIGNED_RATIO_PERCENT: "+0.0%;-0.0%;0.0%",
+    PortfolioValueKind.SIGNED_SCALED_PERCENT: '+0.0"%";-0.0"%";0.0"%"',
+}
+_PORTFOLIO_EXCEL_FORMATS_BY_LABEL = {
+    presentation.visible_label: _PORTFOLIO_EXCEL_FORMATS_BY_KIND.get(presentation.value_kind)
+    for presentation in COLUMN_PRESENTATIONS.values()
+}
 
 
-def classifications_blocks(result: ClientAnalysisResult) -> list[tuple[str, pd.DataFrame]]:
-    return [("Nota", pd.DataFrame({
-        "": ["Analisis por clasificacion no disponible: la metadata legacy no representa de forma fiable "
-             "los bloques OLDER_3M y RECENT_3M."]
-    }))]
+def _portfolio_column_number_format(visible_label: str) -> str | None:
+    """Resolve an Excel format from the explicit 10C.1 type, never a suffix."""
+    return _PORTFOLIO_EXCEL_FORMATS_BY_LABEL.get(visible_label)
+
+
+def _portfolio_excel_dataframe(table: PreparedPortfolioTable) -> pd.DataFrame:
+    dataframe = table.visible_dataframe()
+    for source_column in table.schema.columns:
+        visible_label = COLUMN_PRESENTATIONS[source_column].visible_label
+        kind = COLUMN_PRESENTATIONS[source_column].value_kind
+        if kind == PortfolioValueKind.BOOLEAN:
+            dataframe[visible_label] = dataframe[visible_label].map(
+                lambda value: "" if pd.isna(value) else ("Si" if bool(value) else "No")
+            )
+        elif source_column == "source_series_key":
+            dataframe[visible_label] = dataframe[visible_label].map(
+                lambda value: "" if value is None or value is pd.NA else str(value)
+            )
+    return dataframe
+
+
+def _portfolio_status_blocks(presentation) -> list[tuple[str, pd.DataFrame]]:
+    blocks = [("Estado del analisis", pd.DataFrame({"": [presentation.availability.message]}))]
+    if presentation.availability.missing_required_columns:
+        blocks.append((
+            "Metadata especifica ausente",
+            pd.DataFrame({"Columna requerida ausente": presentation.availability.missing_required_columns}),
+        ))
+    return blocks
+
+
+def _portfolio_table_block(presentation, schema_key: str, title: str | None = None):
+    table = presentation.tables[schema_key]
+    return title or table.schema.visible_name, _portfolio_excel_dataframe(table)
+
+
+def models_and_win_rates_blocks(
+    result: ClientAnalysisResult, presentation=None,
+) -> list[tuple[str, pd.DataFrame]]:
+    presentation = presentation or prepare_portfolio_presentation(result.portfolio)
+    blocks = _portfolio_status_blocks(presentation)
+    if not presentation.availability.available:
+        return blocks
+
+    blocks.append(_portfolio_table_block(presentation, SCHEMA_COVERAGE))
+    models = presentation.tables[SCHEMA_MODELS]
+    for engine_key in (ENGINE_SCP_AUTO, ENGINE_OPTIMIZER):
+        engine = ENGINE_LABELS[engine_key]
+        filtered = PreparedPortfolioTable(
+            schema=models.schema,
+            dataframe=models.dataframe[models.dataframe["engine"] == engine].reset_index(drop=True),
+        )
+        blocks.append((f"Modelos - {engine}", _portfolio_excel_dataframe(filtered)))
+    blocks.append(_portfolio_table_block(presentation, SCHEMA_FAMILIES))
+    blocks.append(("Nota metodologica", pd.DataFrame({"": [presentation.methodology_note, presentation.small_sample_note]})))
+    return blocks
+
+
+def classifications_blocks(
+    result: ClientAnalysisResult, presentation=None,
+) -> list[tuple[str, pd.DataFrame]]:
+    presentation = presentation or prepare_portfolio_presentation(result.portfolio)
+    blocks = _portfolio_status_blocks(presentation)
+    if not presentation.availability.available:
+        return blocks
+    for key in (
+        SCHEMA_CLASSIFICATION_COVERAGE,
+        SCHEMA_CLASSIFICATION_MODEL,
+        SCHEMA_CLASSIFICATION_FAMILY,
+    ):
+        blocks.append(_portfolio_table_block(presentation, key))
+    blocks.append(("Nota metodologica", pd.DataFrame({"": [presentation.methodology_note]})))
+    return blocks
+
+
+def portfolio_stability_blocks(
+    result: ClientAnalysisResult, presentation=None,
+) -> list[tuple[str, pd.DataFrame]]:
+    presentation = presentation or prepare_portfolio_presentation(result.portfolio)
+    blocks = _portfolio_status_blocks(presentation)
+    if not presentation.availability.available:
+        return blocks
+    for key in (
+        SCHEMA_MODEL_STABILITY_SUMMARY,
+        SCHEMA_STABILITY_BY_OLDER_MODEL,
+        SCHEMA_MODEL_TRANSITIONS,
+        SCHEMA_CLASSIFICATION_STABILITY,
+        SCHEMA_CLASSIFICATION_TRANSITIONS,
+        SCHEMA_PERFORMANCE_BY_STABILITY,
+    ):
+        blocks.append(_portfolio_table_block(presentation, key))
+    blocks.append(("Nota descriptiva", pd.DataFrame({"": [
+        PORTFOLIO_STABILITY_DESCRIPTIVE_NOTE,
+        presentation.small_sample_note,
+    ]})))
+    return blocks
+
+
+def portfolio_events_blocks(
+    result: ClientAnalysisResult, presentation=None,
+) -> list[tuple[str, pd.DataFrame]]:
+    presentation = presentation or prepare_portfolio_presentation(result.portfolio)
+    blocks = _portfolio_status_blocks(presentation)
+    if not presentation.availability.available:
+        return blocks
+    blocks.append(_portfolio_table_block(presentation, SCHEMA_CANONICAL_EVENTS))
+    return blocks
 
 
 # --------------------------------------------------------------------------
@@ -542,6 +682,7 @@ _SINGLE_TABLE_SHEETS = ("13_data_quality_checks",)
 
 def build_client_workbook(result: ClientAnalysisResult, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    portfolio_presentation = prepare_portfolio_presentation(result.portfolio)
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         write_blocks(writer, "00_readme", readme_blocks(result))
         write_blocks(writer, "01_executive_summary", [("Resumen ejecutivo por periodo", executive_summary_table(result))])
@@ -551,14 +692,32 @@ def build_client_workbook(result: ClientAnalysisResult, output_path: Path) -> No
         write_blocks(writer, "05_second_quarter", period_detail_blocks(result, "OLDER_3M"))
         write_blocks(writer, "06_monthly_summary", [("Resumen mensual M1-M6", monthly_summary_table(result))])
         write_blocks(writer, "07_monthly_winners", [("Ganadores por mes", monthly_winners_table(result))])
-        write_blocks(writer, "08_models_and_win_rates", models_and_win_rates_blocks(result))
-        write_blocks(writer, "09_classifications", classifications_blocks(result))
+        write_blocks(
+            writer, "08_models_and_win_rates",
+            models_and_win_rates_blocks(result, portfolio_presentation),
+            number_format_resolver=_portfolio_column_number_format,
+        )
+        write_blocks(
+            writer, "09_classifications",
+            classifications_blocks(result, portfolio_presentation),
+            number_format_resolver=_portfolio_column_number_format,
+        )
         write_blocks(writer, "10_exclusions", exclusions_blocks(result))
         write_blocks(writer, "11_top_absolute_impact", top_absolute_impact_blocks(result))
         write_blocks(writer, "12_top_percentage_changes", top_percentage_changes_blocks(result))
         write_blocks(writer, "13_data_quality_checks", [("Chequeos de calidad", data_quality_checks_table(result))])
         write_blocks(writer, "14_pareto_absolute_impact", pareto_absolute_impact_blocks(result))
         write_blocks(writer, "15_phase8_bias_volume", phase8_bias_volume_blocks(result))
+        write_blocks(
+            writer, "16_portfolio_stability",
+            portfolio_stability_blocks(result, portfolio_presentation),
+            number_format_resolver=_portfolio_column_number_format,
+        )
+        write_blocks(
+            writer, "17_portfolio_events",
+            portfolio_events_blocks(result, portfolio_presentation),
+            number_format_resolver=_portfolio_column_number_format,
+        )
 
         for sheet_name in writer.sheets:
             autosize_columns(writer, sheet_name)

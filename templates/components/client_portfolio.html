@@ -1,0 +1,93 @@
+<section id="seleccion-estabilidad" aria-labelledby="seleccion-estabilidad-h">
+  <h2 id="seleccion-estabilidad-h">Selección observada y estabilidad por período</h2>
+  <p class="note">{{ page.portfolio.message }}</p>
+
+  {% if not page.portfolio.available %}
+    {% if page.portfolio.missing_required_columns %}
+    <details>
+      <summary>Metadata específica ausente</summary>
+      <p class="note">{{ page.portfolio.missing_required_columns | join(", ") }}</p>
+    </details>
+    {% endif %}
+  {% else %}
+    {% if page.portfolio.coverage %}
+    <h3>Cobertura de selección</h3>
+    <p class="note">La selección observada y la performance evaluable son coberturas distintas.</p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Motor</th><th>Período</th><th>Series base</th><th>Eventos estructurales</th><th>Modelo informado</th><th>Modelo ausente</th><th>Cobertura asignación</th><th>Performance evaluable</th></tr></thead>
+      <tbody>{% for r in page.portfolio.coverage %}<tr><td>{{ r.engine }}</td><td>{{ r.block }}</td><td>{{ r.n_base_series }}</td><td>{{ r.n_structural_events }}</td><td>{{ r.n_model_present }}</td><td>{{ r.n_model_missing }}</td><td>{{ r.selection_assignment_rate }}</td><td>{{ r.n_performance_evaluable }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+
+    {% if page.portfolio.has_assignments %}
+    <h3>Frecuencia de selección por modelo</h3>
+    <p class="note">Las filas se ordenan únicamente por selecciones observadas. El detalle completo está en el Excel individual.</p>
+    {% for group in page.portfolio.models %}
+      <h4>{{ group.engine }} · {{ group.block }}</h4>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Modelo observado</th><th>Selecciones</th><th>Cuota</th><th>N performance</th><th>Estado de muestra</th><th>Volumen</th><th>WAPE Auto</th><th>WAPE Optimizer</th><th>Bias Auto</th><th>Bias Optimizer</th><th>Victoria del motor analizado</th><th>Mejora Optimizer vs Auto</th><th>Reducción absoluta Optimizer vs Auto</th></tr></thead>
+        <tbody>{% for r in group.rows %}<tr><td>{{ r.model_name }}</td><td>{{ r.selection_count }}</td><td>{{ r.selection_share_of_assignable }}</td><td>{{ r.n_performance }}</td><td>{{ r.sample_note or "Sin advertencia" }}</td><td>{{ r.historical_volume }}</td><td>{{ r.scp_wape }}</td><td>{{ r.optimizer_wape }}</td><td>{{ r.scp_bias }}</td><td>{{ r.optimizer_bias }}</td><td>{{ r.selected_engine_win_rate }}</td><td>{{ r.optimizer_improvement_vs_scp }}</td><td>{{ r.optimizer_abs_error_reduction_vs_scp }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+      {% if group.truncated %}<p class="note">Se muestran 8 de {{ group.total_rows }} modelos, según frecuencia de selección.</p>{% endif %}
+    {% endfor %}
+
+    {% if page.portfolio.families %}
+    <h3>Familias del Optimizer</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Período</th><th>Familia</th><th>Selecciones</th><th>Cuota</th><th>N performance</th><th>Estado de muestra</th><th>WAPE Auto</th><th>WAPE Optimizer</th><th>Bias Optimizer</th><th>Victoria Optimizer</th><th>Mejora Optimizer vs Auto</th></tr></thead>
+      <tbody>{% for r in page.portfolio.families %}<tr><td>{{ r.block }}</td><td>{{ r.family }}</td><td>{{ r.selection_count }}</td><td>{{ r.selection_share_of_assignable }}</td><td>{{ r.n_performance }}</td><td>{{ r.sample_note or "Sin advertencia" }}</td><td>{{ r.scp_wape }}</td><td>{{ r.optimizer_wape }}</td><td>{{ r.optimizer_bias }}</td><td>{{ r.selected_engine_win_rate }}</td><td>{{ r.optimizer_improvement_vs_scp }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+
+    {% if page.portfolio.classification_coverage %}
+    <h3>Cobertura de clasificación del Optimizer</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Período</th><th>Clasificación informada</th><th>Clasificación ausente</th><th>Cobertura clasificación</th><th>Pares asignables</th><th>Cobertura de pares</th></tr></thead>
+      <tbody>{% for r in page.portfolio.classification_coverage %}<tr><td>{{ r.block }}</td><td>{{ r.n_classification_present }}</td><td>{{ r.n_classification_missing }}</td><td>{{ r.classification_assignment_rate }}</td><td>{{ r.n_pair_assignable }}</td><td>{{ r.pair_assignment_rate }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+
+    <h3>Estabilidad entre períodos</h3>
+    <p class="note">{{ page.portfolio.stability_note }}</p>
+    {% if page.portfolio.model_stability %}
+    <div class="table-scroll"><table>
+      <thead><tr><th>Motor</th><th>Evaluables</th><th>Estables</th><th>Cambiaron</th><th>No evaluables</th><th>Tasa de estabilidad</th></tr></thead>
+      <tbody>{% for r in page.portfolio.model_stability %}<tr><td>{{ r.engine }}</td><td>{{ r.n_evaluable }}</td><td>{{ r.stable_count }}</td><td>{{ r.changed_count }}</td><td>{{ r.not_evaluable_count }}</td><td>{{ r.stability_rate }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+
+    {% if page.portfolio.model_transitions.rows %}
+    <h4>Transiciones de modelo</h4>
+    <div class="table-scroll"><table><thead><tr><th>Motor</th><th>Modelo anterior</th><th>Modelo reciente</th><th>Transiciones</th></tr></thead>
+      <tbody>{% for r in page.portfolio.model_transitions.rows %}<tr><td>{{ r.engine }}</td><td>{{ r.older_value }}</td><td>{{ r.recent_value }}</td><td>{{ r.transition_count }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% if page.portfolio.model_transitions.truncated %}<p class="note">Se muestran hasta {{ page.portfolio.model_transitions.limit_per_engine }} transiciones por motor de {{ page.portfolio.model_transitions.total_rows }} totales, ordenadas solo por frecuencia.</p>{% endif %}
+    {% endif %}
+
+    {% if page.portfolio.classification_stability %}
+    <h4>Estabilidad de clasificación del Optimizer</h4>
+    <div class="table-scroll"><table><thead><tr><th>Motor</th><th>Evaluables</th><th>Estables</th><th>Cambiaron</th><th>No evaluables</th><th>Tasa de estabilidad</th></tr></thead>
+      <tbody>{% for r in page.portfolio.classification_stability %}<tr><td>{{ r.engine }}</td><td>{{ r.n_evaluable }}</td><td>{{ r.stable_count }}</td><td>{{ r.changed_count }}</td><td>{{ r.not_evaluable_count }}</td><td>{{ r.stability_rate }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+    {% if page.portfolio.classification_transitions.rows %}
+    <div class="table-scroll"><table><thead><tr><th>Motor</th><th>Clasificación anterior</th><th>Clasificación reciente</th><th>Transiciones</th></tr></thead>
+      <tbody>{% for r in page.portfolio.classification_transitions.rows %}<tr><td>{{ r.engine }}</td><td>{{ r.older_value }}</td><td>{{ r.recent_value }}</td><td>{{ r.transition_count }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% if page.portfolio.classification_transitions.truncated %}<p class="note">Se muestran hasta {{ page.portfolio.classification_transitions.limit_per_engine }} transiciones por motor de {{ page.portfolio.classification_transitions.total_rows }} totales, ordenadas solo por frecuencia.</p>{% endif %}
+    {% endif %}
+
+    {% if page.portfolio.performance_by_stability %}
+    <h4>Performance descriptiva por estabilidad</h4>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Dimensión</th><th>Motor</th><th>Período</th><th>Estado</th><th>N performance</th><th>Estado de muestra</th><th>WAPE Auto</th><th>WAPE Optimizer</th><th>Bias Optimizer</th><th>Victoria del motor analizado</th><th>Mejora Optimizer vs Auto</th><th>Reducción absoluta Optimizer vs Auto</th></tr></thead>
+      <tbody>{% for r in page.portfolio.performance_by_stability %}<tr><td>{{ r.stability_type }}</td><td>{{ r.engine }}</td><td>{{ r.block }}</td><td>{{ r.stability_state }}</td><td>{{ r.n_performance }}</td><td>{{ r.sample_note or "Sin advertencia" }}</td><td>{{ r.scp_wape }}</td><td>{{ r.optimizer_wape }}</td><td>{{ r.optimizer_bias }}</td><td>{{ r.selected_engine_win_rate }}</td><td>{{ r.optimizer_improvement_vs_scp }}</td><td>{{ r.optimizer_abs_error_reduction_vs_scp }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+    {% endif %}
+  {% endif %}
+
+  <p class="note">{{ page.portfolio.methodology_note }}</p>
+  {% if page.portfolio.available %}<p class="note">{{ page.portfolio.small_sample_note }}</p>{% endif %}
+  {% if page.own_excel_url %}<p><a href="{{ page.own_excel_url | encode_url_path }}">Abrir el detalle completo en el Excel individual</a></p>{% endif %}
+</section>

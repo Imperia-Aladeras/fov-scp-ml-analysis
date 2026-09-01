@@ -63,6 +63,8 @@
   </div>
 </section>
 
+{% include "components/client_portfolio.html" %}
+
 {% if page.kind == "no_performance" %}
   <section id="sin-performance" aria-labelledby="sin-performance-h">
     <h2 id="sin-performance-h">Sin performance calculable</h2>
@@ -113,16 +115,6 @@
     </tbody>
   </table>
   </div>
-</section>
-
-<section id="modelos" aria-labelledby="modelos-h">
-  <h2 id="modelos-h">Modelos (semestre completo)</h2>
-  <p class="note">{{ page.ml_models.message }}</p>
-</section>
-
-<section id="clasificaciones" aria-labelledby="clasificaciones-h">
-  <h2 id="clasificaciones-h">Clasificaciones (semestre completo)</h2>
-  <p class="note">{{ page.classifications.message }}</p>
 </section>
 
 <section id="fase8" aria-labelledby="fase8-h">

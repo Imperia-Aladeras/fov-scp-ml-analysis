@@ -418,8 +418,8 @@ def test_malicious_legacy_model_name_is_not_rendered_at_all(tmp_path: Path):
     html = (output_root / "xss_run" / "clients" / "10204-sklum" / "index.html").read_text(encoding="utf-8")
     assert "<script>alert" not in html
     assert "&lt;script&gt;alert" not in html
-    assert "metadata legacy" in html
-    assert "OLDER_3M" in html and "RECENT_3M" in html
+    assert "Análisis de selección por bloques no disponible" in html
+    assert "ML_BEST_MODEL_OLDER_3M" in html and "ML_BEST_MODEL_RECENT_3M" in html
 
 
 def test_ampersand_in_client_label_is_escaped_in_text_and_links(tmp_path: Path):
@@ -1132,8 +1132,8 @@ def test_build_client_page_vm_phase8_none_is_safe():
     result.periods["6M"].phase8 = None
     page_vm = vm.build_client_page_vm(result)
     assert page_vm["phase8"] == {"available": False}
-    assert page_vm["ml_models"]["available"] is False
-    assert "metadata legacy" in page_vm["ml_models"]["message"]
+    assert page_vm["portfolio"]["available"] is False
+    assert "selección por bloques no disponible" in page_vm["portfolio"]["message"]
 
 
 def test_client_ranking_view_model_keeps_only_numeric_and_identifier_fields():

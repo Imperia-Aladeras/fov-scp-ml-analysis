@@ -15,6 +15,7 @@ import math
 import pandas as pd
 
 from src.client_analysis import ClientAnalysisResult, PeriodResult
+from src.client_portfolio_view import build_client_portfolio_view
 from src.models import (
     top_absolute_impact,
     top_percentage_changes,
@@ -111,6 +112,19 @@ def _table_from_rows(headers: list[str], rows: list[list[str]]) -> list[str]:
     for row in rows:
         lines.append("| " + " | ".join(row) + " |")
     return lines
+
+
+def _portfolio_md_cell(value: object) -> str:
+    return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
+
+
+def _portfolio_md_table(columns: list[tuple[str, str]], rows: list[dict[str, str]]) -> list[str]:
+    if not rows:
+        return ["_Sin filas que mostrar._"]
+    return _table_from_rows(
+        [label for label, _ in columns],
+        [[_portfolio_md_cell(row[key]) for _, key in columns] for row in rows],
+    )
 
 
 def _category_table_lines(table: pd.DataFrame, top_n: int = 10) -> list[str]:
@@ -454,35 +468,134 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     # conserva el diagnostico independiente de Bias/volumen de la seccion 18.
     has_phase8 = m6 is not None and m6.phase8 is not None
 
-    # 10. Modelos ML
-    a("## 10. Modelos ML")
+    portfolio_view = build_client_portfolio_view(result.portfolio)
+
+    # 10. Selección observada por modelo
+    a("## 10. Selección observada por modelo y período")
     a("")
-    a(
-        "Análisis por modelo ML no disponible: la metadata legacy no representa de forma fiable "
-        "los bloques OLDER_3M y RECENT_3M."
-    )
+    a(portfolio_view["message"])
+    a("")
+    if not portfolio_view["available"]:
+        if portfolio_view["missing_required_columns"]:
+            missing = ", ".join(f"`{column}`" for column in portfolio_view["missing_required_columns"])
+            a(f"Metadata específica ausente: {missing}.")
+    else:
+        a("La selección observada y la performance evaluable son coberturas distintas.")
+        a("")
+        a("\n".join(_portfolio_md_table([
+            ("Motor", "engine"), ("Período", "block"), ("Base", "n_base_series"),
+            ("Eventos", "n_structural_events"), ("Modelo informado", "n_model_present"),
+            ("Modelo ausente", "n_model_missing"), ("Cobertura", "selection_assignment_rate"),
+            ("Performance evaluable", "n_performance_evaluable"),
+        ], portfolio_view["coverage"])))
+        if portfolio_view["has_assignments"]:
+            for group in portfolio_view["models"]:
+                a("")
+                a(f"**{group['engine']} · {group['block']}** — ordenado únicamente por frecuencia de selección.")
+                a("")
+                a("\n".join(_portfolio_md_table([
+                    ("Modelo", "model_name"), ("Selecciones", "selection_count"),
+                    ("Cuota", "selection_share_of_assignable"), ("N perf.", "n_performance"),
+                    ("Muestra", "sample_note"), ("WAPE Auto", "scp_wape"),
+                    ("WAPE Optimizer", "optimizer_wape"),
+                    ("Victoria motor analizado", "selected_engine_win_rate"),
+                    ("Mejora Optimizer vs Auto", "optimizer_improvement_vs_scp"),
+                ], group["rows"])))
+                if group["truncated"]:
+                    a(f"\nSe muestran 8 de {group['total_rows']} modelos; el detalle completo está en Excel.")
+        else:
+            a("")
+            a("_Sin asignaciones observadas; la cobertura anterior sigue siendo informativa._")
+    a("")
+    a(portfolio_view["methodology_note"])
+    a("")
+    a("Detalle completo: hojas `08_models_and_win_rates` y `17_portfolio_events` del Excel individual.")
     a("")
     a("---")
     a("")
 
-    # 11. Modelos SCP
-    a("## 11. Modelos SCP")
+    # 11. Familias y estabilidad
+    a("## 11. Familias y estabilidad por período")
     a("")
-    a(
-        "Análisis por modelo SCP no disponible: la metadata legacy no representa de forma fiable "
-        "los bloques OLDER_3M y RECENT_3M."
-    )
+    if not portfolio_view["available"]:
+        a(portfolio_view["message"])
+    elif not portfolio_view["has_assignments"]:
+        a("Sin asignaciones observadas; no hay familias ni transiciones evaluables que resumir.")
+    else:
+        a("**Familias del SCP Classic Optimizer**")
+        a("")
+        a("\n".join(_portfolio_md_table([
+            ("Período", "block"), ("Familia", "family"), ("Selecciones", "selection_count"),
+            ("Cuota", "selection_share_of_assignable"), ("N perf.", "n_performance"),
+            ("Muestra", "sample_note"), ("WAPE Auto", "scp_wape"),
+            ("WAPE Optimizer", "optimizer_wape"),
+            ("Mejora Optimizer vs Auto", "optimizer_improvement_vs_scp"),
+        ], portfolio_view["families"])))
+        a("")
+        a("**Estabilidad de modelo**")
+        a("")
+        a(portfolio_view["stability_note"])
+        a("")
+        a("\n".join(_portfolio_md_table([
+            ("Motor", "engine"), ("Evaluables", "n_evaluable"), ("Estables", "stable_count"),
+            ("Cambiaron", "changed_count"), ("No evaluables", "not_evaluable_count"),
+            ("Tasa estabilidad", "stability_rate"),
+        ], portfolio_view["model_stability"])))
+        a("")
+        a("Transiciones más frecuentes (las diagonales son transiciones estables válidas):")
+        a("")
+        a("\n".join(_portfolio_md_table([
+            ("Motor", "engine"), ("Anterior", "older_value"), ("Reciente", "recent_value"),
+            ("Transiciones", "transition_count"),
+        ], portfolio_view["model_transitions"]["rows"])))
+        a("")
+        a("Performance descriptiva por estabilidad:")
+        a("")
+        a("\n".join(_portfolio_md_table([
+            ("Dimensión", "stability_type"), ("Motor", "engine"), ("Período", "block"),
+            ("Estado", "stability_state"), ("N perf.", "n_performance"),
+            ("Muestra", "sample_note"), ("WAPE Auto", "scp_wape"),
+            ("WAPE Optimizer", "optimizer_wape"),
+            ("Mejora Optimizer vs Auto", "optimizer_improvement_vs_scp"),
+        ], portfolio_view["performance_by_stability"])))
+        a("")
+        a(portfolio_view["small_sample_note"])
+    a("")
+    a("Detalle completo: hoja `16_portfolio_stability` del Excel individual.")
     a("")
     a("---")
     a("")
 
-    # 12. Clasificaciones
-    a("## 12. Clasificaciones")
+    # 12. Clasificación del Optimizer
+    a("## 12. Clasificación del Optimizer")
     a("")
-    a(
-        "Análisis por clasificación no disponible: la metadata legacy no representa de forma fiable "
-        "los bloques OLDER_3M y RECENT_3M."
-    )
+    if not portfolio_view["available"]:
+        a(portfolio_view["message"])
+    else:
+        a("\n".join(_portfolio_md_table([
+            ("Período", "block"), ("Informadas", "n_classification_present"),
+            ("Ausentes", "n_classification_missing"),
+            ("Cobertura clasificación", "classification_assignment_rate"),
+            ("Pares asignables", "n_pair_assignable"), ("Cobertura pares", "pair_assignment_rate"),
+        ], portfolio_view["classification_coverage"])))
+        if portfolio_view["has_assignments"]:
+            a("")
+            a("**Estabilidad de clasificación**")
+            a("")
+            a("\n".join(_portfolio_md_table([
+                ("Motor", "engine"), ("Evaluables", "n_evaluable"), ("Estables", "stable_count"),
+                ("Cambiaron", "changed_count"), ("No evaluables", "not_evaluable_count"),
+                ("Tasa estabilidad", "stability_rate"),
+            ], portfolio_view["classification_stability"])))
+            a("")
+            a("\n".join(_portfolio_md_table([
+                ("Motor", "engine"), ("Clasificación anterior", "older_value"),
+                ("Clasificación reciente", "recent_value"), ("Transiciones", "transition_count"),
+            ], portfolio_view["classification_transitions"]["rows"])))
+        a("")
+        a("Los cruces completos clasificación × modelo y clasificación × familia se conservan en Excel.")
+    a("")
+    a("Detalle completo: hoja `09_classifications` del Excel individual.")
     a("")
     a("---")
     a("")
@@ -563,8 +676,7 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     limitations = [
         "El winner (`WINNER_METHOD_*`) se usa como fuente de verdad; el criterio exacto de empate relativo "
         "(relativeDiff < 0.0001) no esta documentado en el repositorio y no se reconstruye.",
-        "El analisis por modelos y clasificaciones no esta disponible porque la metadata legacy no representa "
-        "de forma fiable los bloques OLDER_3M y RECENT_3M.",
+        "La seleccion observada por periodo es descriptiva y no constituye una recomendacion de routing.",
         "Los valores extremos de WAPE o de mejora relativa (series con historico muy pequeno) no se recortan "
         "silenciosamente: se conservan en las estadisticas y se senalan en los chequeos de calidad.",
         "Este informe es retrospectivo (backtesting) y no garantiza comportamiento futuro.",

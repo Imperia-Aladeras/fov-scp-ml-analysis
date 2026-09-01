@@ -22,6 +22,7 @@ EXPECTED_SHEETS = [
     "05_second_quarter", "06_monthly_summary", "07_monthly_winners", "08_models_and_win_rates",
     "09_classifications", "10_exclusions", "11_top_absolute_impact", "12_top_percentage_changes",
     "13_data_quality_checks", "14_pareto_absolute_impact", "15_phase8_bias_volume",
+    "16_portfolio_stability", "17_portfolio_events",
 ]
 
 
@@ -185,14 +186,14 @@ def test_pareto_absolute_impact_blocks_all_improvement_client_notes_empty_deteri
 # Fase 8C: Bias integrado en 08/09, hoja nueva 15_phase8_bias_volume.
 # --------------------------------------------------------------------------
 
-def test_models_and_win_rates_blocks_show_explicit_legacy_metadata_notice():
+def test_models_and_win_rates_blocks_show_portfolio_unavailable_notice():
     result = build_synthetic_client_result(with_data=True)
     blocks = models_and_win_rates_blocks(result)
-    assert len(blocks) == 1 and blocks[0][0] == "Nota"
+    assert blocks[0][0] == "Estado del analisis"
     notice = blocks[0][1][""].iloc[0]
-    assert "metadata legacy" in notice
-    assert "OLDER_3M" in notice and "RECENT_3M" in notice
-    assert "sin datos" not in notice.lower()
+    assert "Análisis de selección por bloques no disponible" in notice
+    assert "no implica un error del pipeline" in notice
+    assert any(title == "Metadata especifica ausente" for title, _ in blocks)
 
 
 def test_models_and_win_rates_blocks_reads_phase8_without_recomputing(monkeypatch):
@@ -203,17 +204,16 @@ def test_models_and_win_rates_blocks_reads_phase8_without_recomputing(monkeypatc
 
     monkeypatch.setattr("src.phase8.category_performance_table_with_bias", _boom)
     blocks = models_and_win_rates_blocks(result)
-    assert blocks[0][0] == "Nota"
+    assert blocks[0][0] == "Estado del analisis"
 
 
-def test_classifications_blocks_show_explicit_legacy_metadata_notice():
+def test_classifications_blocks_show_portfolio_unavailable_notice():
     result = build_synthetic_client_result(with_data=True)
     blocks = classifications_blocks(result)
-    assert len(blocks) == 1 and blocks[0][0] == "Nota"
+    assert blocks[0][0] == "Estado del analisis"
     notice = blocks[0][1][""].iloc[0]
-    assert "metadata legacy" in notice
-    assert "OLDER_3M" in notice and "RECENT_3M" in notice
-    assert "sin datos" not in notice.lower()
+    assert "Análisis de selección por bloques no disponible" in notice
+    assert any(title == "Metadata especifica ausente" for title, _ in blocks)
 
 
 def test_phase8_bias_volume_blocks_not_assignable_case():
