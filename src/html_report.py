@@ -51,6 +51,24 @@ CHART_SECTION_LABELS: dict[str, str] = {
     "classifications": "Clasificaciones",
     "impact_and_risk": "Impacto y riesgos",
     "clients": "Clientes",
+    "portfolio": "Selección observada y estabilidad",
+}
+
+PORTFOLIO_CHART_PRESENTATION: dict[str, dict[str, str]] = {
+    "01_optimizer_family_selection_share.png": {
+        "title": "Cuota de selección observada por familia — SCP Classic Optimizer",
+        "alt": (
+            "Gráfico de cuota de selección observada por familia del SCP Classic Optimizer, "
+            "comparando los tres meses anteriores y los tres meses recientes"
+        ),
+    },
+    "02_portfolio_stability.png": {
+        "title": "Estabilidad observada entre períodos",
+        "alt": (
+            "Gráfico de estabilidad observada de SCP Classic Auto y SCP Classic Optimizer; "
+            "los casos no evaluables se muestran fuera del denominador"
+        ),
+    },
 }
 
 
@@ -116,6 +134,27 @@ def _group_charts_for_page(paths: list[str], page_path: str) -> list[dict]:
     return groups
 
 
+def _portfolio_charts_for_page(paths: list[str], page_path: str) -> list[dict]:
+    """Select only generated global portfolio assets and attach approved copy."""
+    charts: list[dict] = []
+    for path in sorted(paths):
+        parts = path.split("/")
+        if len(parts) < 3 or "charts" not in parts:
+            continue
+        chart_index = parts.index("charts")
+        if chart_index + 1 >= len(parts) or parts[chart_index + 1] != "portfolio":
+            continue
+        metadata = PORTFOLIO_CHART_PRESENTATION.get(parts[-1])
+        if metadata is None:
+            continue
+        charts.append({
+            "url": _rel_url(page_path, path),
+            "title": metadata["title"],
+            "alt": metadata["alt"],
+        })
+    return charts
+
+
 def _render_to_file(env: jinja2.Environment, template_name: str, context: dict, out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     html = env.get_template(template_name).render(**context)
@@ -176,7 +215,11 @@ def generate_html_report(
         log_path = _find_first(own_paths, ".txt")
         row["log_url"] = _rel_url("index.html", log_path) if log_path else None
 
-    global_chart_groups = _group_charts_for_page(posix_global_outputs, "index.html")
+    global_chart_groups = [
+        group for group in _group_charts_for_page(posix_global_outputs, "index.html")
+        if group["section"] != "portfolio"
+    ]
+    global_portfolio_charts = _portfolio_charts_for_page(posix_global_outputs, "index.html")
     global_excel_url = _find_first(posix_global_outputs, ".xlsx")
     global_md_url = _find_first(posix_global_outputs, ".md")
 
@@ -211,6 +254,7 @@ def generate_html_report(
         "chart_groups": global_chart_groups,
         "phase8_global": phase8_global,
         "global_portfolio": global_portfolio,
+        "global_portfolio_charts": global_portfolio_charts,
         "quality_audit": quality_audit,
         "global_excel_url": global_excel_url, "global_md_url": global_md_url,
         "exec_files": exec_files,

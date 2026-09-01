@@ -1,6 +1,7 @@
 """
-Graficos globales (comparativa entre clientes), 8 subcarpetas: coverage,
-semester, quarters, monthly, clients, models, classifications, impact_and_risk.
+Graficos globales (comparativa entre clientes), 9 subcarpetas: coverage,
+semester, quarters, monthly, clients, models, classifications, impact_and_risk,
+portfolio.
 
 Mismas reglas de visualizacion que los graficos individuales (src/charts.py):
 ML=azul, SCP=rojo, Empate=gris, sin cortar titulos, cerrar todas las figuras,
@@ -28,11 +29,32 @@ from src.charts import (
 from src.global_analysis import GlobalAnalysisResult, _global_series_improvement_values
 from src.periods import MONTHLY_PERIODS, visible_label
 from src.phase8_presentation import sort_volume_table, volume_bucket_label_es
+from src.portfolio import (
+    BLOCK_OLDER_3M,
+    BLOCK_RECENT_3M,
+    ENGINE_OPTIMIZER,
+    ENGINE_SCP_AUTO,
+)
+from src.portfolio_presentation import (
+    BLOCK_LABELS,
+    ENGINE_LABELS,
+    SCHEMA_FAMILIES,
+    SCHEMA_MODEL_STABILITY_SUMMARY,
+    prepare_portfolio_table,
+)
 
 MODEL_CLASSIFICATION_PERIOD = "6M"
 IMPROVEMENT_CLIP_BOUND = 100.0
 
-CHART_SUBFOLDERS = ("coverage", "semester", "quarters", "monthly", "clients", "models", "classifications", "impact_and_risk")
+CHART_SUBFOLDERS = (
+    "coverage", "semester", "quarters", "monthly", "clients", "models",
+    "classifications", "impact_and_risk", "portfolio",
+)
+
+PORTFOLIO_FAMILY_CHART = "01_optimizer_family_selection_share.png"
+PORTFOLIO_STABILITY_CHART = "02_portfolio_stability.png"
+COLOR_PORTFOLIO_STABLE = "#3d7a5a"
+COLOR_PORTFOLIO_CHANGED = "#c87941"
 
 
 def _client_labels_and_values(result: GlobalAnalysisResult, period: str, getter) -> tuple[list[str], list[float]]:
@@ -238,6 +260,179 @@ def generate_classifications_charts(result: GlobalAnalysisResult, out_dir: Path)
 
 
 # --------------------------------------------------------------------------
+# portfolio/
+# --------------------------------------------------------------------------
+
+def _optimizer_family_selection_chart_data(result: GlobalAnalysisResult) -> dict | None:
+    """Prepare chart coordinates from the already-calculated family table.
+
+    The presentation adapter supplies deterministic block/family labels and
+    works on a deep copy. Missing categories in one otherwise populated block
+    represent an observed zero share for that block; missing blocks or
+    non-finite shares make the comparison non-representable and omit it.
+    """
+    portfolio = result.portfolio
+    if not portfolio.availability.available or portfolio.optimizer is None:
+        return None
+    source = portfolio.optimizer.family_tables
+    if source.empty:
+        return None
+
+    table = prepare_portfolio_table(source, SCHEMA_FAMILIES).dataframe
+    block_labels = (
+        BLOCK_LABELS[BLOCK_OLDER_3M],
+        BLOCK_LABELS[BLOCK_RECENT_3M],
+    )
+    by_block: dict[str, pd.DataFrame] = {}
+    for block in block_labels:
+        rows = table.loc[table["block"] == block]
+        if rows.empty or not np.isfinite(rows["selection_share_of_assignable"].astype(float)).all():
+            return None
+        by_block[block] = rows
+
+    families = list(dict.fromkeys(table["family"].tolist()))
+    if not families:
+        return None
+    values: dict[str, list[float]] = {}
+    for block in block_labels:
+        shares = dict(zip(
+            by_block[block]["family"],
+            by_block[block]["selection_share_of_assignable"].astype(float),
+        ))
+        values[block] = [shares.get(family, 0.0) * 100 for family in families]
+    return {"families": families, "blocks": block_labels, "values": values}
+
+
+def _portfolio_stability_chart_data(result: GlobalAnalysisResult) -> list[dict] | None:
+    """Prepare 100% stability bars without adding not-evaluable pairs.
+
+    ``stability_rate`` is consumed directly from the analytical result. The
+    changed segment is only its graphical complement; counts are retained for
+    labels and ``not_evaluable_count`` remains separate from both segments.
+    """
+    portfolio = result.portfolio
+    if not portfolio.availability.available or portfolio.stability is None:
+        return None
+    source = portfolio.stability.model_summary
+    if source.empty:
+        return None
+
+    table = prepare_portfolio_table(source, SCHEMA_MODEL_STABILITY_SUMMARY).dataframe
+    rows: list[dict] = []
+    for engine_key in (ENGINE_SCP_AUTO, ENGINE_OPTIMIZER):
+        engine = ENGINE_LABELS[engine_key]
+        match = table.loc[table["engine"] == engine]
+        if len(match) != 1:
+            return None
+        row = match.iloc[0]
+        n_evaluable = int(row["n_evaluable"])
+        stable_count = int(row["stable_count"])
+        changed_count = int(row["changed_count"])
+        if stable_count + changed_count != n_evaluable:
+            return None
+        if n_evaluable:
+            stability_rate = float(row["stability_rate"])
+            if not np.isfinite(stability_rate) or not 0 <= stability_rate <= 1:
+                return None
+            stable_pct = stability_rate * 100
+            changed_pct = 100 - stable_pct
+        else:
+            stable_pct = changed_pct = 0.0
+        rows.append({
+            "engine": engine,
+            "n_evaluable": n_evaluable,
+            "stable_count": stable_count,
+            "changed_count": changed_count,
+            "not_evaluable_count": int(row["not_evaluable_count"]),
+            "stable_pct": stable_pct,
+            "changed_pct": changed_pct,
+        })
+    return rows if any(row["n_evaluable"] for row in rows) else None
+
+
+def _chart_optimizer_family_selection_share(
+    result: GlobalAnalysisResult,
+    out_dir: Path,
+) -> str | None:
+    chart_data = _optimizer_family_selection_chart_data(result)
+    if chart_data is None:
+        return None
+
+    families = chart_data["families"]
+    older_label, recent_label = chart_data["blocks"]
+    older = chart_data["values"][older_label]
+    recent = chart_data["values"][recent_label]
+    x = np.arange(len(families))
+    width = 0.36
+    fig, ax = _new_fig((max(8.5, len(families) * 1.35), 4.8))
+    older_bars = ax.bar(x - width / 2, older, width, color=COLOR_TIE, label=older_label)
+    recent_bars = ax.bar(x + width / 2, recent, width, color=COLOR_ML, label=recent_label)
+    ax.bar_label(older_bars, fmt="%.1f%%", padding=2, fontsize=8, color=COLOR_TEXT_SECONDARY)
+    ax.bar_label(recent_bars, fmt="%.1f%%", padding=2, fontsize=8, color=COLOR_TEXT_SECONDARY)
+    ax.set_xticks(x)
+    ax.set_xticklabels(families)
+    plt_setp_rotation(ax)
+    ax.set_ylim(0, max(105, max([*older, *recent]) * 1.18))
+    ax.set_ylabel("Cuota de selección observada (%)", color=COLOR_TEXT_SECONDARY, fontsize=9)
+    ax.legend(frameon=False, fontsize=8, loc="center left", bbox_to_anchor=(1.01, 0.5))
+    _apply_title(
+        ax,
+        "Cuota de selección observada por familia — SCP Classic Optimizer",
+        "Cuota sobre asignaciones posibles de cada período; se muestran todas las familias observadas.",
+    )
+    return _save_close(fig, out_dir / PORTFOLIO_FAMILY_CHART)
+
+
+def _chart_portfolio_stability(result: GlobalAnalysisResult, out_dir: Path) -> str | None:
+    rows = _portfolio_stability_chart_data(result)
+    if rows is None:
+        return None
+
+    labels = [row["engine"] for row in rows]
+    stable = [row["stable_pct"] for row in rows]
+    changed = [row["changed_pct"] for row in rows]
+    y = np.arange(len(rows))
+    fig, ax = _new_fig((9.5, 4.5))
+    ax.barh(y, stable, color=COLOR_PORTFOLIO_STABLE, label="Estable")
+    ax.barh(y, changed, left=stable, color=COLOR_PORTFOLIO_CHANGED, label="Cambió")
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels)
+    ax.invert_yaxis()
+    ax.set_xlim(0, 100)
+    ax.set_xlabel("Distribución sobre pares evaluables (%)", color=COLOR_TEXT_SECONDARY, fontsize=9)
+    ax.legend(frameon=False, fontsize=8, loc="center left", bbox_to_anchor=(1.01, 0.5))
+    for index, row in enumerate(rows):
+        if not row["n_evaluable"]:
+            ax.text(50, index, "Sin población evaluable", ha="center", va="center", fontsize=8, color=COLOR_TEXT_SECONDARY)
+            continue
+        if row["stable_pct"] >= 12:
+            ax.text(row["stable_pct"] / 2, index, f"Estable: {row['stable_count']}", ha="center", va="center", fontsize=8, color="white")
+        if row["changed_pct"] >= 12:
+            ax.text(row["stable_pct"] + row["changed_pct"] / 2, index, f"Cambió: {row['changed_count']}", ha="center", va="center", fontsize=8, color="white")
+
+    not_evaluable = " · ".join(
+        f"{row['engine']}: {row['not_evaluable_count']}" for row in rows
+    )
+    _apply_title(
+        ax,
+        "Estabilidad observada entre períodos",
+        f"{BLOCK_LABELS[BLOCK_OLDER_3M]} → {BLOCK_LABELS[BLOCK_RECENT_3M]} | "
+        f"No evaluables (fuera del denominador): {not_evaluable}",
+    )
+    return _save_close(fig, out_dir / PORTFOLIO_STABILITY_CHART)
+
+
+def generate_portfolio_charts(result: GlobalAnalysisResult, out_dir: Path) -> list[str]:
+    """Generate only the two approved global portfolio charts when representable."""
+    generated: list[str] = []
+    for chart in (_chart_optimizer_family_selection_share, _chart_portfolio_stability):
+        path = chart(result, out_dir)
+        if path:
+            generated.append(path)
+    return generated
+
+
+# --------------------------------------------------------------------------
 # impact_and_risk/
 # --------------------------------------------------------------------------
 
@@ -424,6 +619,7 @@ def generate_global_charts(result: GlobalAnalysisResult, charts_dir: Path) -> li
         generated += generate_models_charts(result, charts_dir / "models")
         generated += generate_classifications_charts(result, charts_dir / "classifications")
         generated += generate_impact_and_risk_charts(result, charts_dir / "impact_and_risk")
+        generated += generate_portfolio_charts(result, charts_dir / "portfolio")
     finally:
         plt.close("all")
     return generated

@@ -49,7 +49,8 @@ def test_global_legacy_model_and_classification_chart_families_generate_nothing(
 
 def test_chart_subfolders_constant_matches_spec():
     assert CHART_SUBFOLDERS == (
-        "coverage", "semester", "quarters", "monthly", "clients", "models", "classifications", "impact_and_risk",
+        "coverage", "semester", "quarters", "monthly", "clients", "models", "classifications",
+        "impact_and_risk", "portfolio",
     )
 
 

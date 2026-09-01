@@ -7,6 +7,21 @@
     <details><summary>Metadata específica ausente</summary><p class="note">{{ global_portfolio.missing_required_columns | join(", ") }}</p></details>
     {% endif %}
   {% else %}
+    {% if global_portfolio_charts %}
+    <h3>Gráficos globales complementarios</h3>
+    <p class="note">Estas visualizaciones describen selecciones y estabilidad observadas. Complementan las tablas auditables y no constituyen rankings de calidad ni recomendaciones.</p>
+    <div class="chart-grid">
+      {% for chart in global_portfolio_charts %}
+      <figure class="chart-item">
+        <a href="{{ chart.url | encode_url_path }}" target="_blank" rel="noopener">
+          <img src="{{ chart.url | encode_url_path }}" alt="{{ chart.alt }}" loading="lazy">
+        </a>
+        <figcaption>{{ chart.title }}</figcaption>
+      </figure>
+      {% endfor %}
+    </div>
+    {% endif %}
+
     {% if global_portfolio.coverage %}
     <h3>Cobertura global de selección</h3>
     <p class="note">La asignación de modelo y la población con performance evaluable son universos distintos.</p>
