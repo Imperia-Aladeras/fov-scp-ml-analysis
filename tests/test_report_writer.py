@@ -215,7 +215,7 @@ def test_sections_10_11_12_show_explicit_portfolio_unavailability():
     for start, end in (("## 10.", "## 11."), ("## 11.", "## 12."), ("## 12.", "## 13.")):
         section = report.split(start)[1].split(end)[0]
         assert "Análisis de selección por bloques no disponible" in section
-        assert "Bias SCP" not in section
+        assert "Bias Auto" not in section
     assert "Metadata específica ausente" in report.split("## 10.")[1].split("## 11.")[0]
 
 
@@ -224,8 +224,8 @@ def test_section_18_present_with_bias_total_and_volume_not_assignable():
     result = build_synthetic_client_result(with_data=True)
     report = build_client_report(result)
     section_18 = report.split("## 18. Diagnóstico Fase 8")[1].split("## 19.")[0]
-    assert "Bias agregado SCP" in section_18
-    assert "Bias agregado ML" in section_18
+    assert "Bias agregado Auto" in section_18
+    assert "Bias agregado Optimizer" in section_18
     assert "no asignable" in section_18.lower()
     assert "no evaluable" in section_18.lower() or "%" in section_18
 

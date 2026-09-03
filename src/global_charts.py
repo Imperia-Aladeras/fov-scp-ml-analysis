@@ -4,7 +4,7 @@ semester, quarters, monthly, clients, models, classifications, impact_and_risk,
 portfolio.
 
 Mismas reglas de visualizacion que los graficos individuales (src/charts.py):
-ML=azul, SCP=rojo, Empate=gris, sin cortar titulos, cerrar todas las figuras,
+Optimizer=azul, Auto=rojo, Empate=gris, sin cortar titulos, cerrar todas las figuras,
 no recortar valores extremos silenciosamente.
 """
 
@@ -28,6 +28,12 @@ from src.charts import (
 )
 from src.global_analysis import GlobalAnalysisResult, _global_series_improvement_values
 from src.periods import MONTHLY_PERIODS, visible_label
+from src.presentation_labels import (
+    AUTO_LABEL,
+    DIRECTIONAL_COMPARISON_LABEL,
+    GENERAL_COMPARISON_LABEL,
+    OPTIMIZER_LABEL,
+)
 from src.phase8_presentation import sort_volume_table, volume_bucket_label_es
 from src.portfolio import (
     BLOCK_OLDER_3M,
@@ -103,8 +109,8 @@ def generate_semester_charts(result: GlobalAnalysisResult, out_dir: Path) -> lis
         x = np.arange(len(labels))
         fig, ax = _new_fig((max(9, len(labels) * 1.1), 4.8))
         width = 0.35
-        ax.bar(x - width / 2, [v * 100 if v == v else 0 for v in scp_vals], width, color=COLOR_SCP, label="SCP")
-        ax.bar(x + width / 2, [v * 100 if v == v else 0 for v in ml_vals], width, color=COLOR_ML, label="ML")
+        ax.bar(x - width / 2, [v * 100 if v == v else 0 for v in scp_vals], width, color=COLOR_SCP, label=AUTO_LABEL)
+        ax.bar(x + width / 2, [v * 100 if v == v else 0 for v in ml_vals], width, color=COLOR_ML, label=OPTIMIZER_LABEL)
         ax.set_xticks(x)
         ax.set_xticklabels(labels)
         plt_setp_rotation(ax)
@@ -120,8 +126,8 @@ def generate_semester_charts(result: GlobalAnalysisResult, out_dir: Path) -> lis
         ax.bar(labels2, imp_vals, color=colors)
         ax.axhline(0, color="#c3c2b7", linewidth=1)
         plt_setp_rotation(ax)
-        ax.set_ylabel("Mejora relativa ponderada (%)", color="#52514e", fontsize=9)
-        _apply_title(ax, "Mejora semestral (6M) por cliente", f"{len(labels2)} clientes")
+        ax.set_ylabel(f"Mejora ponderada {DIRECTIONAL_COMPARISON_LABEL} (%)", color="#52514e", fontsize=9)
+        _apply_title(ax, f"Mejora {DIRECTIONAL_COMPARISON_LABEL} semestral (6M) por cliente", f"{len(labels2)} clientes")
         generated.append(_save_close(fig, out_dir / "02_improvement_by_client.png"))
 
     labels3, red_vals = _client_labels_and_values(result, "6M", lambda pr: pr.abs_error_reduction_total)
@@ -131,8 +137,8 @@ def generate_semester_charts(result: GlobalAnalysisResult, out_dir: Path) -> lis
         ax.bar(labels3, red_vals, color=colors)
         ax.axhline(0, color="#c3c2b7", linewidth=1)
         plt_setp_rotation(ax)
-        ax.set_ylabel("Reduccion absoluta de error", color="#52514e", fontsize=9)
-        _apply_title(ax, "Reduccion absoluta (6M) por cliente", f"{len(labels3)} clientes")
+        ax.set_ylabel(f"Reduccion absoluta {DIRECTIONAL_COMPARISON_LABEL}", color="#52514e", fontsize=9)
+        _apply_title(ax, f"Reduccion absoluta {DIRECTIONAL_COMPARISON_LABEL} (6M) por cliente", f"{len(labels3)} clientes")
         generated.append(_save_close(fig, out_dir / "03_abs_reduction_by_client.png"))
 
     gp = result.periods["6M"]
@@ -145,8 +151,8 @@ def generate_semester_charts(result: GlobalAnalysisResult, out_dir: Path) -> lis
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), f"{val:+.1f}%",
                      ha="center", va="bottom" if val >= 0 else "top", fontsize=10, color="#0b0b0b")
         ax.axhline(0, color="#c3c2b7", linewidth=1)
-        ax.set_ylabel("Mejora relativa (%)", color="#52514e", fontsize=9)
-        _apply_title(ax, "Media vs mediana de mejora entre clientes (6M)", f"n={gp.client_improvement_stats.get('count', 0)} clientes")
+        ax.set_ylabel(f"Mejora {DIRECTIONAL_COMPARISON_LABEL} (%)", color="#52514e", fontsize=9)
+        _apply_title(ax, f"Media vs mediana de mejora {DIRECTIONAL_COMPARISON_LABEL} entre clientes (6M)", f"n={gp.client_improvement_stats.get('count', 0)} clientes")
         generated.append(_save_close(fig, out_dir / "04_client_improvement_mean_vs_median.png"))
 
     return generated
@@ -166,13 +172,13 @@ def generate_quarters_charts(result: GlobalAnalysisResult, out_dir: Path) -> lis
     ml_vals = [recent.ml_wape_global * 100, older.ml_wape_global * 100]
     x = np.arange(2)
     width = 0.3
-    ax.bar(x - width / 2, scp_vals, width, color=COLOR_SCP, label="SCP")
-    ax.bar(x + width / 2, ml_vals, width, color=COLOR_ML, label="ML")
+    ax.bar(x - width / 2, scp_vals, width, color=COLOR_SCP, label=AUTO_LABEL)
+    ax.bar(x + width / 2, ml_vals, width, color=COLOR_ML, label=OPTIMIZER_LABEL)
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.legend(frameon=False, fontsize=8)
     ax.set_ylabel("WAPE (%)", color="#52514e", fontsize=9)
-    _apply_title(ax, "WAPE global ponderado: primer vs segundo trimestre", f"{len(result.client_results)} clientes")
+    _apply_title(ax, f"WAPE global ponderado: {GENERAL_COMPARISON_LABEL} por bloques de 3 meses", f"{len(result.client_results)} clientes")
     generated.append(_save_close(fig, out_dir / "01_wape_recent_vs_older.png"))
 
     fig, ax = _new_fig((6, 4.2))
@@ -183,8 +189,8 @@ def generate_quarters_charts(result: GlobalAnalysisResult, out_dir: Path) -> lis
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), f"{val:+.1f}%",
                  ha="center", va="bottom" if val >= 0 else "top", fontsize=10, color="#0b0b0b")
     ax.axhline(0, color="#c3c2b7", linewidth=1)
-    ax.set_ylabel("Mejora global ponderada (%)", color="#52514e", fontsize=9)
-    _apply_title(ax, "Mejora global ponderada: primer vs segundo trimestre", f"{len(result.client_results)} clientes")
+    ax.set_ylabel(f"Mejora global ponderada {DIRECTIONAL_COMPARISON_LABEL} (%)", color="#52514e", fontsize=9)
+    _apply_title(ax, f"Mejora global ponderada {DIRECTIONAL_COMPARISON_LABEL} por bloques de 3 meses", f"{len(result.client_results)} clientes")
     generated.append(_save_close(fig, out_dir / "02_improvement_recent_vs_older.png"))
 
     return generated
@@ -200,8 +206,8 @@ def generate_monthly_charts(result: GlobalAnalysisResult, out_dir: Path) -> list
     fig, ax = _new_fig((8.5, 4.5))
     scp_vals = [result.periods[m].scp_wape_global * 100 for m in MONTHLY_PERIODS]
     ml_vals = [result.periods[m].ml_wape_global * 100 for m in MONTHLY_PERIODS]
-    ax.plot(MONTHLY_PERIODS, scp_vals, marker="o", color=COLOR_SCP, label="SCP", linewidth=2)
-    ax.plot(MONTHLY_PERIODS, ml_vals, marker="o", color=COLOR_ML, label="ML", linewidth=2)
+    ax.plot(MONTHLY_PERIODS, scp_vals, marker="o", color=COLOR_SCP, label=AUTO_LABEL, linewidth=2)
+    ax.plot(MONTHLY_PERIODS, ml_vals, marker="o", color=COLOR_ML, label=OPTIMIZER_LABEL, linewidth=2)
     ax.legend(frameon=False, fontsize=8)
     ax.set_ylabel("WAPE global ponderado (%)", color="#52514e", fontsize=9)
     _apply_title(ax, "Evolucion mensual del WAPE global (M1-M6)", f"{len(result.client_results)} clientes")
@@ -213,8 +219,8 @@ def generate_monthly_charts(result: GlobalAnalysisResult, out_dir: Path) -> list
         ax.plot(MONTHLY_PERIODS, vals, marker="o", linewidth=1.3, alpha=0.8, label=f"{r.source.display_name} ({r.source.id_client})")
     ax.axhline(0, color="#c3c2b7", linewidth=1)
     ax.legend(frameon=False, fontsize=7, ncol=2, loc="upper left", bbox_to_anchor=(1.0, 1.0))
-    ax.set_ylabel("Mejora relativa ponderada (%)", color="#52514e", fontsize=9)
-    _apply_title(ax, "Evolucion mensual de la mejora por cliente", f"{len(result.client_results)} clientes")
+    ax.set_ylabel(f"Mejora ponderada {DIRECTIONAL_COMPARISON_LABEL} (%)", color="#52514e", fontsize=9)
+    _apply_title(ax, f"Evolucion mensual de la mejora {DIRECTIONAL_COMPARISON_LABEL} por cliente", f"{len(result.client_results)} clientes")
     generated.append(_save_close(fig, out_dir / "02_improvement_evolution_by_client.png"))
 
     return generated
@@ -232,16 +238,16 @@ def generate_clients_charts(result: GlobalAnalysisResult, out_dir: Path) -> list
     values = [result.periods[p].client_improvement_stats.get("pct_improved") for p in ALL_PERIODS]
     ax.bar(ALL_PERIODS, values, color=COLOR_ML)
     ax.set_ylim(0, 100)
-    ax.set_ylabel("% clientes donde mejora ML", color="#52514e", fontsize=9)
-    _apply_title(ax, "% de clientes donde mejora ML, por periodo", f"{len(result.client_results)} clientes")
+    ax.set_ylabel("% clientes donde mejora Optimizer", color="#52514e", fontsize=9)
+    _apply_title(ax, "% de clientes donde Optimizer mejora frente a Auto, por periodo", f"{len(result.client_results)} clientes")
     generated.append(_save_close(fig, out_dir / "01_pct_clients_improving_by_period.png"))
 
     fig, ax = _new_fig((9.5, 4.5))
     values = [result.periods[p].winner_counts.get("ML", {}).get("pct") for p in ALL_PERIODS]
     ax.bar(ALL_PERIODS, values, color=COLOR_ML)
     ax.set_ylim(0, 100)
-    ax.set_ylabel("% series donde gana ML", color="#52514e", fontsize=9)
-    _apply_title(ax, "% de series donde gana ML, por periodo", f"{len(result.client_results)} clientes")
+    ax.set_ylabel("% series donde gana Optimizer", color="#52514e", fontsize=9)
+    _apply_title(ax, "% de series donde gana Optimizer, por periodo", f"{len(result.client_results)} clientes")
     generated.append(_save_close(fig, out_dir / "02_pct_series_ml_wins_by_period.png"))
 
     return generated
@@ -442,7 +448,7 @@ def contribution_colors(values) -> list[str]:
     total): cuando la reduccion neta total es negativa o cercana a cero, el
     PORCENTAJE de contribucion invierte de signo respecto al valor real (ver
     la nota en el informe Markdown, seccion 15); el valor absoluto es
-    inequivoco: positivo = ML reduce error, negativo = ML lo aumenta.
+    inequivoco: positivo = Optimizer reduce error frente a Auto; negativo = lo aumenta.
     """
     return [COLOR_ML if v >= 0 else COLOR_SCP for v in values]
 
@@ -473,7 +479,7 @@ def pareto_series_chart_label(row) -> str:
 
 def _chart_global_bias_by_volume_bucket(result: GlobalAnalysisResult, out_dir: Path, fname: str) -> str | None:
     """
-    Unico chart nuevo de Fase 8D: Bias agregado SCP vs ML por bucket de
+    Unico chart nuevo de Fase 8D: Bias agregado Auto/Optimizer por bucket de
     volumen relativo, agregado globalmente (6M). Lee
     GlobalPeriodResult.phase8.volume_table ya calculado (nunca recalcula
     Bias ni buckets aqui). Antes de dibujar cada bucket se comprueba
@@ -501,15 +507,15 @@ def _chart_global_bias_by_volume_bucket(result: GlobalAnalysisResult, out_dir: P
     fig, ax = _new_fig((7.5, 4.5))
     x = np.arange(len(labels))
     width = 0.35
-    ax.bar(x - width / 2, scp_vals, width=width, color=COLOR_SCP, label="SCP")
-    ax.bar(x + width / 2, ml_vals, width=width, color=COLOR_ML, label="ML")
+    ax.bar(x - width / 2, scp_vals, width=width, color=COLOR_SCP, label=AUTO_LABEL)
+    ax.bar(x + width / 2, ml_vals, width=width, color=COLOR_ML, label=OPTIMIZER_LABEL)
     ax.axhline(0, color=COLOR_AXIS, linewidth=1)
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.set_ylabel("Bias agregado (%)", color=COLOR_TEXT_SECONDARY, fontsize=9)
     ax.legend(frameon=False, fontsize=8)
     _apply_title(
-        ax, "Bias agregado SCP vs ML por volumen relativo (global)",
+        ax, f"Bias agregado {GENERAL_COMPARISON_LABEL} por volumen relativo (global)",
         f"{visible_label(MODEL_CLASSIFICATION_PERIOD)} | todos los clientes | buckets RELATIVOS a cada cliente",
     )
     return _save_close(fig, out_dir / fname)
@@ -533,7 +539,7 @@ def generate_impact_and_risk_charts(result: GlobalAnalysisResult, out_dir: Path)
         ax.bar(sorted_contrib["ETIQUETA"], sorted_contrib["ABS_ERROR_REDUCTION"], color=colors)
         ax.axhline(0, color="#c3c2b7", linewidth=1)
         plt_setp_rotation(ax)
-        ax.set_ylabel("Reduccion absoluta de error (positivo = ML mejor)", color="#52514e", fontsize=9)
+        ax.set_ylabel(f"Reduccion absoluta {DIRECTIONAL_COMPARISON_LABEL} (positivo = Optimizer mejor)", color="#52514e", fontsize=9)
         subtitle = (
             f"reduccion positiva total={gp.reduction_totals['REDUCCION_POSITIVA_TOTAL']:,.0f} | "
             f"deterioro total absoluto={gp.reduction_totals['DETERIORO_TOTAL_ABSOLUTO']:,.0f} | "
@@ -555,7 +561,7 @@ def generate_impact_and_risk_charts(result: GlobalAnalysisResult, out_dir: Path)
             f"({n_below} por debajo, {n_above} por encima; estadisticas sin recortar)"
         )
         _apply_title(ax, "Distribucion global de mejora por serie (6M, todos los clientes)", subtitle)
-        ax.set_xlabel("% mejora ML vs SCP (positivo = ML mejor)", color="#52514e", fontsize=9)
+        ax.set_xlabel(f"% mejora {DIRECTIONAL_COMPARISON_LABEL} (positivo = Optimizer mejor)", color="#52514e", fontsize=9)
         ax.set_ylabel("N series", color="#52514e", fontsize=9)
         generated.append(_save_close(fig, out_dir / "02_global_improvement_distribution.png"))
 

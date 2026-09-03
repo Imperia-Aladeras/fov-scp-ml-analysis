@@ -3,7 +3,7 @@
 {% block title %}Resumen global — {{ run_name }}{% endblock %}
 {% block content %}
 
-<h1 id="resumen">Comparativa global SCP vs ML — {{ run_name }}</h1>
+<h1 id="resumen">Comparativa global SCP Classic Auto vs SCP Classic Optimizer — {{ run_name }}</h1>
 
 <section id="cabecera" aria-labelledby="cabecera-h">
   <h2 id="cabecera-h">Cabecera de ejecución</h2>
@@ -36,7 +36,7 @@
     <li><a href="#perspectivas">Perspectivas diferenciadas</a></li>
     <li><a href="#cobertura">Cobertura y calidad</a></li>
     <li><a href="#semestre">Semestre completo</a></li>
-    <li><a href="#trimestres">Trimestres</a></li>
+    <li><a href="#trimestres">Bloques de 3 meses</a></li>
     <li><a href="#evolucion-mensual">Evolución mensual</a></li>
     <li><a href="#graficos">Impacto, riesgos y diagnósticos (gráficos)</a></li>
     <li><a href="#portfolio-global">Selección observada y estabilidad por período</a></li>
@@ -58,14 +58,14 @@
       <tr><th scope="row">Series candidatas (6M)</th><td>{{ resumen.series_candidatas }}</td></tr>
       <tr><th scope="row">Series comparables (6M)</th><td>{{ resumen.series_comparables_6m }}</td></tr>
       <tr><th scope="row">Cobertura global (6M)</th><td>{{ resumen.cobertura_global }}</td></tr>
-      <tr><th scope="row">WAPE SCP (6M)</th><td>{{ resumen.wape_scp }}</td></tr>
-      <tr><th scope="row">WAPE ML (6M)</th><td>{{ resumen.wape_ml }}</td></tr>
-      <tr><th scope="row">Mejora global ponderada (6M)</th><td>{{ resumen.mejora_global_ponderada }} ({{ resumen.mejora_global_verdict }})</td></tr>
-      <tr><th scope="row">Clientes donde ML mejora</th><td>{{ resumen.clientes_mejoran_fraction }}{% if resumen.clientes_sin_performance_note %} — {{ resumen.clientes_sin_performance_note }}{% endif %}</td></tr>
-      <tr><th scope="row">Series donde gana ML</th><td>{{ resumen.pct_series_gana_ml }}</td></tr>
-      <tr><th scope="row">Reducción positiva total</th><td>{{ resumen.reduccion_positiva_total }}</td></tr>
+      <tr><th scope="row">WAPE Auto (6M)</th><td>{{ resumen.wape_scp }}</td></tr>
+      <tr><th scope="row">WAPE Optimizer (6M)</th><td>{{ resumen.wape_ml }}</td></tr>
+      <tr><th scope="row">Mejora global ponderada Optimizer vs Auto (6M)</th><td>{{ resumen.mejora_global_ponderada }} ({{ resumen.mejora_global_verdict }})</td></tr>
+      <tr><th scope="row">Clientes donde Optimizer mejora frente a Auto</th><td>{{ resumen.clientes_mejoran_fraction }}{% if resumen.clientes_sin_performance_note %} — {{ resumen.clientes_sin_performance_note }}{% endif %}</td></tr>
+      <tr><th scope="row">Series donde gana Optimizer</th><td>{{ resumen.pct_series_gana_ml }}</td></tr>
+      <tr><th scope="row">Reducción positiva total Optimizer vs Auto</th><td>{{ resumen.reduccion_positiva_total }}</td></tr>
       <tr><th scope="row">Deterioro total absoluto</th><td>{{ resumen.deterioro_total_absoluto }}</td></tr>
-      <tr><th scope="row">Reducción neta</th><td>{{ resumen.reduccion_neta }}</td></tr>
+      <tr><th scope="row">Reducción neta Optimizer vs Auto</th><td>{{ resumen.reduccion_neta }}</td></tr>
     </tbody>
   </table>
   <p class="conclusion">{{ resumen.conclusion }}</p>
@@ -79,9 +79,9 @@
     <h3>Impacto ponderado global</h3>
     <p>{{ perspectives.impacto_ponderado.pregunta }}</p>
     <ul>
-      <li>WAPE SCP: {{ perspectives.impacto_ponderado.wape_scp }}</li>
-      <li>WAPE ML: {{ perspectives.impacto_ponderado.wape_ml }}</li>
-      <li>Mejora: {{ perspectives.impacto_ponderado.mejora }}</li>
+      <li>WAPE Auto: {{ perspectives.impacto_ponderado.wape_scp }}</li>
+      <li>WAPE Optimizer: {{ perspectives.impacto_ponderado.wape_ml }}</li>
+      <li>Mejora Optimizer vs Auto: {{ perspectives.impacto_ponderado.mejora }}</li>
       <li>Histórico total (unidades): {{ perspectives.impacto_ponderado.historico_total }}</li>
     </ul>
   </article>
@@ -111,8 +111,8 @@
     <h3>Frecuencia de victoria (serie a serie)</h3>
     <p>{{ perspectives.frecuencia_victoria.pregunta }}</p>
     <ul>
-      <li>ML: {{ perspectives.frecuencia_victoria.pct_ml }} ({{ perspectives.frecuencia_victoria.n_ml }} series)</li>
-      <li>SCP: {{ perspectives.frecuencia_victoria.pct_scp }} ({{ perspectives.frecuencia_victoria.n_scp }} series)</li>
+      <li>Optimizer: {{ perspectives.frecuencia_victoria.pct_ml }} ({{ perspectives.frecuencia_victoria.n_ml }} series)</li>
+      <li>Auto: {{ perspectives.frecuencia_victoria.pct_scp }} ({{ perspectives.frecuencia_victoria.n_scp }} series)</li>
       <li>Empate: {{ perspectives.frecuencia_victoria.pct_tie }} ({{ perspectives.frecuencia_victoria.n_tie }} series)</li>
     </ul>
   </article>
@@ -121,9 +121,9 @@
     <h3>Impacto absoluto</h3>
     <p>{{ perspectives.impacto_absoluto.pregunta }}</p>
     <ul>
-      <li>Reducción positiva total: {{ perspectives.impacto_absoluto.reduccion_positiva_total }}</li>
+      <li>Reducción positiva total Optimizer vs Auto: {{ perspectives.impacto_absoluto.reduccion_positiva_total }}</li>
       <li>Deterioro total absoluto: {{ perspectives.impacto_absoluto.deterioro_total_absoluto }}</li>
-      <li>Reducción neta: {{ perspectives.impacto_absoluto.reduccion_neta }}</li>
+      <li>Reducción neta Optimizer vs Auto: {{ perspectives.impacto_absoluto.reduccion_neta }}</li>
     </ul>
     <p>Concentración del impacto absoluto (Pareto, semestre completo): mejora y deterioro se calculan siempre por separado, cada uno con su propio denominador.</p>
     <div class="table-scroll">
@@ -168,8 +168,8 @@
 </section>
 
 <section id="trimestres" aria-labelledby="trimestres-h">
-  <h2 id="trimestres-h">Trimestres del semestre</h2>
-  <p class="note">Primer trimestre del semestre (M1–M3) y Segundo trimestre del semestre (M4–M6). Ver el detalle por cliente en cada página individual, y el detalle agregado en el Excel/Markdown globales.</p>
+  <h2 id="trimestres-h">Bloques de 3 meses</h2>
+  <p class="note">3 meses anteriores (M6–M4) y 3 meses recientes (M3–M1). Ver el detalle por cliente en cada página individual, y el detalle agregado en el Excel/Markdown globales.</p>
 </section>
 
 <section id="evolucion-mensual" aria-labelledby="evolucion-mensual-h">
@@ -177,7 +177,7 @@
   <div class="table-scroll">
   <table>
     <thead>
-      <tr><th scope="col">Periodo</th><th scope="col">Comparables</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora</th><th scope="col">% clientes mejoran</th><th scope="col">% series gana ML</th></tr>
+      <tr><th scope="col">Periodo</th><th scope="col">Comparables</th><th scope="col">WAPE Auto</th><th scope="col">WAPE Optimizer</th><th scope="col">Mejora Optimizer vs Auto</th><th scope="col">% clientes donde Optimizer mejora frente a Auto</th><th scope="col">% series donde gana Optimizer</th></tr>
     </thead>
     <tbody>
       {% for row in monthly %}
@@ -203,10 +203,10 @@
   <thead>
     <tr>
       <th scope="col">Categoría</th>{% if rows and rows[0].n_clients is defined %}<th scope="col">N clientes</th>{% endif %}
-      <th scope="col">N</th><th scope="col">N gana ML</th><th scope="col">N gana SCP</th><th scope="col">N empate</th>
-      <th scope="col">% victoria ML</th><th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th>
-      <th scope="col">Mejora agregada</th><th scope="col">Mediana mejora</th><th scope="col">Reducción absoluta</th>
-      <th scope="col">% volumen histórico</th><th scope="col">Bias SCP</th><th scope="col">Bias ML</th><th scope="col">Muestra pequeña</th>
+      <th scope="col">N</th><th scope="col">N gana Optimizer</th><th scope="col">N gana Auto</th><th scope="col">N empate</th>
+      <th scope="col">% victoria Optimizer</th><th scope="col">WAPE Auto</th><th scope="col">WAPE Optimizer</th>
+      <th scope="col">Mejora agregada Optimizer vs Auto</th><th scope="col">Mediana mejora Optimizer vs Auto</th><th scope="col">Reducción absoluta Optimizer vs Auto</th>
+      <th scope="col">% volumen histórico</th><th scope="col">Bias Auto</th><th scope="col">Bias Optimizer</th><th scope="col">Muestra pequeña</th>
     </tr>
   </thead>
   <tbody>
@@ -234,8 +234,8 @@
   {% if phase8_global and phase8_global.available %}
   <table class="kv-table">
     <tbody>
-      <tr><th scope="row">Bias agregado global SCP</th><td>{{ phase8_global.bias_total.scp_bias }} ({{ phase8_global.bias_total.scp_direction }})</td></tr>
-      <tr><th scope="row">Bias agregado global ML</th><td>{{ phase8_global.bias_total.ml_bias }} ({{ phase8_global.bias_total.ml_direction }})</td></tr>
+      <tr><th scope="row">Bias agregado global Auto</th><td>{{ phase8_global.bias_total.scp_bias }} ({{ phase8_global.bias_total.scp_direction }})</td></tr>
+      <tr><th scope="row">Bias agregado global Optimizer</th><td>{{ phase8_global.bias_total.ml_bias }} ({{ phase8_global.bias_total.ml_direction }})</td></tr>
       <tr><th scope="row">Clientes con volumen relativo no asignable (NOT_ASSIGNABLE)</th><td>{{ phase8_global.n_clients_not_assignable }}</td></tr>
     </tbody>
   </table>
@@ -246,7 +246,7 @@
   {% if phase8_global.volume.rows %}
   {{ phase8_table(phase8_global.volume.rows) }}
   {% else %}<p class="note">Sin datos de volumen relativo para el universo comparable global.</p>{% endif %}
-  <p class="note">Ver el gráfico "Bias agregado SCP vs ML por volumen relativo (global)" en la sección <a href="#graficos">Impacto, riesgos y diagnósticos</a> (cuando exista: un bucket sin Bias finito en algún método no se representa en el gráfico, pero sí en esta tabla).</p>
+  <p class="note">Ver el gráfico "Bias agregado SCP Classic Auto vs SCP Classic Optimizer por volumen relativo (global)" en la sección <a href="#graficos">Impacto, riesgos y diagnósticos</a> (cuando exista: un bucket sin Bias finito en algún motor no se representa en el gráfico, pero sí en esta tabla).</p>
 
   <h3>SERIES_CLASSIFICATION × VOLUME_BUCKET (exclusivo del reporting global)</h3>
   <p class="note">Cruce no disponible: SERIES_CLASSIFICATION es metadata legacy ambigua para 6M.</p>
@@ -267,7 +267,7 @@
       <tr>
         <th scope="col">ID</th><th scope="col">Nombre</th><th scope="col">Etiqueta</th><th scope="col">Estado</th><th scope="col">Batches</th>
         <th scope="col">Candidatas</th><th scope="col">Comparables 6M</th><th scope="col">Cobertura</th>
-        <th scope="col">WAPE SCP</th><th scope="col">WAPE ML</th><th scope="col">Mejora</th>
+        <th scope="col">WAPE Auto</th><th scope="col">WAPE Optimizer</th><th scope="col">Mejora Optimizer vs Auto</th>
         <th scope="col">Warnings</th><th scope="col">Errors</th><th scope="col">Página</th>
       </tr>
     </thead>

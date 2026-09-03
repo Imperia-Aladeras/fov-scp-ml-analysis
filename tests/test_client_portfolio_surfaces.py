@@ -222,7 +222,7 @@ def test_excel_block_builders_are_full_native_and_have_no_legacy_fallback():
     core_optimizer = result.portfolio.model_tables.by_engine_block_model
     assert len(model_table) == len(core_optimizer[core_optimizer["engine"] == ENGINE_OPTIMIZER])
     assert model_table["WAPE — SCP Classic Auto"].dtype.kind in "fc"
-    assert model_table["Mejora de WAPE — SCP Classic Optimizer frente a SCP Classic Auto"].dtype.kind in "fc"
+    assert model_table["Mejora de WAPE — Optimizer vs Auto"].dtype.kind in "fc"
     assert any("Clasificación del Optimizer × modelo observado" == title for title, _ in class_blocks)
     assert any("Performance descriptiva por estabilidad" == title for title, _ in stability_blocks)
     assert any("Eventos canónicos auditables" in title for title, _ in event_blocks)
@@ -244,7 +244,7 @@ def test_excel_workbook_adds_16_17_without_renumbering_and_preserves_native_scal
     models = workbook["08_models_and_win_rates"]
     ratio_cell = _cell_below_header(models, "Cuota de selección sobre asignaciones posibles")
     improvement_cell = _cell_below_header(
-        models, "Mejora de WAPE — SCP Classic Optimizer frente a SCP Classic Auto",
+        models, "Mejora de WAPE — Optimizer vs Auto",
     )
     assert isinstance(ratio_cell.value, (int, float)) and 0 <= ratio_cell.value <= 1
     assert ratio_cell.number_format == "0.0%"

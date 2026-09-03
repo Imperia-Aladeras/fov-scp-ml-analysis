@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import src.charts as charts_module
+
 from src.charts import (
     CHART_SUBFOLDERS,
     generate_classifications_charts,
@@ -49,6 +51,48 @@ def test_chart_subfolders_constant_matches_spec():
     assert CHART_SUBFOLDERS == (
         "coverage", "semester", "quarters", "monthly", "models", "classifications", "impact_and_risk",
     )
+
+
+def test_wape_chart_uses_canonical_engine_labels_and_general_order(monkeypatch, tmp_path: Path):
+    result = build_synthetic_client_result(with_data=True)
+    captured: dict[str, object] = {}
+
+    def capture_title(ax, title, subtitle=None):
+        captured["title"] = title
+        captured["ticks"] = [tick.get_text() for tick in ax.get_xticklabels()]
+
+    monkeypatch.setattr(charts_module, "_apply_title", capture_title)
+    output = charts_module._chart_wape_comparison("6M", result, tmp_path, "wape.png")
+
+    assert output is not None
+    assert "SCP Classic Auto vs SCP Classic Optimizer" in captured["title"]
+    assert "SCP Classic Optimizer vs SCP Classic Auto" not in captured["title"]
+    assert captured["ticks"] == ["Auto", "Optimizer"]
+
+
+def test_shared_chart_title_layout_keeps_long_and_short_titles_inside_rendered_figure():
+    titles = (
+        "WAPE global ponderado: SCP Classic Auto vs SCP Classic Optimizer por bloques de 3 meses",
+        "Bias agregado SCP Classic Auto vs SCP Classic Optimizer por volumen relativo (global)",
+        "Titulo corto",
+    )
+
+    for title in titles:
+        fig, ax = charts_module._new_fig((5.5, 4.2))
+        charts_module._apply_title(ax, title, "Subtitulo de prueba")
+        fig.tight_layout(rect=[0, 0, 1, 0.90])
+        fig.canvas.draw()
+
+        title_artist = ax._left_title
+        title_bounds = title_artist.get_window_extent(fig.canvas.get_renderer())
+        assert title_artist.get_wrap() is True
+        assert title_artist.get_fontsize() == 12
+        assert title_bounds.x0 >= fig.bbox.x0
+        assert title_bounds.x1 <= fig.bbox.x1
+        assert title_bounds.y0 >= fig.bbox.y0
+        assert title_bounds.y1 <= fig.bbox.y1
+
+        charts_module.plt.close(fig)
 
 
 def test_pareto_charts_generated_for_both_groups_when_mixed(tmp_path: Path):

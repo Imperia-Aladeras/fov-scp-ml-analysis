@@ -5,8 +5,8 @@ Convencion temporal (fuente de verdad: CLAUDE.md):
     M1..M6: meses cerrados de la ventana retrospectiva. M1 es el mes cerrado
     mas reciente; M6 es el mas antiguo dentro de la ventana de seis meses.
 
-    RECENT_3M = M1 + M2 + M3  (Primer trimestre del semestre)
-    OLDER_3M  = M4 + M5 + M6  (Segundo trimestre del semestre)
+    RECENT_3M = M1 + M2 + M3  (3 meses recientes; M3–M1 en presentacion)
+    OLDER_3M  = M4 + M5 + M6  (3 meses anteriores; M6–M4 en presentacion)
     6M        = M1 + M2 + M3 + M4 + M5 + M6 (Semestre completo)
 
 Los nombres tecnicos (M1..M6, RECENT_3M, OLDER_3M, 6M) se usan siempre en
@@ -17,6 +17,8 @@ usan solo en informes, titulos y graficos.
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from src.presentation_labels import PERIOD_LABELS
 
 MONTHLY_PERIODS: list[str] = [f"M{i}" for i in range(1, 7)]
 QUARTER_PERIODS: list[str] = ["RECENT_3M", "OLDER_3M"]
@@ -31,9 +33,7 @@ QUARTER_MONTHS: dict[str, list[str]] = {
 SEMESTER_MONTHS: list[str] = MONTHLY_PERIODS
 
 VISIBLE_LABELS: dict[str, str] = {
-    "RECENT_3M": "Primer trimestre del semestre (M1-M3)",
-    "OLDER_3M": "Segundo trimestre del semestre (M4-M6)",
-    "6M": "Semestre completo (M1-M6)",
+    **PERIOD_LABELS,
     **{m: m for m in MONTHLY_PERIODS},
 }
 

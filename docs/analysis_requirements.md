@@ -1,4 +1,4 @@
-Quiero evolucionar el proyecto de análisis exploratorio SCP vs ML que se
+Quiero evolucionar el proyecto de análisis exploratorio SCP Classic Auto vs SCP Classic Optimizer que se
 encuentra en:
 
 C:\Projects\AdhocReports\fov_scp_ml_analysis
@@ -11,10 +11,10 @@ El objetivo es convertir el análisis actual en un pipeline reproducible que:
 4. Analice resultados mensuales, trimestrales y semestrales.
 5. Genere además una comparativa global entre clientes.
 6. Construya argumentos rigurosos, claros e interpretables sobre la mejora
-   de ML frente a SCP.
+   Optimizer vs Auto.
 7. Preserve la trazabilidad de las métricas y las limitaciones del análisis.
 
-No quiero un informe promocional. Quiero un análisis favorable a ML cuando
+No quiero un informe promocional. Quiero un análisis favorable a Optimizer cuando
 los datos lo respalden, pero técnicamente defendible ante Producto,
 Operaciones y R&D.
 
@@ -139,15 +139,17 @@ Cuando autorice esta fase:
 
 El proyecto compara retrospectivamente dos flujos de forecast:
 
-- SCP:
+- SCP Classic Auto (Auto):
   flujo automático de forecast actualmente utilizado.
 
-- ML:
-  nuevo pipeline Optimizer/ML, que clasifica las series y selecciona entre
+- SCP Classic Optimizer (Optimizer):
+  nuevo pipeline que clasifica las series y selecciona entre
   diferentes modelos, incluidos baselines y modelos estadísticos.
 
-El término ML identifica el pipeline de selección y routing. No implica que
-todos los modelos seleccionados sean algoritmos de machine learning.
+Los prefijos `SCP_*` y `ML_*` identifican el contrato técnico histórico. ML
+mantiene además su significado legítimo para la familia de modelos de
+aprendizaje automático; no todos los modelos seleccionados por Optimizer
+pertenecen a esa familia.
 
 Cada fila del CSV representa una serie o configuración de forecast.
 
@@ -277,7 +279,7 @@ Se utiliza para:
 
 ## Universo de performance
 
-Solo las series válidas para comparar SCP y ML en un periodo concreto.
+Solo las series válidas para comparar Auto y Optimizer en un periodo concreto.
 
 No uses automáticamente la misma máscara para todos los periodos.
 
@@ -330,18 +332,18 @@ Nombres técnicos:
 En informes, textos, títulos y gráficos usa:
 
 - `RECENT_3M`
-  → `Primer trimestre del semestre (M1–M3)`
+  → `3 meses recientes (M3–M1)`
 
 - `OLDER_3M`
-  → `Segundo trimestre del semestre (M4–M6)`
+  → `3 meses anteriores (M6–M4)`
 
 - `6M`
   → `Semestre completo (M1–M6)`
 
 Cuando el contexto sea evidente pueden abreviarse como:
 
-- Primer trimestre
-- Segundo trimestre
+- 3 meses recientes
+- 3 meses anteriores
 - Semestre completo
 
 No utilices en los textos visibles:
@@ -350,10 +352,9 @@ No utilices en los textos visibles:
 - trimestre anterior;
 - Q1;
 - Q2;
-- primer trimestre del año;
-- segundo trimestre del año.
+- cualquier trimestre natural del calendario.
 
-Los dos trimestres son bloques internos del semestre retrospectivo, no
+Los dos bloques de tres meses pertenecen al semestre retrospectivo y no son
 trimestres naturales del calendario.
 
 # Descubrimiento de columnas temporales
@@ -428,7 +429,7 @@ Reglas:
   espacios) queda fuera de la población;
 - `HAS_BASE_CANDIDATE` sigue existiendo como campo de cobertura/auditoría a
   nivel cliente, pero no filtra la población de `6M`;
-- la máscara local (histórico/SCP/ML válidos para `6M`) se conserva
+- la máscara local (histórico/Auto/Optimizer válidos para `6M`) se conserva
   únicamente como mecanismo de auditoría/reconciliación frente a
   `COMPARISON_STATUS` (chequeo de consistencia que documenta
   discrepancias), nunca como población;
@@ -455,8 +456,8 @@ Una serie será comparable para el periodo cuando:
 
 - pertenece al universo candidato;
 - tiene histórico válido para el periodo;
-- dispone de error o forecast SCP suficiente;
-- dispone de error o forecast ML suficiente;
+- dispone de error o forecast Auto suficiente;
+- dispone de error o forecast Optimizer suficiente;
 - se puede calcular WAPE para ambos métodos;
 - el denominador histórico es mayor que cero;
 - no faltan datos esenciales del periodo.
@@ -485,12 +486,12 @@ Para cada cliente y para cada periodo calcula:
 - porcentaje comparable;
 - series no comparables;
 - motivos de no comparabilidad;
-- exclusiones ML;
-- porcentaje de exclusiones ML;
-- motivos de exclusión ML;
-- ausencia de forecast SCP;
-- motivos de no materialización SCP;
-- ausencia de forecast ML.
+- exclusiones del Optimizer;
+- porcentaje de exclusiones del Optimizer;
+- motivos de exclusión del Optimizer;
+- ausencia de forecast Auto;
+- motivos de no materialización de Auto;
+- ausencia de forecast Optimizer.
 
 ## WAPE agregado ponderado
 
@@ -525,8 +526,8 @@ SCP_TOTAL_ABS_ERROR_PERIODO
 
 Interpretación:
 
-- positivo: ML reduce error absoluto;
-- negativo: ML aumenta error absoluto;
+- positivo: Optimizer reduce error absoluto frente a Auto;
+- negativo: Optimizer aumenta error absoluto frente a Auto;
 - cero: mismo error absoluto.
 
 Incluye también la reducción absoluta total agregada.
@@ -576,8 +577,8 @@ Para cada periodo calcula:
 Separa:
 
 - todas las series comparables;
-- series donde gana ML;
-- series donde gana SCP;
+- series donde gana Optimizer;
+- series donde gana Auto;
 - empates.
 
 La mediana debe utilizarse como referencia principal cuando existan outliers,
@@ -587,16 +588,16 @@ pero no ocultes la media.
 
 Para cada periodo:
 
-- número de victorias ML;
-- porcentaje de victorias ML;
-- número de victorias SCP;
-- porcentaje de victorias SCP;
+- número de victorias Optimizer;
+- porcentaje de victorias Optimizer;
+- número de victorias Auto;
+- porcentaje de victorias Auto;
 - número de empates;
 - porcentaje de empates;
 - modelos ganadores;
 - modelos finalistas;
-- mejora mediana cuando gana ML;
-- deterioro mediano cuando gana SCP.
+- mejora mediana cuando gana Optimizer;
+- deterioro mediano cuando gana Auto.
 
 Respeta las columnas `WINNER_METHOD_*` existentes cuando sean coherentes.
 
@@ -611,15 +612,15 @@ Si necesitas reconstruir un winner:
 
 No te limites a mostrar los modelos que aparecen más veces entre las victorias.
 
-Para cada modelo seleccionado por ML calcula:
+Para cada modelo seleccionado por Optimizer calcula:
 
 - veces seleccionado;
-- victorias ML;
-- derrotas frente a SCP;
+- victorias Optimizer;
+- derrotas frente a Auto;
 - empates;
 - tasa de victoria;
-- WAPE SCP agregado;
-- WAPE ML agregado;
+- WAPE Auto agregado;
+- WAPE Optimizer agregado;
 - mejora relativa agregada;
 - reducción absoluta de error;
 - mediana de mejora por serie;
@@ -641,7 +642,7 @@ Distingue:
 No interpretes automáticamente el modelo más frecuente como el modelo que más
 valor aporta.
 
-Analiza también los modelos SCP cuando SCP gana.
+Analiza también los modelos de Auto cuando Auto gana.
 
 # Análisis de clasificaciones
 
@@ -655,12 +656,12 @@ Para cada periodo analiza resultados por:
 Para cada categoría calcula:
 
 - series comparables;
-- victorias ML;
-- victorias SCP;
+- victorias Optimizer;
+- victorias Auto;
 - empates;
-- tasa de victoria ML;
-- WAPE SCP agregado;
-- WAPE ML agregado;
+- tasa de victoria Optimizer;
+- WAPE Auto agregado;
+- WAPE Optimizer agregado;
 - mejora agregada;
 - mediana de mejora;
 - reducción absoluta de error;
@@ -691,15 +692,15 @@ Incluye como mínimo:
 - ID_CONFIGURATION;
 - niveles jerárquicos;
 - histórico total del periodo;
-- error absoluto SCP;
-- error absoluto ML;
-- reducción absoluta;
-- WAPE SCP;
-- WAPE ML;
-- mejora relativa;
+- error absoluto Auto;
+- error absoluto Optimizer;
+- reducción absoluta Optimizer vs Auto;
+- WAPE Auto;
+- WAPE Optimizer;
+- mejora Optimizer vs Auto;
 - winner;
-- modelo SCP;
-- modelo ML;
+- modelo Auto;
+- modelo Optimizer;
 - clasificación.
 
 No mezcles impacto absoluto y mejora porcentual en un único ranking.
@@ -709,8 +710,8 @@ No mezcles impacto absoluto y mejora porcentual en un único ranking.
 Para cada cliente analiza:
 
 1. Semestre completo.
-2. Primer trimestre del semestre.
-3. Segundo trimestre del semestre.
+2. 3 meses recientes (M3–M1).
+3. 3 meses anteriores (M6–M4).
 4. M1.
 5. M2.
 6. M3.
@@ -720,9 +721,9 @@ Para cada cliente analiza:
 
 Debe mostrarse:
 
-- WAPE SCP y ML por periodo;
-- mejora relativa;
-- reducción absoluta de error;
+- WAPE Auto y WAPE Optimizer por periodo;
+- mejora Optimizer vs Auto;
+- reducción absoluta Optimizer vs Auto;
 - cobertura;
 - porcentaje de victorias;
 - media y mediana de mejora por serie;
@@ -731,7 +732,7 @@ Debe mostrarse:
 
 Compara específicamente:
 
-- Primer trimestre frente a Segundo trimestre.
+- 3 meses recientes (M3–M1) frente a 3 meses anteriores (M6–M4).
 - M1 frente a M6.
 - estabilidad mensual.
 - cambios de signo de la mejora.
@@ -743,7 +744,7 @@ La evolución temporal debe diferenciar:
 - número de series ganadas;
 - mejora típica por serie.
 
-No concluyas que ML mejora temporalmente únicamente porque gana más series.
+No concluyas que Optimizer mejora temporalmente frente a Auto únicamente porque gana más series.
 
 # Análisis global entre clientes
 
@@ -752,8 +753,8 @@ Además del análisis independiente por cliente, genera una comparativa global.
 El análisis global debe realizarse para:
 
 - Semestre completo.
-- Primer trimestre del semestre.
-- Segundo trimestre del semestre.
+- 3 meses recientes (M3–M1).
+- 3 meses anteriores (M6–M4).
 - M1.
 - M2.
 - M3.
@@ -788,7 +789,7 @@ SCP_WAPE_GLOBAL
 
 Esta perspectiva responde:
 
-¿Cuánto error total reduce ML sobre el volumen total analizado?
+¿Cuánto error total reduce Optimizer frente a Auto sobre el volumen total analizado?
 
 ## Perspectiva 2: mejora por cliente
 
@@ -830,8 +831,8 @@ Para cada periodo:
 - mediana de mejora por serie;
 - p25;
 - p75;
-- porcentaje de series ganadas por ML;
-- porcentaje de series ganadas por SCP;
+- porcentaje de series ganadas por Optimizer;
+- porcentaje de series ganadas por Auto;
 - porcentaje de empates;
 - distribución de mejoras;
 - distribución de deterioros.
@@ -870,35 +871,35 @@ Para cada periodo genera una tabla con una fila por cliente y, al menos:
 - series comparables;
 - cobertura;
 - histórico total;
-- error absoluto SCP;
-- error absoluto ML;
+- error absoluto Auto;
+- error absoluto Optimizer;
 - reducción absoluta;
-- WAPE SCP;
-- WAPE ML;
+- WAPE Auto;
+- WAPE Optimizer;
 - mejora relativa;
-- porcentaje de victorias ML;
-- porcentaje de victorias SCP;
+- porcentaje de victorias Optimizer;
+- porcentaje de victorias Auto;
 - porcentaje de empates;
 - media de mejora por serie;
 - mediana de mejora por serie;
-- exclusiones ML;
+- exclusiones del Optimizer;
 - warnings de calidad.
 
 # Objetivo interpretativo del informe global
 
 El informe debe responder con claridad:
 
-1. ¿Mejora ML el error total agregado?
-2. ¿Mejora ML en la mayoría de clientes?
+1. ¿Mejora Optimizer frente a Auto el error total agregado?
+2. ¿Mejora Optimizer frente a Auto en la mayoría de clientes?
 3. ¿Mejora el cliente mediano?
-4. ¿Mejora ML en la mayoría de series?
-5. ¿La mejora se mantiene en ambos trimestres?
+4. ¿Mejora Optimizer frente a Auto en la mayoría de series?
+5. ¿La mejora Optimizer vs Auto se mantiene en ambos bloques de 3 meses?
 6. ¿La mejora se mantiene mes a mes?
 7. ¿Qué clientes explican la mejora?
 8. ¿Qué modelos explican la mejora?
-9. ¿Dónde sigue siendo superior SCP?
+9. ¿Dónde sigue siendo superior Auto?
 10. ¿Qué porcentaje del universo queda fuera de comparación?
-11. ¿Qué limitaciones de cobertura tiene ML?
+11. ¿Qué limitaciones de cobertura tiene Optimizer?
 12. ¿La mejora está concentrada en pocos casos de gran volumen?
 
 Distingue siempre:
@@ -965,6 +966,11 @@ Conserva guiones bajos para mantener nombres estables.
 
 Cada cliente debe generar un Excel con al menos:
 
+Los identificadores de pestaña `04_first_quarter` y `05_second_quarter` se
+conservan por compatibilidad con lectores existentes. Sus títulos y contenidos
+visibles usan respectivamente `3 meses recientes (M3–M1)` y
+`3 meses anteriores (M6–M4)`.
+
 - `00_readme`
 - `01_executive_summary`
 - `02_coverage_status`
@@ -1003,8 +1009,8 @@ Debe explicar:
 Debe contener una tabla compacta con una fila por periodo:
 
 - Semestre completo.
-- Primer trimestre.
-- Segundo trimestre.
+- 3 meses recientes (M3–M1).
+- 3 meses anteriores (M6–M4).
 - M1.
 - M2.
 - M3.
@@ -1018,12 +1024,12 @@ Columnas mínimas:
 - series comparables;
 - cobertura;
 - histórico;
-- WAPE SCP;
-- WAPE ML;
-- mejora relativa;
-- reducción absoluta;
-- porcentaje gana ML;
-- porcentaje gana SCP;
+- WAPE Auto;
+- WAPE Optimizer;
+- mejora Optimizer vs Auto;
+- reducción absoluta Optimizer vs Auto;
+- porcentaje gana Optimizer;
+- porcentaje gana Auto;
 - porcentaje empate;
 - media de mejora por serie;
 - mediana de mejora por serie.
@@ -1031,6 +1037,10 @@ Columnas mínimas:
 # Excel global
 
 Debe incluir al menos:
+
+Los identificadores de pestaña `04_first_quarter_by_client` y
+`05_second_quarter_by_client` también se conservan por compatibilidad; no son
+la nomenclatura temporal visible.
 
 - `00_readme`
 - `01_executive_summary`
@@ -1053,19 +1063,19 @@ En `07_global_period_summary` debe existir una fila por periodo y columnas
 para:
 
 - histórico total;
-- error absoluto SCP;
-- error absoluto ML;
+- error absoluto Auto;
+- error absoluto Optimizer;
 - reducción absoluta;
-- WAPE SCP;
-- WAPE ML;
+- WAPE Auto;
+- WAPE Optimizer;
 - mejora global ponderada;
 - media de mejora por cliente;
 - mediana de mejora por cliente;
 - desviación entre clientes;
 - media de mejora por serie;
 - mediana de mejora por serie;
-- porcentaje de clientes donde mejora ML;
-- porcentaje de series donde gana ML;
+- porcentaje de clientes donde Optimizer mejora frente a Auto;
+- porcentaje de series donde gana Optimizer;
 - cobertura.
 
 # Formato Excel
@@ -1094,14 +1104,14 @@ Cada cliente debe incluir:
 1. Resumen ejecutivo.
 2. Cobertura.
 3. Semestre completo.
-4. Primer trimestre.
-5. Segundo trimestre.
-6. Comparación entre trimestres.
+4. 3 meses recientes (M3–M1).
+5. 3 meses anteriores (M6–M4).
+6. Comparación entre bloques de 3 meses.
 7. Evolución mensual.
 8. Frecuencia de victoria.
 9. Impacto absoluto.
-10. Modelos ML.
-11. Modelos SCP.
+10. Modelos seleccionados por Optimizer.
+11. Modelos de Auto.
 12. Clasificaciones.
 13. Exclusiones.
 14. Casos de mayor mejora.
@@ -1125,20 +1135,20 @@ Debe incluir:
 2. Clientes analizados.
 3. Calidad y cobertura de los inputs.
 4. Resultado del semestre completo.
-5. Resultado del primer trimestre.
-6. Resultado del segundo trimestre.
-7. Comparación entre trimestres.
+5. Resultado de los 3 meses recientes (M3–M1).
+6. Resultado de los 3 meses anteriores (M6–M4).
+7. Comparación entre bloques de 3 meses.
 8. Evolución mensual.
 9. WAPE global ponderado.
 10. Media de mejora por cliente.
 11. Mediana de mejora por cliente.
 12. Media y mediana por serie.
-13. Clientes donde mejora ML.
+13. Clientes donde Optimizer mejora frente a Auto.
 14. Clientes donde empeora.
 15. Concentración de la mejora.
 16. Modelos que más aportan.
-17. Clasificaciones donde funciona mejor ML.
-18. Tipologías donde SCP sigue siendo mejor.
+17. Clasificaciones donde funciona mejor Optimizer.
+18. Tipologías donde Auto sigue siendo mejor.
 19. Cobertura y exclusiones.
 20. Riesgos y limitaciones.
 21. Conclusión final.
@@ -1157,31 +1167,31 @@ Para cada cliente genera como mínimo:
 
 - distribución de `COMPARISON_STATUS`;
 - cobertura por periodo;
-- motivos de exclusión ML;
-- motivos de ausencia SCP.
+- motivos de exclusión del Optimizer (`ML_EXCLUSION_REASON`);
+- motivos de ausencia de Auto (`SCP_NO_OUTPUT_REASON`).
 
 ## Semestre
 
-- WAPE SCP vs ML;
+- comparativa de WAPE SCP Classic Auto vs SCP Classic Optimizer;
 - winner distribution;
 - distribución de mejora por serie;
 - reducción absoluta;
 - modelos y tasa de victoria.
 
-## Trimestres
+## Bloques de 3 meses
 
-- WAPE del Primer trimestre;
-- WAPE del Segundo trimestre;
-- mejora comparativa;
+- WAPE de los 3 meses recientes (M3–M1);
+- WAPE de los 3 meses anteriores (M6–M4);
+- mejora Optimizer vs Auto comparada;
 - ganadores comparados;
-- reducción absoluta comparada.
+- reducción absoluta Optimizer vs Auto comparada.
 
 ## Mensual
 
-- evolución WAPE SCP y ML M1...M6;
-- evolución de mejora relativa;
+- evolución WAPE Auto y WAPE Optimizer M1...M6;
+- evolución de mejora Optimizer vs Auto;
 - evolución de reducción absoluta;
-- porcentaje de victorias ML/SCP/TIE;
+- porcentaje de victorias Optimizer/Auto/Empate;
 - cobertura mensual.
 
 ## Impacto y riesgo
@@ -1200,11 +1210,11 @@ Genera como mínimo:
 - mejora semestral por cliente;
 - reducción absoluta por cliente;
 - media y mediana de mejora por cliente;
-- Primer trimestre vs Segundo trimestre;
+- 3 meses recientes (M3–M1) frente a 3 meses anteriores (M6–M4);
 - evolución mensual global;
 - evolución mensual por cliente;
-- porcentaje de clientes donde mejora ML por periodo;
-- porcentaje de series donde gana ML por periodo;
+- porcentaje de clientes donde Optimizer mejora frente a Auto por periodo;
+- porcentaje de series donde gana Optimizer por periodo;
 - contribución de cada cliente a la reducción absoluta;
 - modelos y tasa de victoria;
 - clasificaciones;
@@ -1212,8 +1222,8 @@ Genera como mínimo:
 
 # Reglas de visualización
 
-- ML: azul.
-- SCP: rojo.
+- Optimizer: azul.
+- Auto: rojo.
 - Empate: gris.
 - Mantén colores coherentes en todos los gráficos.
 - No cortes títulos.
@@ -1258,8 +1268,8 @@ Incluye como mínimo:
 8. Batches detectados.
 9. Runs detectados.
 10. Coherencia de histórico 6M con M1...M6.
-11. Coherencia de Primer trimestre con M1+M2+M3.
-12. Coherencia de Segundo trimestre con M4+M5+M6.
+11. Coherencia de RECENT_3M con M1+M2+M3.
+12. Coherencia de OLDER_3M con M4+M5+M6.
 13. Coherencia de errores absolutos agregados.
 14. Reconstrucción de error absoluto desde forecast e histórico.
 15. Reconstrucción de WAPE.
@@ -1267,7 +1277,7 @@ Incluye como mínimo:
 17. Empates coherentes con el umbral.
 18. Métricas nulas cuando histórico es cero.
 19. Forecasts nulos cuando flags indican ausencia.
-20. Exclusiones ML con motivo.
+20. Exclusiones del Optimizer con motivo.
 21. Valores negativos de histórico.
 22. Valores negativos de forecast, diferenciando si son permitidos.
 23. WAPE extremo.
@@ -1378,8 +1388,8 @@ Añade tests unitarios, como mínimo, para:
 - validación de nombre vs ID;
 - detección de cliente duplicado;
 - mapeo de periodos;
-- Primer trimestre = M1+M2+M3;
-- Segundo trimestre = M4+M5+M6;
+- RECENT_3M = M1+M2+M3;
+- OLDER_3M = M4+M5+M6;
 - Semestre = M1...M6;
 - WAPE agregado;
 - mejora relativa;
@@ -1443,7 +1453,7 @@ La redacción debe ser prudente y basada en datos.
 
 No afirmes:
 
-“ML mejora de forma generalizada”
+“Optimizer mejora de forma generalizada frente a Auto”
 
 solo porque mejora el WAPE global.
 
@@ -1453,20 +1463,20 @@ Comprueba también:
 - mediana por cliente;
 - cuántas series mejoran;
 - mediana por serie;
-- ambos trimestres;
+- ambos bloques de 3 meses;
 - evolución mensual;
 - concentración por volumen;
 - cobertura.
 
 Una conclusión favorable debería poder expresarse en términos como:
 
-“ML reduce el error global ponderado, mejora en X de Y clientes y presenta una
+“Optimizer reduce el error global ponderado frente a Auto, mejora en X de Y clientes y presenta una
 mediana de mejora por cliente de Z%, aunque el beneficio está concentrado en
 determinados clientes o tipologías.”
 
-Cuando SCP sea mejor en una parte relevante de los casos, indícalo.
+Cuando Auto sea mejor en una parte relevante de los casos, indícalo.
 
-El objetivo es construir argumentos sólidos de mejora de ML frente a SCP,
+El objetivo es construir argumentos sólidos de mejora Optimizer vs Auto,
 pero no ocultar:
 
 - heterogeneidad;

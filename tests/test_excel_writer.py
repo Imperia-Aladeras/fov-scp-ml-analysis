@@ -104,6 +104,8 @@ def test_build_client_workbook_creates_all_sheets(tmp_path: Path):
     assert out_path.exists()
     wb = openpyxl.load_workbook(out_path)
     assert wb.sheetnames == EXPECTED_SHEETS
+    assert wb["04_first_quarter"]["A1"].value == "Cobertura - 3 meses recientes (M3–M1)"
+    assert wb["05_second_quarter"]["A1"].value == "Cobertura - 3 meses anteriores (M6–M4)"
 
 
 def test_build_client_workbook_no_comparable_series_does_not_crash(tmp_path: Path):

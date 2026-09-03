@@ -2,6 +2,8 @@ from pathlib import Path
 
 import pandas as pd
 
+import src.global_charts as global_charts_module
+
 from src.charts import COLOR_ML, COLOR_SCP
 from src.client_analysis import analyze_client
 from src.global_analysis import GlobalAnalysisResult, build_global_period_result, global_pareto_clients, global_pareto_series
@@ -52,6 +54,24 @@ def test_chart_subfolders_constant_matches_spec():
         "coverage", "semester", "quarters", "monthly", "clients", "models", "classifications",
         "impact_and_risk", "portfolio",
     )
+
+
+def test_quarter_charts_use_canonical_temporal_and_directional_copy(monkeypatch, tmp_path: Path):
+    result = build_global_analysis_result()
+    titles: list[str] = []
+
+    def capture_title(_ax, title, subtitle=None):
+        titles.append(title)
+
+    monkeypatch.setattr(global_charts_module, "_apply_title", capture_title)
+    generated = global_charts_module.generate_quarters_charts(result, tmp_path)
+
+    assert len(generated) == 2
+    joined = "\n".join(titles)
+    assert "SCP Classic Auto vs SCP Classic Optimizer" in joined
+    assert "Optimizer vs Auto" in joined
+    assert "primer trimestre" not in joined.lower()
+    assert "segundo trimestre" not in joined.lower()
 
 
 def test_contribution_colors_uses_absolute_value_sign():

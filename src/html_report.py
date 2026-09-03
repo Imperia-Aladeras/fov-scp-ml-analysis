@@ -45,7 +45,7 @@ ASSETS_SRC_DIR = Path(__file__).resolve().parent.parent / "report_assets"
 CHART_SECTION_LABELS: dict[str, str] = {
     "coverage": "Cobertura",
     "semester": "Semestre completo",
-    "quarters": "Trimestres",
+    "quarters": "Bloques de 3 meses",
     "monthly": "Evolución mensual",
     "models": "Modelos",
     "classifications": "Clasificaciones",
@@ -69,6 +69,17 @@ PORTFOLIO_CHART_PRESENTATION: dict[str, dict[str, str]] = {
             "los casos no evaluables se muestran fuera del denominador"
         ),
     },
+}
+
+CHART_ALT_OVERRIDES: dict[str, str] = {
+    # Filenames are a stable technical contract; only their visible alt/caption
+    # is translated to the current presentation vocabulary.
+    "01_wape_scp_vs_ml.png": (
+        "Gráfico: WAPE global ponderado SCP Classic Auto vs SCP Classic Optimizer"
+    ),
+    "03_ml_exclusion_reasons.png": "Gráfico: motivos de exclusión del Optimizer",
+    "04_scp_no_output_reasons.png": "Gráfico: motivos de ausencia de forecast Auto",
+    "02_pct_series_ml_wins_by_period.png": "Gráfico: porcentaje de series donde gana Optimizer por período",
 }
 
 
@@ -102,6 +113,9 @@ def _find_first(paths: list[str], suffix: str) -> str | None:
 
 
 def _alt_text(posix_path: str) -> str:
+    filename = Path(posix_path).name
+    if filename in CHART_ALT_OVERRIDES:
+        return CHART_ALT_OVERRIDES[filename]
     stem = Path(posix_path).stem
     return f"Gráfico: {stem.replace('_', ' ')}"
 

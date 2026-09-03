@@ -1,16 +1,16 @@
-# FOV SCP vs ML Analysis
+# FOV SCP Classic Auto vs SCP Classic Optimizer Analysis
 
 Pipeline reproducible que compara, de forma retrospectiva, la precision y
 cobertura de dos flujos de forecast:
 
-- **SCP**: flujo automatico de forecast actualmente utilizado.
-- **ML**: pipeline Optimizer/ML de clasificacion, seleccion y routing de
-  modelos (el termino "ML" identifica el pipeline de seleccion/routing, no
-  implica que todos los modelos seleccionados sean algoritmos de machine
-  learning).
+- **SCP Classic Auto (Auto)**: flujo automatico de forecast actualmente utilizado.
+- **SCP Classic Optimizer (Optimizer)**: pipeline de clasificacion, seleccion y
+  routing de modelos. Los prefijos tecnicos `SCP_*` y `ML_*` se conservan en
+  datos y codigo; `ML` tambien se usa cuando identifica legitimamente la familia
+  de aprendizaje automatico.
 
 El objetivo es producir evidencia clara, auditable e interpretable sobre
-donde ML mejora frente a SCP y donde SCP sigue siendo superior, tanto por
+donde Optimizer mejora frente a Auto y donde Auto sigue siendo superior, tanto por
 cliente como en una comparativa global entre clientes.
 
 La especificacion funcional completa esta en
@@ -234,9 +234,9 @@ enlaces a los ficheros de la ejecucion (Excel/Markdown globales,
 ### Ficha de cliente (`clients/<CLIENTE>/index.html`)
 
 Identificacion, conclusion, cobertura por periodo, semestre completo y los
-dos trimestres usando siempre las etiquetas "Semestre completo (M1-M6)",
-"Primer trimestre del semestre (M1-M3)" y "Segundo trimestre del semestre
-(M4-M6)", evolucion mensual, modelos, clasificaciones, impacto absoluto y
+dos bloques de 3 meses usando siempre las etiquetas "Semestre completo (M1–M6)",
+"3 meses recientes (M3–M1)" y "3 meses anteriores (M6–M4)", evolucion
+mensual, modelos, clasificaciones, impacto absoluto y
 casos destacados, exclusiones, limitaciones, graficos y enlaces al Excel,
 Markdown y log de ese cliente. Navegacion cliente anterior/siguiente en
 orden deterministico (por nombre de fichero).
@@ -614,13 +614,13 @@ Etiquetas visibles (solo en informes, titulos y graficos; nunca en codigo):
 
 | Tecnico     | Visible                                |
 | ----------- | --------------------------------------- |
-| `RECENT_3M` | Primer trimestre del semestre (M1-M3)  |
-| `OLDER_3M`  | Segundo trimestre del semestre (M4-M6) |
+| `RECENT_3M` | 3 meses recientes (M3–M1)  |
+| `OLDER_3M`  | 3 meses anteriores (M6–M4) |
 | `6M`        | Semestre completo (M1-M6)              |
 
 No se usan en textos visibles expresiones como "trimestre reciente",
-"trimestre anterior", "Q1" o "Q2": los dos trimestres son bloques internos
-del semestre retrospectivo, no trimestres naturales del calendario.
+"trimestre anterior", "Q1" o "Q2": son bloques internos del semestre
+retrospectivo, no trimestres naturales del calendario.
 
 ## Formulas principales
 
@@ -648,8 +648,8 @@ nulo); ver `src/metrics.py`.
   reutiliza la misma mascara para todos los periodos ni se usa unicamente
   `COMPARISON_STATUS = 'COMPARABLE'`). Una fila es comparable en un periodo
   cuando pertenece al universo candidato, tiene historico > 0 en ese periodo,
-  y dispone de forecast/error/WAPE validos para SCP y para ML en ese
-  periodo. Los trimestres y el semestre usan directamente las columnas
+  y dispone de forecast/error/WAPE validos para Auto y para Optimizer en ese
+  periodo. Los bloques de 3 meses y el semestre usan directamente las columnas
   agregadas `TOTAL_*` ya materializadas en el CSV.
 - `WINNER_METHOD_*` (columna original del CSV) es siempre la fuente de
   verdad del ganador. La formula exacta de `relativeDiff` usada para
@@ -671,7 +671,7 @@ Se distinguen siempre, sin mezclarlas:
 - frecuencia de victoria (% de series que gana cada metodo);
 - reduccion absoluta de error y concentracion por cliente (perspectiva 4).
 
-No se afirma que ML mejora de forma generalizada basandose unicamente en el
+No se afirma que Optimizer mejora de forma generalizada frente a Auto basandose unicamente en el
 WAPE global ponderado: es posible (y ocurre en los datos reales de este
 repositorio) que el WAPE global empeore por la concentracion de volumen en
 un unico cliente, mientras la mayoria de clientes y series mejoran. El

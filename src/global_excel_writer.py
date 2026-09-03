@@ -42,6 +42,7 @@ from src.portfolio_presentation import (
     PreparedPortfolioTable,
     prepare_portfolio_presentation,
 )
+from src.presentation_labels import AUTO_LABEL, DIRECTIONAL_COMPARISON_LABEL, OPTIMIZER_LABEL
 from src.phase8_presentation import (
     BIAS_METHODOLOGY_NOTE,
     PHASE8_NO_ROUTING_NOTE,
@@ -99,12 +100,12 @@ def readme_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.DataFrame]
         "Cuatro perspectivas, deliberadamente separadas (no se mezclan):",
         "  1. Impacto global ponderado: SCP_WAPE_GLOBAL = SUM(error_absoluto) / SUM(historico) sobre",
         "     TODAS las series comparables de TODOS los clientes juntos. Responde: cuanto error total",
-        "     reduce ML sobre el volumen total analizado.",
-        "  2. Mejora por cliente: cada cliente pesa IGUAL, no se pondera por numero de series. La media,",
+        f"     mide cuanto error reduce {OPTIMIZER_LABEL} frente a {AUTO_LABEL} sobre el volumen total analizado.",
+        f"  2. Mejora {DIRECTIONAL_COMPARISON_LABEL} por cliente: cada cliente pesa IGUAL, no se pondera por numero de series. La media,",
         "     mediana, percentiles y porcentaje de clientes que mejoran usan como denominador UNICAMENTE",
         "     los clientes con mejora calculable (N_CLIENTES_EVALUABLES = N_CLIENTES_TOTAL menos los que",
         "     no tienen ninguna serie comparable en el periodo), nunca el total de clientes cargados.",
-        "  3. Mejora por serie: estadistica de la mejora relativa de cada serie individual de todos los",
+        f"  3. Mejora {DIRECTIONAL_COMPARISON_LABEL} por serie: estadistica de la mejora relativa de cada serie individual de todos los",
         "     clientes juntos (recalculada desde las filas comparables originales, no reconstruida desde",
         "     medianas por cliente). Responde: como se comporta una serie tipica.",
         "  4. Impacto absoluto: se separan siempre REDUCCION_POSITIVA_TOTAL (suma de clientes que reducen",
@@ -113,7 +114,7 @@ def readme_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.DataFrame]
         "     es cero o negativa: el porcentaje de cada cliente se calcula dentro de su propio grupo",
         "     (PCT_OF_POSITIVE_REDUCTION o PCT_OF_TOTAL_DETERIORATION), nunca sobre el neto.",
         "",
-        "No se afirma 'ML mejora de forma generalizada' basandose unicamente en la perspectiva 1: se",
+        f"No se afirma '{OPTIMIZER_LABEL} mejora de forma generalizada frente a {AUTO_LABEL}' basandose unicamente en la perspectiva 1: se",
         "contrastan siempre las 4 perspectivas (ver 07_global_period_summary y el informe Markdown).",
         "",
         "Los clientes sin ninguna serie comparable en un periodo SI se incluyen en la cobertura, en los",
@@ -376,7 +377,7 @@ def absolute_impact_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.D
         (f"Totales - {label} (REDUCCION_NETA = REDUCCION_POSITIVA_TOTAL - DETERIORO_TOTAL_ABSOLUTO)", totals_df),
         (f"Clientes que reducen error (ABS_ERROR_REDUCTION > 0) - {label}", gp.client_reduction_table),
         (f"Clientes que aumentan error (ABS_ERROR_REDUCTION < 0) - {label}", gp.client_deterioration_table),
-        ("Concentracion dentro de cada grupo (nunca sobre la reduccion neta)", pd.DataFrame(concentration_rows)),
+        (f"Concentracion de la reduccion {DIRECTIONAL_COMPARISON_LABEL} dentro de cada grupo (nunca sobre la reduccion neta)", pd.DataFrame(concentration_rows)),
     ]
 
 
@@ -393,10 +394,10 @@ def absolute_impact_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.D
 def _pareto_concentration_summary_rows(gp) -> pd.DataFrame:
     rows = []
     for label, group, n_no_evaluables in (
-        ("Series - mejora (ABS_ERROR_REDUCTION > 0)", gp.pareto_series.improvement, gp.pareto_series.n_no_evaluables),
-        ("Series - deterioro (ABS_ERROR_REDUCTION < 0)", gp.pareto_series.deterioration, gp.pareto_series.n_no_evaluables),
-        ("Clientes - mejora (ABS_ERROR_REDUCTION > 0)", gp.pareto_clients.improvement, gp.pareto_clients.n_no_evaluables),
-        ("Clientes - deterioro (ABS_ERROR_REDUCTION < 0)", gp.pareto_clients.deterioration, gp.pareto_clients.n_no_evaluables),
+        (f"Series - mejora {DIRECTIONAL_COMPARISON_LABEL} (ABS_ERROR_REDUCTION > 0)", gp.pareto_series.improvement, gp.pareto_series.n_no_evaluables),
+        (f"Series - deterioro {DIRECTIONAL_COMPARISON_LABEL} (ABS_ERROR_REDUCTION < 0)", gp.pareto_series.deterioration, gp.pareto_series.n_no_evaluables),
+        (f"Clientes - mejora {DIRECTIONAL_COMPARISON_LABEL} (ABS_ERROR_REDUCTION > 0)", gp.pareto_clients.improvement, gp.pareto_clients.n_no_evaluables),
+        (f"Clientes - deterioro {DIRECTIONAL_COMPARISON_LABEL} (ABS_ERROR_REDUCTION < 0)", gp.pareto_clients.deterioration, gp.pareto_clients.n_no_evaluables),
     ):
         s = group.summary
         rows.append({
@@ -414,10 +415,10 @@ def pareto_absolute_impact_blocks(result: GlobalAnalysisResult) -> list[tuple[st
     label = visible_label(MODEL_CLASSIFICATION_PERIOD)
 
     blocks: list[tuple[str, pd.DataFrame]] = [
-        (f"Pareto series - mejora - {label} - todos los clientes", gp.pareto_series.improvement.table),
-        (f"Pareto series - deterioro - {label} - todos los clientes", gp.pareto_series.deterioration.table),
-        (f"Pareto clientes - mejora - {label}", gp.pareto_clients.improvement.table),
-        (f"Pareto clientes - deterioro - {label}", gp.pareto_clients.deterioration.table),
+        (f"Pareto series - mejora {DIRECTIONAL_COMPARISON_LABEL} - {label} - todos los clientes", gp.pareto_series.improvement.table),
+        (f"Pareto series - deterioro {DIRECTIONAL_COMPARISON_LABEL} - {label} - todos los clientes", gp.pareto_series.deterioration.table),
+        (f"Pareto clientes - mejora {DIRECTIONAL_COMPARISON_LABEL} - {label}", gp.pareto_clients.improvement.table),
+        (f"Pareto clientes - deterioro {DIRECTIONAL_COMPARISON_LABEL} - {label}", gp.pareto_clients.deterioration.table),
         (f"Resumen de concentracion - {label}", _pareto_concentration_summary_rows(gp)),
     ]
 
@@ -522,8 +523,8 @@ def exclusions_blocks(result: GlobalAnalysisResult) -> list[tuple[str, pd.DataFr
             })
     return [
         ("Distribucion global de COMPARISON_STATUS (todos los clientes)", _dict_to_df(status_totals, "COMPARISON_STATUS", "N")),
-        ("Motivo de exclusion ML global (ML_EXCLUSION_REASON)", _dict_to_df(reason_totals, "MOTIVO", "N")),
-        ("Exclusiones ML por cliente", pd.DataFrame(per_client_rows)),
+        ("Motivo de exclusion del Optimizer global (ML_EXCLUSION_REASON)", _dict_to_df(reason_totals, "MOTIVO", "N")),
+        ("Exclusiones del Optimizer por cliente", pd.DataFrame(per_client_rows)),
     ]
 
 
@@ -588,10 +589,10 @@ def build_global_workbook(result: GlobalAnalysisResult, output_path: Path) -> No
         write_blocks(writer, "03_semester_by_client", [("Semestre completo (6M) por cliente", result.client_period_tables["6M"])])
         write_blocks(writer, "04_first_quarter_by_client", [(f"{visible_label('RECENT_3M')} por cliente", result.client_period_tables["RECENT_3M"])])
         write_blocks(writer, "05_second_quarter_by_client", [(f"{visible_label('OLDER_3M')} por cliente", result.client_period_tables["OLDER_3M"])])
-        write_blocks(writer, "06_monthly_by_client", [("Cobertura y mejora mensual (M1-M6) por cliente", monthly_by_client_table(result))])
+        write_blocks(writer, "06_monthly_by_client", [(f"Cobertura y mejora {DIRECTIONAL_COMPARISON_LABEL} mensual (M1-M6) por cliente", monthly_by_client_table(result))])
         write_blocks(writer, "07_global_period_summary", [("Resumen global por periodo", global_period_summary_table(result))])
-        write_blocks(writer, "08_client_improvement_stats", [("Estadistica de mejora ENTRE CLIENTES (peso igual) por periodo", client_improvement_stats_table(result))])
-        write_blocks(writer, "09_series_improvement_stats", [("Estadistica de mejora POR SERIE (todos los clientes juntos) por periodo", series_improvement_stats_table(result))])
+        write_blocks(writer, "08_client_improvement_stats", [(f"Estadistica de mejora {DIRECTIONAL_COMPARISON_LABEL} ENTRE CLIENTES (peso igual) por periodo", client_improvement_stats_table(result))])
+        write_blocks(writer, "09_series_improvement_stats", [(f"Estadistica de mejora {DIRECTIONAL_COMPARISON_LABEL} POR SERIE (todos los clientes juntos) por periodo", series_improvement_stats_table(result))])
         write_blocks(writer, "10_winner_distribution", [("Distribucion global de ganadores por periodo", winner_distribution_table(result))])
         write_blocks(
             writer, "11_models_and_win_rates",

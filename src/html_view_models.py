@@ -32,7 +32,14 @@ from src.html_formatters import (
     fmt_signed_pct_fraction,
     is_missing,
 )
-from src.periods import MONTHLY_PERIODS
+from src.periods import MONTHLY_PERIODS, visible_label
+from src.presentation_labels import (
+    AUTO_LABEL,
+    DIRECTIONAL_COMPARISON_LABEL,
+    OPTIMIZER_LABEL,
+    PERIOD_LABELS,
+    winner_short_label,
+)
 from src.phase8 import NOT_ASSIGNABLE
 from src.phase8_presentation import (
     BIAS_METHODOLOGY_NOTE,
@@ -51,20 +58,13 @@ from src.quality_presentation import issue_period, metric_audit_friendly_label, 
 
 MODEL_CLASSIFICATION_PERIOD = "6M"
 
-# Etiquetas temporales EXACTAS exigidas para el texto visible del HTML (con
-# guion en-raya "–"), separadas de src.periods.VISIBLE_LABELS: esa fuente
-# de verdad compartida (guion normal "-") sigue alimentando Markdown/Excel
-# sin cambios, para no alterar esos formatos ya aprobados.
-TEMPORAL_LABELS_HTML = {
-    "6M": "Semestre completo (M1–M6)",
-    "RECENT_3M": "Primer trimestre del semestre (M1–M3)",
-    "OLDER_3M": "Segundo trimestre del semestre (M4–M6)",
-}
+# Compatibility alias for callers/tests; all surfaces now share one source.
+TEMPORAL_LABELS_HTML = PERIOD_LABELS
 
 METHODOLOGY_NOTES = [
     "M1 es el mes cerrado más reciente; M6 es el mes más antiguo del semestre.",
-    "RECENT_3M corresponde visualmente a M1–M3 (“Primer trimestre del semestre”).",
-    "OLDER_3M corresponde visualmente a M4–M6 (“Segundo trimestre del semestre”).",
+    f"RECENT_3M se presenta como {visible_label('RECENT_3M')}.",
+    f"OLDER_3M se presenta como {visible_label('OLDER_3M')}.",
     "El ganador principal (WINNER_METHOD_*) se basa en WAPE y se usa siempre como fuente de verdad.",
     "MAE, RMSE y Bias son métricas de auditoría, no la métrica principal de comparación.",
     "El criterio exacto de empate relativo (relativeDiff < 0.0001) no está documentado en el "
@@ -133,11 +133,11 @@ def build_executive_summary_vm(global_result) -> dict:
     verdict = improvement_verdict(m6.global_improvement_pct)
 
     conclusion = (
-        f"ML {verdict} el WAPE global ponderado frente a SCP en el semestre completo "
+        f"{OPTIMIZER_LABEL} {verdict} el WAPE global ponderado frente a {AUTO_LABEL} en el semestre completo "
         f"({fmt_signed_pct(m6.global_improvement_pct)}). "
         f"{fmt_fraction_of(n_improved, n_evaluable, 'clientes evaluables')} mejoran"
         + (f"; {fmt_int(n_missing)} cliente(s) no disponen de performance calculable" if n_missing else "")
-        + f". A nivel de serie, ML gana en el {fmt_pct_scaled(m6.winner_counts.get('ML', {}).get('pct'))} "
+        + f". A nivel de serie, {OPTIMIZER_LABEL} gana en el {fmt_pct_scaled(m6.winner_counts.get('ML', {}).get('pct'))} "
         f"de las series comparables. Estas cifras responden preguntas distintas y no deben confundirse entre sí."
     )
 
@@ -179,7 +179,7 @@ def build_perspectives_vm(global_result) -> dict:
             "wape_ml": fmt_pct_fraction(m6.ml_wape_global),
             "mejora": fmt_signed_pct(m6.global_improvement_pct),
             "historico_total": fmt_num(m6.history_sum),
-            "pregunta": "¿Cuánto error total reduce ML sobre el volumen total analizado?",
+            "pregunta": f"¿Cuánto error total reduce {DIRECTIONAL_COMPARISON_LABEL} sobre el volumen analizado?",
         },
         "mejora_por_cliente": {
             "n_total": fmt_int(client_stats.get("n_total")),
@@ -191,7 +191,7 @@ def build_perspectives_vm(global_result) -> dict:
             "p75": fmt_signed_pct(client_stats.get("p75")),
             "pct_mejoran": fmt_pct_scaled(client_stats.get("pct_improved")),
             "fraction_mejoran": fmt_fraction_of(client_stats.get("n_improved"), client_stats.get("n_evaluable"), "evaluables"),
-            "pregunta": "¿Mejora ML en la mayoría de clientes? (cada cliente pesa igual)",
+            "pregunta": f"¿Mejora {DIRECTIONAL_COMPARISON_LABEL} en la mayoría de clientes? (cada cliente pesa igual)",
         },
         "mejora_por_serie": {
             "n_series": fmt_int(series_stats.get("count")),
@@ -199,7 +199,7 @@ def build_perspectives_vm(global_result) -> dict:
             "mediana": fmt_signed_pct(series_stats.get("median")),
             "p25": fmt_signed_pct(series_stats.get("p25")),
             "p75": fmt_signed_pct(series_stats.get("p75")),
-            "pregunta": "¿Mejora ML en la mayoría de series individuales?",
+            "pregunta": f"¿Mejora {DIRECTIONAL_COMPARISON_LABEL} en la mayoría de series individuales?",
         },
         "frecuencia_victoria": {
             "pct_ml": fmt_pct_scaled(m6.winner_counts.get("ML", {}).get("pct")),
@@ -391,7 +391,7 @@ def _category_table_vm(table, top_n: int = 10) -> list[dict]:
     Tabla de categoria (modelo, clasificacion o VOLUME_BUCKET). Cuando
     `table` trae las columnas de Bias de
     src.phase8.category_performance_table_with_bias (PeriodResult.phase8.*,
-    nunca recalculadas aqui), anade Bias SCP/ML y su direccion ya traducida.
+    nunca recalculadas aqui), anade Bias Auto/Optimizer y su direccion ya traducida.
     """
     if table is None or table.empty:
         return []
@@ -435,7 +435,7 @@ def _ranking_table_vm(df, value_col: str, signed: bool = True, top_n: int = 10) 
             "valor": fmt_value(r[value_col]),
             "wape_scp": fmt_pct_fraction(r.get(scp_wape_col)) if scp_wape_col else NA_TEXT,
             "wape_ml": fmt_pct_fraction(r.get(ml_wape_col)) if ml_wape_col else NA_TEXT,
-            "winner": str(r.get(winner_col, NA_TEXT)) if winner_col else NA_TEXT,
+            "winner": winner_short_label(r.get(winner_col, NA_TEXT)) if winner_col else NA_TEXT,
         })
     return rows
 
@@ -770,7 +770,7 @@ def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
     ]
     if no_comparable_anywhere:
         vm["conclusion"] = (
-            f"No es posible concluir sobre la mejora de ML frente a SCP para este cliente: ninguna de sus "
+            f"No es posible concluir sobre la mejora {DIRECTIONAL_COMPARISON_LABEL} para este cliente: ninguna de sus "
             f"{fmt_int(result.n_candidates)} series candidatas es comparable en ningún periodo analizado. "
             f"Esto es un resultado de cobertura, no de performance: WAPE, mejora y winner no están "
             f"disponibles (N/D), no son cero."
@@ -828,9 +828,9 @@ def build_client_page_vm(result, prev_client=None, next_client=None) -> dict:
         imp = m6.wape.get("improvement_pct")
         verdict = improvement_verdict(imp)
         vm["conclusion"] = (
-            f"En el semestre completo, ML {verdict} el WAPE global ponderado frente a SCP "
+            f"En el semestre completo, {OPTIMIZER_LABEL} {verdict} el WAPE global ponderado frente a {AUTO_LABEL} "
             f"({fmt_signed_pct(imp)}). La mediana de mejora por serie es "
-            f"{fmt_signed_pct(m6.improvement_stats_all.get('median'))} y ML gana en el "
+            f"{fmt_signed_pct(m6.improvement_stats_all.get('median'))} y {OPTIMIZER_LABEL} gana en el "
             f"{fmt_pct_scaled(m6.winner_counts.get('ML', {}).get('pct'))} de las series comparables "
             f"({fmt_pct_scaled(m6.pct_comparable)} del universo candidato)."
         )

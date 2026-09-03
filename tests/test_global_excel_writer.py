@@ -40,6 +40,8 @@ def test_build_global_workbook_creates_all_sheets(tmp_path: Path):
     assert out_path.exists()
     wb = openpyxl.load_workbook(out_path)
     assert wb.sheetnames == EXPECTED_SHEETS
+    assert wb["04_first_quarter_by_client"]["A1"].value == "3 meses recientes (M3–M1) por cliente"
+    assert wb["05_second_quarter_by_client"]["A1"].value == "3 meses anteriores (M6–M4) por cliente"
 
 
 def test_global_period_summary_has_one_row_per_period(tmp_path: Path):
@@ -154,8 +156,10 @@ def test_pareto_absolute_impact_blocks_contains_four_groups_and_summary():
     summary_title = next(t for t in titles if "Resumen de concentracion" in t)
     summary_table = next(df for t, df in blocks if t == summary_title)
     assert list(summary_table["GRUPO"]) == [
-        "Series - mejora (ABS_ERROR_REDUCTION > 0)", "Series - deterioro (ABS_ERROR_REDUCTION < 0)",
-        "Clientes - mejora (ABS_ERROR_REDUCTION > 0)", "Clientes - deterioro (ABS_ERROR_REDUCTION < 0)",
+        "Series - mejora Optimizer vs Auto (ABS_ERROR_REDUCTION > 0)",
+        "Series - deterioro Optimizer vs Auto (ABS_ERROR_REDUCTION < 0)",
+        "Clientes - mejora Optimizer vs Auto (ABS_ERROR_REDUCTION > 0)",
+        "Clientes - deterioro Optimizer vs Auto (ABS_ERROR_REDUCTION < 0)",
     ]
 
 

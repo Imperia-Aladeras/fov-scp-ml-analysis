@@ -161,7 +161,7 @@ def test_fixed_optimizer_vs_auto_direction_and_analyzed_engine_win_rate_labels()
     )
     for column in fixed_columns:
         label = visible_column_label(column)
-        assert "SCP Classic Optimizer frente a SCP Classic Auto" in label
+        assert "Optimizer vs Auto" in label
 
     generic = visible_column_label("selected_engine_win_rate")
     assert generic == "Tasa de victoria del motor analizado"
@@ -350,7 +350,7 @@ def test_visible_dataframe_is_a_copy_with_declared_user_labels():
 
     assert "Motor analizado" in visible.columns
     assert "Período" in visible.columns
-    assert "Mejora de WAPE — SCP Classic Optimizer frente a SCP Classic Auto" in visible.columns
+    assert "Mejora de WAPE — Optimizer vs Auto" in visible.columns
     assert "Tasa de victoria del motor analizado" in visible.columns
     assert visible is not prepared.dataframe
 

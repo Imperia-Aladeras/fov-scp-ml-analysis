@@ -21,6 +21,13 @@ from src.models import (
     top_percentage_changes,
 )
 from src.periods import period_columns, visible_label
+from src.presentation_labels import (
+    AUTO_LABEL,
+    DIRECTIONAL_COMPARISON_LABEL,
+    GENERAL_COMPARISON_LABEL,
+    OPTIMIZER_LABEL,
+    winner_short_label,
+)
 from src.phase8 import NOT_ASSIGNABLE
 from src.phase8_presentation import (
     BIAS_METHODOLOGY_NOTE,
@@ -89,8 +96,9 @@ def _period_wape_line(pr: PeriodResult) -> str:
     ml = _fmt_pct_fraction(pr.wape.get("ml_wape_global"))
     imp = _fmt_signed_pct_scaled(pr.wape.get("improvement_pct"))
     return (
-        f"WAPE SCP={scp}, WAPE ML={ml}, mejora relativa ponderada={imp}, "
-        f"reduccion absoluta de error={_fmt_num(pr.abs_error_reduction_total)}, "
+        f"WAPE {AUTO_LABEL}={scp}, WAPE {OPTIMIZER_LABEL}={ml}, "
+        f"mejora ponderada {DIRECTIONAL_COMPARISON_LABEL}={imp}, "
+        f"reduccion absoluta {DIRECTIONAL_COMPARISON_LABEL}={_fmt_num(pr.abs_error_reduction_total)}, "
         f"series comparables={_fmt_num(pr.n_comparable)}, "
         f"historico total={_fmt_num(pr.wape.get('history_sum'))}."
     )
@@ -101,8 +109,8 @@ def _winner_line(pr: PeriodResult) -> str:
         return _no_data_line(pr.label)
     wc = pr.winner_counts
     return (
-        f"ML gana {_fmt_num(wc.get('ML', {}).get('n', 0))} ({_fmt_pct_scaled(wc.get('ML', {}).get('pct'))}), "
-        f"SCP gana {_fmt_num(wc.get('SCP', {}).get('n', 0))} ({_fmt_pct_scaled(wc.get('SCP', {}).get('pct'))}), "
+        f"{OPTIMIZER_LABEL} gana {_fmt_num(wc.get('ML', {}).get('n', 0))} ({_fmt_pct_scaled(wc.get('ML', {}).get('pct'))}), "
+        f"{AUTO_LABEL} gana {_fmt_num(wc.get('SCP', {}).get('n', 0))} ({_fmt_pct_scaled(wc.get('SCP', {}).get('pct'))}), "
         f"empate {_fmt_num(wc.get('TIE', {}).get('n', 0))} ({_fmt_pct_scaled(wc.get('TIE', {}).get('pct'))})."
     )
 
@@ -132,17 +140,18 @@ def _category_table_lines(table: pd.DataFrame, top_n: int = 10) -> list[str]:
     Tabla de categoria (modelo, clasificacion o VOLUME_BUCKET). Cuando
     `table` trae las columnas de Bias de src.phase8.category_performance_table_with_bias
     (PeriodResult.phase8.*_tables/.volume_table, nunca recalculadas aqui),
-    anade Bias SCP/ML y su direccion ya traducida a castellano.
+    anade Bias Auto/Optimizer y su direccion ya traducida a castellano.
     """
     if table.empty:
         return ["_Sin datos (sin series comparables)._"]
     has_bias = has_bias_columns(table)
     headers = [
-        "Categoria", "N", "Tasa victoria ML", "WAPE SCP", "WAPE ML", "Mejora agregada", "Mediana mejora",
-        "Reduccion absoluta", "% volumen historico", "Muestra pequena",
+        "Categoria", "N", "Tasa victoria Optimizer", "WAPE Auto", "WAPE Optimizer",
+        "Mejora agregada Optimizer vs Auto", "Mediana mejora Optimizer vs Auto",
+        "Reduccion absoluta Optimizer vs Auto", "% volumen historico", "Muestra pequena",
     ]
     if has_bias:
-        headers += ["Bias SCP", "Direccion SCP", "Bias ML", "Direccion ML"]
+        headers += ["Bias Auto", "Direccion Auto", "Bias Optimizer", "Direccion Optimizer"]
     rows = []
     for _, r in table.head(top_n).iterrows():
         row = [
@@ -197,7 +206,11 @@ def _pareto_concentration_line(group, label: str) -> str:
 def _ranking_table_lines(df: pd.DataFrame, value_col: str, value_fmt) -> list[str]:
     if df.empty:
         return ["_Sin datos (sin series comparables)._"]
-    headers = ["ID_CONFIGURATION", value_col, "WAPE SCP", "WAPE ML", "Winner"]
+    value_label = {
+        "ML_IMPROVEMENT_VS_SCP_PCT": "Mejora Optimizer vs Auto (%)",
+        "ABS_ERROR_REDUCTION": "Reduccion absoluta Optimizer vs Auto",
+    }.get(value_col, value_col)
+    headers = ["ID_CONFIGURATION", value_label, "WAPE Auto", "WAPE Optimizer", "Motor ganador"]
     rows = []
     for _, r in df.head(10).iterrows():
         scp_wape_col = next((c for c in df.columns if "SCP_WAPE" in c), None)
@@ -207,7 +220,7 @@ def _ranking_table_lines(df: pd.DataFrame, value_col: str, value_fmt) -> list[st
             str(r.get("ID_CONFIGURATION", "")), value_fmt(r[value_col]),
             _fmt_pct_fraction(r.get(scp_wape_col)) if scp_wape_col else "n/d",
             _fmt_pct_fraction(r.get(ml_wape_col)) if ml_wape_col else "n/d",
-            str(r.get(winner_col, "")) if winner_col else "n/d",
+            str(winner_short_label(r.get(winner_col, ""))) if winner_col else "n/d",
         ])
     return _table_from_rows(headers, rows)
 
@@ -245,7 +258,7 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     older = result.periods.get("OLDER_3M")
     no_comparable_anywhere = bool(result.periods) and all(pr.n_comparable == 0 for pr in result.periods.values())
 
-    a(f"# Informe individual SCP vs ML — {source.display_name}")
+    a(f"# Informe individual {GENERAL_COMPARISON_LABEL} — {source.display_name}")
     a("")
     a(f"**Fecha del analisis:** {pd.Timestamp.now():%d/%m/%Y}")
     a(f"**Cliente:** {source.display_name} | ID_CLIENT={source.id_client} | Fichero: `{source.file_name}` (etiqueta: {source.file_label})")
@@ -290,12 +303,12 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     a("")
     if m6 is not None:
         a(
-            f"Exclusiones ML reales (`HAS_ML_EXCLUDED=1`, no varia por periodo): "
+            f"Exclusiones del {OPTIMIZER_LABEL} (`HAS_ML_EXCLUDED=1`, nombre tecnico; no varia por periodo): "
             f"**{_fmt_num(m6.n_ml_excluded)}** ({_fmt_pct_scaled(m6.pct_ml_excluded)} sobre candidatas)."
         )
         if m6.ml_exclusion_reason_counts:
             a("")
-            a("Motivos de exclusion ML:")
+            a(f"Motivos de exclusion del {OPTIMIZER_LABEL} (`ML_EXCLUSION_REASON`):")
             a("")
             a("\n".join(_table_from_rows(["Motivo", "N"], [
                 [k, _fmt_num(v)] for k, v in sorted(m6.ml_exclusion_reason_counts.items(), key=lambda kv: -kv[1])
@@ -325,7 +338,7 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     a("---")
     a("")
 
-    # 4. Primer trimestre
+    # 4. Tres meses recientes
     a(f"## 4. {visible_label('RECENT_3M')}")
     a("")
     if recent is not None:
@@ -336,7 +349,7 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     a("---")
     a("")
 
-    # 5. Segundo trimestre
+    # 5. Tres meses anteriores
     a(f"## 5. {visible_label('OLDER_3M')}")
     a("")
     if older is not None:
@@ -347,28 +360,29 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     a("---")
     a("")
 
-    # 6. Comparacion entre trimestres
-    a("## 6. Comparacion entre trimestres")
+    # 6. Comparacion entre bloques de tres meses
+    a("## 6. Comparacion entre bloques de 3 meses")
     a("")
     if recent is not None and older is not None and recent.n_comparable and older.n_comparable:
         imp_r = recent.wape.get("improvement_pct")
         imp_o = older.wape.get("improvement_pct")
         sign_change = (
-            "cambia de signo entre trimestres" if (imp_r is not None and imp_o is not None and not math.isnan(imp_r) and not math.isnan(imp_o) and imp_r * imp_o < 0)
-            else "mantiene el mismo signo en ambos trimestres"
+            "cambia de signo entre periodos" if (imp_r is not None and imp_o is not None and not math.isnan(imp_r) and not math.isnan(imp_o) and imp_r * imp_o < 0)
+            else "mantiene el mismo signo en ambos periodos"
         )
         a(
-            f"Mejora ponderada en {visible_label('RECENT_3M')}: {_fmt_signed_pct_scaled(imp_r)}. "
-            f"Mejora ponderada en {visible_label('OLDER_3M')}: {_fmt_signed_pct_scaled(imp_o)}. "
+            f"Mejora ponderada {DIRECTIONAL_COMPARISON_LABEL} en {visible_label('RECENT_3M')}: {_fmt_signed_pct_scaled(imp_r)}. "
+            f"Mejora ponderada {DIRECTIONAL_COMPARISON_LABEL} en {visible_label('OLDER_3M')}: {_fmt_signed_pct_scaled(imp_o)}. "
             f"La mejora {sign_change}."
         )
         a("")
         a(
-            f"% victorias ML: {_fmt_pct_scaled(recent.winner_counts.get('ML', {}).get('pct'))} (primer trimestre) "
-            f"vs {_fmt_pct_scaled(older.winner_counts.get('ML', {}).get('pct'))} (segundo trimestre)."
+            f"% victorias {OPTIMIZER_LABEL}: {_fmt_pct_scaled(recent.winner_counts.get('ML', {}).get('pct'))} "
+            f"en {visible_label('RECENT_3M')} vs {_fmt_pct_scaled(older.winner_counts.get('ML', {}).get('pct'))} "
+            f"en {visible_label('OLDER_3M')}."
         )
     else:
-        a("No hay datos suficientes en ambos trimestres para compararlos (alguno sin series comparables).")
+        a("No hay datos suficientes en ambos bloques de 3 meses para compararlos (alguno no tiene series comparables).")
     a("")
     a("---")
     a("")
@@ -379,7 +393,7 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     months = [result.periods.get(f"M{i}") for i in range(1, 7)]
     if any(pr is not None and pr.n_comparable for pr in months):
         a("\n".join(_table_from_rows(
-            ["Mes", "Comparables", "WAPE SCP", "WAPE ML", "Mejora relativa", "% ML", "% SCP", "% Empate"],
+            ["Mes", "Comparables", "WAPE Auto", "WAPE Optimizer", "Mejora Optimizer vs Auto", "% Optimizer", "% Auto", "% Empate"],
             [
                 [
                     f"M{i}", _fmt_num(pr.n_comparable), _fmt_pct_fraction(pr.wape.get("scp_wape_global")),
@@ -414,7 +428,7 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     a(
         "La frecuencia de victoria (cuantas series gana cada metodo) es una perspectiva distinta del "
         "impacto ponderado por volumen (seccion 3): una mejora del WAPE global no implica automaticamente "
-        "que ML gane en la mayoria de series, ni al reves."
+        f"que {OPTIMIZER_LABEL} gane en la mayoria de series, ni al reves."
     )
     a("")
     a("---")
@@ -426,7 +440,7 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     if m6 is not None and m6.n_comparable:
         a(
             f"Reduccion absoluta de error en 6M: **{_fmt_num(m6.abs_error_reduction_total)}** unidades de "
-            f"historico (positivo = ML reduce error total frente a SCP)."
+            f"historico (positivo = {OPTIMIZER_LABEL} reduce error total frente a {AUTO_LABEL})."
         )
         if m6.pareto is not None:
             pareto = m6.pareto
@@ -608,8 +622,9 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     a(
         f"`COMPARISON_STATUS='NOT_COMPARABLE_ML_EXCLUDED'`: {_fmt_num(n_status_excluded)} filas. "
         f"`HAS_ML_EXCLUDED=1` (recuento real): {_fmt_num(n_flag_excluded)} filas. La diferencia "
-        f"({_fmt_num(n_flag_excluded - n_status_excluded)}) corresponde a exclusiones ML \"tapadas\" por "
-        f"otro `COMPARISON_STATUS` de mayor precedencia (p.ej. falta tambien SCP)."
+        f"({_fmt_num(n_flag_excluded - n_status_excluded)}) corresponde a exclusiones del {OPTIMIZER_LABEL} "
+        f"identificadas tecnicamente como ML y tapadas por otro `COMPARISON_STATUS` de mayor precedencia "
+        f"(p.ej. falta tambien la salida Auto/SCP)."
     )
     a("")
     a("---")
@@ -633,7 +648,7 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     a("")
     if has_6m_data:
         _, top_worsen = top_percentage_changes(df, pcols_6m, mask_6m)
-        a(f"Top series donde ML peor se comporta frente a SCP en {visible_label(MODEL_CLASSIFICATION_PERIOD)}:")
+        a(f"Top series donde {OPTIMIZER_LABEL} peor se comporta frente a {AUTO_LABEL} en {visible_label(MODEL_CLASSIFICATION_PERIOD)}:")
         a("")
         a("\n".join(_ranking_table_lines(top_worsen, "ML_IMPROVEMENT_VS_SCP_PCT", _fmt_signed_pct_scaled)))
     else:
@@ -699,8 +714,8 @@ def build_client_report(result: ClientAnalysisResult) -> str:
         phase8 = m6.phase8
         bt = phase8.bias_total
         a(
-            f"**Bias agregado SCP:** {_fmt_signed_pct_fraction(bt.scp_bias_agg)} ({direction_label_es(bt.scp_direction)}). "
-            f"**Bias agregado ML:** {_fmt_signed_pct_fraction(bt.ml_bias_agg)} ({direction_label_es(bt.ml_direction)})."
+            f"**Bias agregado {AUTO_LABEL}:** {_fmt_signed_pct_fraction(bt.scp_bias_agg)} ({direction_label_es(bt.scp_direction)}). "
+            f"**Bias agregado {OPTIMIZER_LABEL}:** {_fmt_signed_pct_fraction(bt.ml_bias_agg)} ({direction_label_es(bt.ml_direction)})."
         )
         a("")
         a(BIAS_METHODOLOGY_NOTE)
@@ -735,7 +750,7 @@ def build_client_report(result: ClientAnalysisResult) -> str:
     a("")
     if no_comparable_anywhere:
         a(
-            f"No es posible concluir sobre la mejora de ML frente a SCP para este cliente: ninguna de sus "
+            f"No es posible concluir sobre la mejora {DIRECTIONAL_COMPARISON_LABEL} para este cliente: ninguna de sus "
             f"{_fmt_num(result.n_candidates)} series candidatas es comparable (ver seccion 2 para el motivo). "
             f"Esto es un resultado de cobertura, no de performance."
         )
@@ -745,9 +760,9 @@ def build_client_report(result: ClientAnalysisResult) -> str:
         pct_ml = m6.winner_counts.get("ML", {}).get("pct")
         veredicto = "mejora" if (imp is not None and not math.isnan(imp) and imp > 0) else "no mejora"
         a(
-            f"En el semestre completo, ML **{veredicto}** el WAPE global ponderado frente a SCP "
+            f"En el semestre completo, {OPTIMIZER_LABEL} **{veredicto}** el WAPE global ponderado frente a {AUTO_LABEL} "
             f"({_fmt_signed_pct_scaled(imp)}). A nivel de serie individual, la mediana de mejora es "
-            f"{_fmt_signed_pct_scaled(median_imp)} y ML gana en el {_fmt_pct_scaled(pct_ml)} de las series "
+            f"{_fmt_signed_pct_scaled(median_imp)} y {OPTIMIZER_LABEL} gana en el {_fmt_pct_scaled(pct_ml)} de las series "
             f"comparables ({_fmt_pct_scaled(m6.pct_comparable)} del universo candidato). Estas cuatro cifras "
             f"(impacto ponderado, mediana por serie, frecuencia de victoria y cobertura) no deben "
             f"confundirse entre si: una es favorable no implica que las demas lo sean en la misma medida."

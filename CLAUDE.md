@@ -1,15 +1,18 @@
-# FOV SCP vs ML Analysis
+# FOV SCP Classic Auto vs SCP Classic Optimizer Analysis
 
 ## Propósito
 
 Este repositorio contiene un análisis exploratorio retrospectivo para comparar
 la precisión y cobertura de dos flujos de forecast:
 
-- SCP: flujo automático de forecast actual.
-- ML: pipeline Optimizer/ML de clasificación, selección y routing de modelos.
+- SCP Classic Auto (Auto): flujo automático de forecast actual.
+- SCP Classic Optimizer (Optimizer): pipeline de clasificación, selección y
+  routing de modelos. Los identificadores técnicos `SCP_*`/`ML_*` permanecen
+  inalterados; `ML` mantiene su significado cuando nombra la familia de
+  aprendizaje automático.
 
 El objetivo es producir evidencia clara, auditable e interpretable sobre dónde
-ML mejora frente a SCP y dónde SCP continúa siendo superior.
+Optimizer mejora frente a Auto y dónde Auto continúa siendo superior.
 
 ## Especificación funcional
 
@@ -47,8 +50,8 @@ Interpretación:
 
 Etiquetas visibles:
 
-- `RECENT_3M`: Primer trimestre del semestre (M1–M3)
-- `OLDER_3M`: Segundo trimestre del semestre (M4–M6)
+- `RECENT_3M`: 3 meses recientes (M3–M1)
+- `OLDER_3M`: 3 meses anteriores (M6–M4)
 - `6M`: Semestre completo (M1–M6)
 
 No uses “trimestre reciente”, “trimestre anterior”, Q1 ni Q2 en los informes.
@@ -67,7 +70,7 @@ Distingue siempre:
 
 No calcules WAPE agregado como promedio simple de WAPE por serie.
 
-No afirmes que ML mejora de forma generalizada basándote únicamente en el
+No afirmes que Optimizer mejora de forma generalizada frente a Auto basándote únicamente en el
 WAPE global.
 
 ## Inputs y outputs

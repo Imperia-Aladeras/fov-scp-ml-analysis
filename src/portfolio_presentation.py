@@ -19,6 +19,14 @@ from typing import Mapping
 import pandas as pd
 
 from src.models import MIN_SAMPLE_SIZE_FOR_STRONG_CONCLUSION
+from src.presentation_labels import (
+    DIRECTIONAL_COMPARISON_LABEL,
+    OLDER_3M_LABEL,
+    RAW_WINNER_FULL_LABELS,
+    RECENT_3M_LABEL,
+    SCP_CLASSIC_AUTO_LABEL,
+    SCP_CLASSIC_OPTIMIZER_LABEL,
+)
 from src.portfolio import (
     BLOCK_OLDER_3M,
     BLOCK_RECENT_3M,
@@ -56,13 +64,13 @@ from src.portfolio import (
 NA_TEXT = "N/D"
 
 ENGINE_LABELS: Mapping[str, str] = MappingProxyType({
-    ENGINE_SCP_AUTO: "SCP Classic Auto",
-    ENGINE_OPTIMIZER: "SCP Classic Optimizer",
+    ENGINE_SCP_AUTO: SCP_CLASSIC_AUTO_LABEL,
+    ENGINE_OPTIMIZER: SCP_CLASSIC_OPTIMIZER_LABEL,
 })
 
 BLOCK_LABELS: Mapping[str, str] = MappingProxyType({
-    BLOCK_OLDER_3M: "3 meses anteriores (M6–M4)",
-    BLOCK_RECENT_3M: "3 meses recientes (M3–M1)",
+    BLOCK_OLDER_3M: OLDER_3M_LABEL,
+    BLOCK_RECENT_3M: RECENT_3M_LABEL,
 })
 
 STABILITY_STATE_LABELS: Mapping[str, str] = MappingProxyType({
@@ -180,11 +188,11 @@ COLUMN_PRESENTATIONS: Mapping[str, PortfolioColumnPresentation] = MappingProxyTy
     ),
     "winner_method": PortfolioColumnPresentation("Motor ganador observado", PortfolioValueKind.TEXT),
     "optimizer_improvement_vs_scp": PortfolioColumnPresentation(
-        "Mejora de WAPE — SCP Classic Optimizer frente a SCP Classic Auto",
+        f"Mejora de WAPE — {DIRECTIONAL_COMPARISON_LABEL}",
         PortfolioValueKind.SIGNED_SCALED_PERCENT,
     ),
     "optimizer_abs_error_reduction_vs_scp": PortfolioColumnPresentation(
-        "Reducción absoluta de error — SCP Classic Optimizer frente a SCP Classic Auto",
+        f"Reducción absoluta de error — {DIRECTIONAL_COMPARISON_LABEL}",
         PortfolioValueKind.ABSOLUTE_NUMBER,
     ),
     "family": PortfolioColumnPresentation("Familia del modelo Optimizer", PortfolioValueKind.TEXT),
@@ -224,7 +232,7 @@ COLUMN_PRESENTATIONS: Mapping[str, PortfolioColumnPresentation] = MappingProxyTy
         "Tasa de victoria del motor analizado", PortfolioValueKind.RATIO_PERCENT,
     ),
     "optimizer_median_improvement_vs_scp": PortfolioColumnPresentation(
-        "Mejora mediana — SCP Classic Optimizer frente a SCP Classic Auto",
+        f"Mejora mediana — {DIRECTIONAL_COMPARISON_LABEL}",
         PortfolioValueKind.SIGNED_SCALED_PERCENT,
     ),
     "n_optimizer_events": PortfolioColumnPresentation("Eventos SCP Classic Optimizer", PortfolioValueKind.INTEGER),
@@ -486,11 +494,7 @@ _FAMILY_MAPPING_LABELS = {
     FAMILY_MAPPING_NOT_APPLICABLE: "No aplica",
 }
 
-_WINNER_LABELS = {
-    "SCP": ENGINE_LABELS[ENGINE_SCP_AUTO],
-    "ML": ENGINE_LABELS[ENGINE_OPTIMIZER],
-    "TIE": "Empate",
-}
+_WINNER_LABELS = dict(RAW_WINNER_FULL_LABELS)
 
 _VALUE_LABELS_BY_COLUMN: Mapping[str, Mapping[object, str]] = MappingProxyType({
     "engine": ENGINE_LABELS,

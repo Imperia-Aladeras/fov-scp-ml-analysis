@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import openpyxl
 
 import analysis_fov_scp_ml as pipeline
 from src import html_formatters as fmt
@@ -248,7 +249,7 @@ def test_client_with_improvement_page_shows_positive_verdict(tmp_path: Path):
     ])
     assert exit_code == 0
     html = (output_root / "improve_run" / "clients" / "10204-sklum" / "index.html").read_text(encoding="utf-8")
-    assert "ML mejora el WAPE global ponderado" in html
+    assert "Optimizer mejora el WAPE global ponderado frente a Auto" in html
     assert "+50.0%" in html
 
 
@@ -262,7 +263,7 @@ def test_client_with_deterioration_page_shows_negative_verdict(tmp_path: Path):
     ])
     assert exit_code == 0
     html = (output_root / "worse_run" / "clients" / "10620-frutas-bollo" / "index.html").read_text(encoding="utf-8")
-    assert "ML no mejora el WAPE global ponderado" in html
+    assert "Optimizer no mejora el WAPE global ponderado frente a Auto" in html
 
 
 def test_client_without_performance_shows_nd_not_zero(tmp_path: Path):
@@ -278,7 +279,7 @@ def test_client_without_performance_shows_nd_not_zero(tmp_path: Path):
     assert "Sin performance calculable" in html
     assert "WAPE, mejora y winner no están disponibles (N/D), no son cero" in html
     # nunca un WAPE/mejora fabricado en cero para este caso
-    assert "<td>0.0%</td></tr>\n      <tr><th scope=\"row\">WAPE SCP" not in html
+    assert "<td>0.0%</td></tr>\n      <tr><th scope=\"row\">WAPE Auto" not in html
 
 
 def test_structurally_broken_csv_fails_pipeline_without_generating_html(tmp_path: Path):
@@ -373,13 +374,91 @@ def test_client_page_uses_exact_temporal_labels(tmp_path: Path):
     assert exit_code == 0
     html = (output_root / "labels_run" / "clients" / "10204-sklum" / "index.html").read_text(encoding="utf-8")
     assert "Semestre completo (M1–M6)" in html
-    assert "Primer trimestre del semestre (M1–M3)" in html
-    assert "Segundo trimestre del semestre (M4–M6)" in html
+    assert "3 meses recientes (M3–M1)" in html
+    assert "3 meses anteriores (M6–M4)" in html
     for forbidden in (
+        "primer trimestre del semestre", "segundo trimestre del semestre",
         "trimestre reciente", "trimestre anterior", "trimestre más nuevo", "trimestre más antiguo",
         "m1-m6", "m1-m3", "m4-m6",
     ):
         assert forbidden not in html.lower()
+
+
+def test_canonical_presentation_semantics_across_html_markdown_and_excel(tmp_path: Path):
+    """Presentation changes never alter the raw schema, winners or Excel tab contract."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "TA_FOV_SCP_ML_10204_Semantics.csv"
+    _write_client_csv(csv_path, 10204, winner="ML", scp_err=20.0, ml_err=10.0)
+    raw_before = csv_path.read_bytes()
+
+    output_root = tmp_path / "runs"
+    exit_code = pipeline.main([
+        "--input-dir", str(data_dir), "--output-root", str(output_root), "--run-name", "semantics_run",
+    ])
+    assert exit_code == 0
+    assert csv_path.read_bytes() == raw_before
+
+    run_dir = output_root / "semantics_run"
+    client_dir = run_dir / "clients" / "10204-sklum"
+    text_outputs = [
+        (run_dir / "index.html").read_text(encoding="utf-8"),
+        (client_dir / "index.html").read_text(encoding="utf-8"),
+        (run_dir / "global" / "fov_scp_ml_global_report.md").read_text(encoding="utf-8"),
+        next(client_dir.glob("*.md")).read_text(encoding="utf-8"),
+    ]
+
+    client_book = openpyxl.load_workbook(next(client_dir.glob("*.xlsx")), read_only=True)
+    global_book = openpyxl.load_workbook(
+        run_dir / "global" / "fov_scp_ml_global_summary.xlsx", read_only=True,
+    )
+    try:
+        assert "04_first_quarter" in client_book.sheetnames
+        assert "05_second_quarter" in client_book.sheetnames
+        assert "04_recent_3m" not in client_book.sheetnames
+        assert "05_older_3m" not in client_book.sheetnames
+        assert "04_first_quarter_by_client" in global_book.sheetnames
+        assert "05_second_quarter_by_client" in global_book.sheetnames
+
+        workbook_text = "\n".join(
+            str(cell.value)
+            for workbook in (client_book, global_book)
+            for sheet in workbook.worksheets
+            for row in sheet.iter_rows()
+            for cell in row
+            if isinstance(cell.value, str)
+        )
+    finally:
+        client_book.close()
+        global_book.close()
+
+    visible_text = "\n".join([*text_outputs, workbook_text])
+    for forbidden in (
+        "Comparativa global SCP vs ML",
+        "Informe individual SCP vs ML",
+        "WAPE SCP",
+        "WAPE ML",
+        "Bias SCP",
+        "Bias ML",
+        "ML mejora",
+        "ML gana",
+        "gana ML",
+        "Primer trimestre del semestre",
+        "Segundo trimestre del semestre",
+    ):
+        assert forbidden.lower() not in visible_text.lower()
+
+    assert "SCP Classic Auto vs SCP Classic Optimizer" in visible_text
+    assert "WAPE Auto" in visible_text
+    assert "WAPE Optimizer" in visible_text
+    assert "Mejora Optimizer vs Auto" in visible_text
+    assert "3 meses recientes (M3–M1)" in visible_text
+    assert "3 meses anteriores (M6–M4)" in visible_text
+
+    raw_after = pd.read_csv(csv_path)
+    winner_columns = [column for column in raw_after.columns if column.startswith("WINNER_METHOD_")]
+    assert winner_columns
+    assert all(raw_after[column].iloc[0] == "ML" for column in winner_columns)
 
 
 def test_global_page_shows_numerator_and_denominator_for_clients_that_improve(tmp_path: Path):

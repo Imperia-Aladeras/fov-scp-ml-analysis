@@ -36,9 +36,9 @@
         <tr><th scope="row">Fecha de finalización</th><td>{{ last_run.finished_at }}</td></tr>
         <tr><th scope="row">Estado</th><td><span class="badge badge--{{ last_run.status | lower }}">{{ last_run.status }}</span></td></tr>
         <tr><th scope="row">Clientes evaluables (6M)</th><td>{{ last_run.clients_evaluable_fraction }}</td></tr>
-        <tr><th scope="row">WAPE SCP / ML (6M)</th><td>{{ last_run.wape_scp_6m }} / {{ last_run.wape_ml_6m }}</td></tr>
-        <tr><th scope="row">Mejora ponderada (6M)</th><td>{{ last_run.weighted_improvement_pct_6m }}</td></tr>
-        <tr><th scope="row">Reducción neta (6M)</th><td>{{ last_run.net_error_reduction_6m }}</td></tr>
+        <tr><th scope="row">WAPE Auto / Optimizer (6M)</th><td>{{ last_run.wape_scp_6m }} / {{ last_run.wape_ml_6m }}</td></tr>
+        <tr><th scope="row">Mejora ponderada Optimizer vs Auto (6M)</th><td>{{ last_run.weighted_improvement_pct_6m }}</td></tr>
+        <tr><th scope="row">Reducción neta Optimizer vs Auto (6M)</th><td>{{ last_run.net_error_reduction_6m }}</td></tr>
       </tbody>
     </table>
     <p><a href="{{ last_run.url | encode_url_path }}">Abrir informe de esta ejecución</a></p>
@@ -93,8 +93,8 @@
         <th scope="col">Working tree</th><th scope="col">Estado</th>
         <th scope="col">Clientes totales</th><th scope="col">Evaluables 6M</th><th scope="col">Sin performance 6M</th>
         <th scope="col">Candidatas 6M</th><th scope="col">Comparables 6M</th><th scope="col">Cobertura 6M</th>
-        <th scope="col">WAPE SCP 6M</th><th scope="col">WAPE ML 6M</th><th scope="col">Mejora 6M</th>
-        <th scope="col">Reducción neta</th><th scope="col">Warnings</th><th scope="col">Errors</th><th scope="col">Informe</th>
+        <th scope="col">WAPE Auto 6M</th><th scope="col">WAPE Optimizer 6M</th><th scope="col">Mejora Optimizer vs Auto 6M</th>
+        <th scope="col">Reducción neta Optimizer vs Auto</th><th scope="col">Warnings</th><th scope="col">Errors</th><th scope="col">Informe</th>
       </tr>
     </thead>
     <tbody>

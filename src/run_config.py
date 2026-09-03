@@ -92,7 +92,8 @@ def build_arg_parser(base_dir: Path) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="analysis_fov_scp_ml.py",
         description=(
-            "Pipeline reproducible de comparativa SCP vs ML: ejecuciones aisladas y trazables, "
+            "Pipeline reproducible de comparativa SCP Classic Auto vs SCP Classic Optimizer: "
+            "ejecuciones aisladas y trazables, "
             "con informe HTML, Excel y Markdown por ejecucion."
         ),
     )

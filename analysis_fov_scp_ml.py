@@ -1,5 +1,5 @@
 """
-Punto de entrada del pipeline FOV SCP vs ML.
+Punto de entrada del pipeline de comparacion SCP Classic Auto vs SCP Classic Optimizer.
 
 Estado actual (Fase 5A - pipeline reutilizable con ejecuciones aisladas y trazables):
     1. Parsea argumentos de linea de comandos (--input-dir, --output-root,
@@ -93,6 +93,7 @@ from src.input_loader import ClientSource, load_client_sources_from_csv
 from src.logging_utils import build_processing_log
 from src.manifest import build_manifest, compute_sha256, detect_git_commit, detect_git_worktree_dirty, write_manifest
 from src.quality_checks import Severity
+from src.presentation_labels import AUTO_LABEL, DIRECTIONAL_COMPARISON_LABEL, OPTIMIZER_LABEL
 from src.report_writer import build_client_report
 from src.run_catalog import rebuild_run_catalog
 from src.run_config import (
@@ -185,9 +186,9 @@ def _print_period_line(result: ClientAnalysisResult, period: str) -> None:
     print(
         f"    {period:<10} [{pr.status:<7}] candidatas={pr.n_candidates:>6} "
         f"comparables={pr.n_comparable:>6} ({pr.pct_comparable:5.1f}%)  "
-        f"WAPE_SCP={fmt_pct(scp_wape):>8}  WAPE_ML={fmt_pct(ml_wape):>8}  "
-        f"mejora={fmt_signed_pct(improvement):>8}  "
-        f"ML/SCP/TIE={pr.winner_counts.get('ML', {}).get('n', 0)}/"
+        f"WAPE {AUTO_LABEL}={fmt_pct(scp_wape):>8}  WAPE {OPTIMIZER_LABEL}={fmt_pct(ml_wape):>8}  "
+        f"mejora {DIRECTIONAL_COMPARISON_LABEL}={fmt_signed_pct(improvement):>8}  "
+        f"Optimizer/Auto/Empate={pr.winner_counts.get('ML', {}).get('n', 0)}/"
         f"{pr.winner_counts.get('SCP', {}).get('n', 0)}/"
         f"{pr.winner_counts.get('TIE', {}).get('n', 0)}"
     )
@@ -297,8 +298,9 @@ def _print_global_summary(
     m6 = global_result.periods["6M"]
     print("\nComparativa global (semestre completo, 6M):")
     print(f"  Clientes incluidos: {len(global_result.client_results)} | excluidos (fichero invalido): {len(global_result.invalid_results)}")
-    print(f"  WAPE_SCP_GLOBAL={m6.scp_wape_global:.4f}  WAPE_ML_GLOBAL={m6.ml_wape_global:.4f}  "
-          f"MEJORA_GLOBAL_PONDERADA={m6.global_improvement_pct:+.1f}%")
+    print(f"  WAPE {AUTO_LABEL} (WAPE_SCP_GLOBAL)={m6.scp_wape_global:.4f}  "
+          f"WAPE {OPTIMIZER_LABEL} (WAPE_ML_GLOBAL)={m6.ml_wape_global:.4f}  "
+          f"MEJORA {DIRECTIONAL_COMPARISON_LABEL}={m6.global_improvement_pct:+.1f}%")
     n_improved = m6.client_improvement_stats.get('n_improved')
     n_evaluable = m6.client_improvement_stats.get('n_evaluable')
     n_missing = m6.client_improvement_stats.get('n_missing')
@@ -308,7 +310,7 @@ def _print_global_summary(
           f"({n_improved}/{n_evaluable} evaluables; {n_missing} sin performance)")
     print(f"  Mejora por serie: media={m6.series_improvement_stats.get('mean'):+.1f}%  "
           f"mediana={m6.series_improvement_stats.get('median'):+.1f}%")
-    print(f"  % series donde gana ML: {m6.winner_counts.get('ML', {}).get('pct'):.1f}%")
+    print(f"  % series donde gana {OPTIMIZER_LABEL}: {m6.winner_counts.get('ML', {}).get('pct'):.1f}%")
 
     print("\nOutputs globales generados:")
     for path in global_outputs:

@@ -57,6 +57,12 @@ from src.portfolio_presentation import (
     PreparedPortfolioTable,
     prepare_portfolio_presentation,
 )
+from src.presentation_labels import (
+    AUTO_LABEL,
+    DIRECTIONAL_COMPARISON_LABEL,
+    OPTIMIZER_LABEL,
+    winner_short_label,
+)
 
 TITLE_FONT = Font(bold=True, size=11, color="1F3864")
 HEADER_FONT = Font(bold=True)
@@ -65,12 +71,80 @@ HEADER_FILL = PatternFill(start_color="E8EEF7", end_color="E8EEF7", fill_type="s
 EXEC_SUMMARY_PERIODS = ["6M", "RECENT_3M", "OLDER_3M", "M1", "M2", "M3", "M4", "M5", "M6"]
 MODEL_CLASSIFICATION_PERIOD = "6M"
 
+_EXCEL_PRESENTATION_COLUMNS = {
+    "WAPE_SCP": "WAPE Auto",
+    "WAPE_ML": "WAPE Optimizer",
+    "ERROR_ABSOLUTO_SCP": "Error absoluto Auto",
+    "ERROR_ABSOLUTO_ML": "Error absoluto Optimizer",
+    "MEJORA_RELATIVA_PCT": "Mejora Optimizer vs Auto (%)",
+    "MEJORA_GLOBAL_PONDERADA_PCT": "Mejora global ponderada Optimizer vs Auto (%)",
+    "REDUCCION_ABSOLUTA": "Reduccion absoluta Optimizer vs Auto",
+    "REDUCCION_ABSOLUTA_ERROR": "Reduccion absoluta Optimizer vs Auto",
+    "PCT_GANA_ML": "% gana Optimizer",
+    "PCT_GANA_SCP": "% gana Auto",
+    "N_GANA_ML": "N gana Optimizer",
+    "N_GANA_SCP": "N gana Auto",
+    "N_ML": "N gana Optimizer",
+    "PCT_ML": "% gana Optimizer",
+    "N_SCP": "N gana Auto",
+    "PCT_SCP": "% gana Auto",
+    "PCT_CLIENTES_MEJORAN_SOBRE_EVALUABLES": "% clientes donde Optimizer mejora frente a Auto",
+    "PCT_CLIENTES_MEJORA_ML_SOBRE_EVALUABLES": "% clientes donde Optimizer mejora frente a Auto",
+    "PCT_SERIES_GANA_ML": "% series donde gana Optimizer",
+    "ML_IMPROVEMENT_VS_SCP_PCT": "Mejora Optimizer vs Auto (%)",
+    "ABS_ERROR_REDUCTION": "Reduccion absoluta Optimizer vs Auto",
+    "METODO": "Motor",
+    "n_win_ml": "N gana Optimizer",
+    "n_win_scp": "N gana Auto",
+    "n_tie": "N empate",
+    "win_rate_ml_pct": "Tasa victoria Optimizer",
+    "scp_wape_agg": "WAPE Auto",
+    "ml_wape_agg": "WAPE Optimizer",
+    "improvement_agg_pct": "Mejora agregada Optimizer vs Auto",
+    "median_improvement_pct": "Mediana mejora Optimizer vs Auto",
+    "abs_error_reduction": "Reduccion absoluta Optimizer vs Auto",
+    "scp_bias_agg": "Bias Auto",
+    "scp_direction": "Direccion Auto",
+    "ml_bias_agg": "Bias Optimizer",
+    "ml_direction": "Direccion Optimizer",
+}
+
+
+def _excel_column_label(column: object) -> object:
+    """Translate a presentation header while leaving source schemas untouched."""
+    name = str(column)
+    if name in _EXCEL_PRESENTATION_COLUMNS:
+        return _EXCEL_PRESENTATION_COLUMNS[name]
+    if name.startswith("SCP_WAPE"):
+        return name.replace("SCP_WAPE", "WAPE_AUTO", 1)
+    if name.startswith("ML_WAPE"):
+        return name.replace("ML_WAPE", "WAPE_OPTIMIZER", 1)
+    if name.startswith("WINNER_METHOD"):
+        return name.replace("WINNER_METHOD", "MOTOR_GANADOR", 1)
+    return column
+
+
+def _excel_presentation_dataframe(block_df: pd.DataFrame) -> pd.DataFrame:
+    """Return a display-only copy with canonical engine/winner terminology."""
+    display = block_df.copy()
+    for column in display.columns:
+        name = str(column)
+        if name == "METODO" or name.startswith("WINNER_METHOD"):
+            display[column] = display[column].map(winner_short_label)
+        elif name == "GRUPO":
+            display[column] = display[column].replace({
+                "GANA_ML": "GANA_OPTIMIZER",
+                "GANA_SCP": "GANA_AUTO",
+                "TIE": "EMPATE",
+            })
+    return display.rename(columns=_excel_column_label)
+
 
 def _column_number_format(col_name: str) -> str | None:
     name = col_name.upper()
     if "WAPE" in name or "BIAS" in name:
         return "0.0%"
-    if any(h in name for h in ("PCT", "_RATE", "IMPROVEMENT")):
+    if any(h in name for h in ("PCT", "_RATE", "IMPROVEMENT", "MEJORA", "VICTORIA")) or name.startswith("%"):
         return '0.0"%"'
     if any(h in name for h in ("HISTORICO", "HISTORY", "ABS_ERROR", "REDUCCION", "REDUCTION", "VOLUMEN")):
         return "#,##0"
@@ -93,17 +167,18 @@ def write_blocks(
         ws.cell(row=startrow + 1, column=1).font = TITLE_FONT
         startrow += 1
         if block_df is not None and not block_df.empty:
-            block_df.to_excel(writer, sheet_name=sheet_name, startrow=startrow, index=False)
+            display_df = _excel_presentation_dataframe(block_df)
+            display_df.to_excel(writer, sheet_name=sheet_name, startrow=startrow, index=False)
             header_row = startrow + 1
-            for col_idx, col_name in enumerate(block_df.columns, start=1):
+            for col_idx, col_name in enumerate(display_df.columns, start=1):
                 cell = ws.cell(row=header_row, column=col_idx)
                 cell.font = HEADER_FONT
                 cell.fill = HEADER_FILL
                 number_format = number_format_resolver(str(col_name))
                 if number_format:
-                    for row_idx in range(header_row + 1, header_row + 1 + len(block_df)):
+                    for row_idx in range(header_row + 1, header_row + 1 + len(display_df)):
                         ws.cell(row=row_idx, column=col_idx).number_format = number_format
-            startrow += len(block_df) + 2
+            startrow += len(display_df) + 2
         else:
             pd.DataFrame({"": ["(sin datos: ver nota en la pestana o en 00_readme)"]}).to_excel(
                 writer, sheet_name=sheet_name, startrow=startrow, index=False, header=False
@@ -179,11 +254,13 @@ def readme_blocks(result: ClientAnalysisResult) -> list[tuple[str, pd.DataFrame]
         "  WAPE_GLOBAL = SUM(error_absoluto_total) / SUM(historico_total)  [ponderado; nunca promedio",
         "  simple de WAPE por serie]",
         "  ML_IMPROVEMENT_VS_SCP_PCT = (SCP_WAPE - ML_WAPE) / SCP_WAPE * 100",
-        "  ABS_ERROR_REDUCTION = SCP_TOTAL_ABS_ERROR - ML_TOTAL_ABS_ERROR (positivo = ML reduce error)",
+        f"    Etiqueta visible: mejora {DIRECTIONAL_COMPARISON_LABEL}.",
+        "  ABS_ERROR_REDUCTION = SCP_TOTAL_ABS_ERROR - ML_TOTAL_ABS_ERROR",
+        f"    Positivo = {OPTIMIZER_LABEL} reduce error frente a {AUTO_LABEL}.",
         "",
         "Regla de comparabilidad en periodos parciales (M1..M6, RECENT_3M, OLDER_3M): pertenece al",
-        "universo candidato, historico > 0, y forecast/error/WAPE validos para SCP y ML en ese periodo.",
-        "Los trimestres usan directamente las columnas agregadas TOTAL_* ya materializadas en el CSV:",
+        f"universo candidato, historico > 0, y forecast/error/WAPE validos para {AUTO_LABEL} y {OPTIMIZER_LABEL} en ese periodo.",
+        "Los bloques de 3 meses usan directamente las columnas agregadas TOTAL_* ya materializadas en el CSV:",
         "no se exige que cada mes individual sea comparable de forma aislada.",
         "",
         "Regla de comparabilidad en 6M/global: exclusivamente COMPARISON_STATUS='COMPARABLE' (sin",
@@ -202,7 +279,7 @@ def readme_blocks(result: ClientAnalysisResult) -> list[tuple[str, pd.DataFrame]
         "universal de modelos ni una recomendacion de routing.",
         "",
         "Limitaciones:",
-        "  No se afirma mejora generalizada de ML basandose unicamente en el WAPE global: revisar",
+        f"  No se afirma mejora generalizada de {OPTIMIZER_LABEL} frente a {AUTO_LABEL} basandose unicamente en el WAPE global: revisar",
         "  tambien la mediana de mejora por serie y la frecuencia de victoria (pestanas 03-07).",
         "  Los chequeos de calidad (pestana 13) son WARNING salvo problemas que invalidan el fichero;",
         "  una incidencia localizada en un mes no invalida los demas periodos ni el cliente.",
@@ -256,12 +333,12 @@ def coverage_status_blocks(result: ClientAnalysisResult) -> list[tuple[str, pd.D
     ]
     pr = result.periods.get("6M")
     if pr is not None:
-        blocks.append(("Exclusiones ML (HAS_ML_EXCLUDED=1, invariante por periodo)", pd.DataFrame([{
+        blocks.append(("Exclusiones del Optimizer (HAS_ML_EXCLUDED=1, nombre tecnico; invariante por periodo)", pd.DataFrame([{
             "N_EXCLUIDAS": pr.n_ml_excluded, "PCT_SOBRE_CANDIDATAS": pr.pct_ml_excluded,
         }])))
-        blocks.append(("Motivo de exclusion ML (ML_EXCLUSION_REASON)",
+        blocks.append(("Motivo de exclusion del Optimizer (ML_EXCLUSION_REASON)",
                         _dict_to_df(pr.ml_exclusion_reason_counts, "MOTIVO", "N")))
-        blocks.append(("Motivo de ausencia de forecast SCP en 6M (SCP_NO_OUTPUT_REASON)",
+        blocks.append(("Motivo de ausencia de forecast Auto en 6M (SCP_NO_OUTPUT_REASON)",
                         _dict_to_df(pr.scp_no_output_reason_counts, "MOTIVO", "N")))
 
     reason_rows, status_rows = [], []
@@ -301,9 +378,9 @@ def period_detail_blocks(result: ClientAnalysisResult, period: str) -> list[tupl
     }])
     blocks = [
         (f"Cobertura - {pr.label}", coverage_df),
-        ("WAPE global ponderado y mejora", wape_df),
+        (f"WAPE global ponderado y mejora {DIRECTIONAL_COMPARISON_LABEL}", wape_df),
         ("Distribucion de ganadores", _winner_counts_to_df(pr.winner_counts)),
-        ("Estadistica de mejora relativa por serie (ML_IMPROVEMENT_VS_SCP)", _stats_dict_to_df({
+        (f"Estadistica de mejora {DIRECTIONAL_COMPARISON_LABEL} por serie (ML_IMPROVEMENT_VS_SCP, nombre tecnico)", _stats_dict_to_df({
             "TODAS_COMPARABLES": pr.improvement_stats_all, "GANA_ML": pr.improvement_stats_ml_wins,
             "GANA_SCP": pr.improvement_stats_scp_wins, "EMPATE": pr.improvement_stats_tie,
         })),
@@ -520,8 +597,8 @@ def exclusions_blocks(result: ClientAnalysisResult) -> list[tuple[str, pd.DataFr
     return [
         ("Distribucion de COMPARISON_STATUS (universo candidato)",
          _dict_to_df(result.comparison_status_distribution, "COMPARISON_STATUS", "N")),
-        ("Reconciliacion: COMPARISON_STATUS='NOT_COMPARABLE_ML_EXCLUDED' vs HAS_ML_EXCLUDED=1", reconciliation),
-        ("Motivo de exclusion ML (ML_EXCLUSION_REASON)", reason_df),
+        ("Reconciliacion de exclusiones del Optimizer: COMPARISON_STATUS='NOT_COMPARABLE_ML_EXCLUDED' vs HAS_ML_EXCLUDED=1", reconciliation),
+        ("Motivo de exclusion del Optimizer (ML_EXCLUSION_REASON)", reason_df),
     ]
 
 
@@ -535,8 +612,8 @@ def top_absolute_impact_blocks(result: ClientAnalysisResult) -> list[tuple[str, 
         return [("Sin datos", pd.DataFrame())]
     top_reduction, top_increase = top_absolute_impact(df, pcols, mask)
     return [
-        (f"Top 20 mayor reduccion absoluta de error - {visible_label(MODEL_CLASSIFICATION_PERIOD)}", top_reduction),
-        (f"Top 20 mayor aumento absoluto de error - {visible_label(MODEL_CLASSIFICATION_PERIOD)}", top_increase),
+        (f"Top 20 mayor reduccion absoluta {DIRECTIONAL_COMPARISON_LABEL} - {visible_label(MODEL_CLASSIFICATION_PERIOD)}", top_reduction),
+        (f"Top 20 mayor aumento absoluto {DIRECTIONAL_COMPARISON_LABEL} - {visible_label(MODEL_CLASSIFICATION_PERIOD)}", top_increase),
     ]
 
 
@@ -546,8 +623,8 @@ def top_percentage_changes_blocks(result: ClientAnalysisResult) -> list[tuple[st
         return [("Sin datos", pd.DataFrame())]
     top_improve, top_worsen = top_percentage_changes(df, pcols, mask)
     return [
-        (f"Top 20 mayor mejora porcentual - {visible_label(MODEL_CLASSIFICATION_PERIOD)}", top_improve),
-        (f"Top 20 mayor deterioro porcentual - {visible_label(MODEL_CLASSIFICATION_PERIOD)}", top_worsen),
+        (f"Top 20 mayor mejora porcentual {DIRECTIONAL_COMPARISON_LABEL} - {visible_label(MODEL_CLASSIFICATION_PERIOD)}", top_improve),
+        (f"Top 20 mayor deterioro porcentual {DIRECTIONAL_COMPARISON_LABEL} - {visible_label(MODEL_CLASSIFICATION_PERIOD)}", top_worsen),
     ]
 
 
@@ -564,8 +641,8 @@ def top_percentage_changes_blocks(result: ClientAnalysisResult) -> list[tuple[st
 def _pareto_concentration_summary_table(pareto) -> pd.DataFrame:
     rows = []
     for label, group in (
-        ("Mejora (ABS_ERROR_REDUCTION > 0)", pareto.improvement),
-        ("Deterioro (ABS_ERROR_REDUCTION < 0)", pareto.deterioration),
+        (f"Mejora {DIRECTIONAL_COMPARISON_LABEL} (ABS_ERROR_REDUCTION > 0)", pareto.improvement),
+        (f"Deterioro {DIRECTIONAL_COMPARISON_LABEL} (ABS_ERROR_REDUCTION < 0)", pareto.deterioration),
     ):
         s = group.summary
         rows.append({
@@ -587,8 +664,8 @@ def pareto_absolute_impact_blocks(result: ClientAnalysisResult) -> list[tuple[st
     label = visible_label(MODEL_CLASSIFICATION_PERIOD)
 
     blocks: list[tuple[str, pd.DataFrame]] = [
-        (f"Pareto de impacto absoluto - mejora (ABS_ERROR_REDUCTION > 0) - {label}", pareto.improvement.table),
-        (f"Pareto de impacto absoluto - deterioro (ABS_ERROR_REDUCTION < 0) - {label}", pareto.deterioration.table),
+        (f"Pareto de impacto absoluto - mejora {DIRECTIONAL_COMPARISON_LABEL} (ABS_ERROR_REDUCTION > 0) - {label}", pareto.improvement.table),
+        (f"Pareto de impacto absoluto - deterioro {DIRECTIONAL_COMPARISON_LABEL} (ABS_ERROR_REDUCTION < 0) - {label}", pareto.deterioration.table),
         (f"Resumen de concentracion - {label}", _pareto_concentration_summary_table(pareto)),
     ]
 

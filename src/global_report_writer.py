@@ -17,6 +17,12 @@ import pandas as pd
 from src.global_analysis import GlobalAnalysisResult
 from src.global_portfolio_view import build_global_portfolio_view
 from src.periods import ALL_PERIODS, MONTHLY_PERIODS, visible_label
+from src.presentation_labels import (
+    AUTO_LABEL,
+    DIRECTIONAL_COMPARISON_LABEL,
+    GENERAL_COMPARISON_LABEL,
+    OPTIMIZER_LABEL,
+)
 from src.portfolio_presentation import prepare_portfolio_presentation
 from src.phase8_presentation import (
     BIAS_METHODOLOGY_NOTE,
@@ -46,11 +52,12 @@ MODEL_CLASSIFICATION_PERIOD = "6M"
 # Contrato completo de columnas Phase8 (src.phase8.category_performance_table_with_bias):
 # se conservan TODAS las senales presentes en la tabla fuente, no solo Bias.
 _PHASE8_BASE_HEADERS = [
-    "Categoria", "N comparable", "N gana ML", "N gana SCP", "N empate", "Tasa victoria ML",
-    "WAPE SCP", "WAPE ML", "Mejora agregada", "Mediana mejora", "Reduccion absoluta",
+    "Categoria", "N comparable", "N gana Optimizer", "N gana Auto", "N empate", "Tasa victoria Optimizer",
+    "WAPE Auto", "WAPE Optimizer", "Mejora agregada Optimizer vs Auto",
+    "Mediana mejora Optimizer vs Auto", "Reduccion absoluta Optimizer vs Auto",
     "% volumen historico", "Muestra pequena",
 ]
-_PHASE8_BIAS_HEADERS = ["Bias SCP", "Direccion SCP", "Bias ML", "Direccion ML"]
+_PHASE8_BIAS_HEADERS = ["Bias Auto", "Direccion Auto", "Bias Optimizer", "Direccion Optimizer"]
 _CROSS_TABLE_TOP_N = 30
 
 
@@ -142,8 +149,9 @@ def _phase8_cross_table_lines(table: pd.DataFrame, top_n: int = _CROSS_TABLE_TOP
     if has_n_clients:
         headers.append("N clientes")
     headers += [
-        "N gana ML", "N gana SCP", "N empate", "Tasa victoria ML", "WAPE SCP", "WAPE ML",
-        "Mejora agregada", "Mediana mejora", "Reduccion absoluta", "% volumen historico",
+        "N gana Optimizer", "N gana Auto", "N empate", "Tasa victoria Optimizer", "WAPE Auto", "WAPE Optimizer",
+        "Mejora agregada Optimizer vs Auto", "Mediana mejora Optimizer vs Auto",
+        "Reduccion absoluta Optimizer vs Auto", "% volumen historico",
         "Muestra pequena",
     ] + _PHASE8_BIAS_HEADERS
     rows = []
@@ -168,9 +176,10 @@ def _phase8_cross_table_lines(table: pd.DataFrame, top_n: int = _CROSS_TABLE_TOP
 def _period_summary_line(result: GlobalAnalysisResult, period: str) -> str:
     gp = result.periods[period]
     return (
-        f"WAPE SCP={_fmt_pct_fraction(gp.scp_wape_global)}, WAPE ML={_fmt_pct_fraction(gp.ml_wape_global)}, "
-        f"mejora global ponderada={_fmt_signed_pct_scaled(gp.global_improvement_pct)}, "
-        f"reduccion absoluta={_fmt_num(gp.abs_error_reduction_total)}, "
+        f"WAPE {AUTO_LABEL}={_fmt_pct_fraction(gp.scp_wape_global)}, "
+        f"WAPE {OPTIMIZER_LABEL}={_fmt_pct_fraction(gp.ml_wape_global)}, "
+        f"mejora global ponderada {DIRECTIONAL_COMPARISON_LABEL}={_fmt_signed_pct_scaled(gp.global_improvement_pct)}, "
+        f"reduccion absoluta {DIRECTIONAL_COMPARISON_LABEL}={_fmt_num(gp.abs_error_reduction_total)}, "
         f"series comparables={_fmt_num(gp.n_comparable_total)} de {_fmt_num(gp.n_candidates_total)} candidatas "
         f"({_fmt_pct_scaled(gp.pct_comparable_global)})."
     )
@@ -179,7 +188,10 @@ def _period_summary_line(result: GlobalAnalysisResult, period: str) -> str:
 def _category_table_lines(table: pd.DataFrame, top_n: int = 10, extra_client_col: bool = True) -> list[str]:
     if table.empty:
         return ["_Sin datos (sin series comparables)._"]
-    headers = ["Categoria", "N series", "N clientes", "Tasa victoria ML", "WAPE SCP", "WAPE ML", "Mejora agregada", "Mediana mejora"]
+    headers = [
+        "Categoria", "N series", "N clientes", "Tasa victoria Optimizer", "WAPE Auto", "WAPE Optimizer",
+        "Mejora agregada Optimizer vs Auto", "Mediana mejora Optimizer vs Auto",
+    ]
     rows = []
     for _, r in table.head(top_n).iterrows():
         rows.append([
@@ -200,7 +212,7 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     recent = result.periods["RECENT_3M"]
     older = result.periods["OLDER_3M"]
 
-    a("# Comparativa global SCP vs ML — todos los clientes")
+    a(f"# Comparativa global {GENERAL_COMPARISON_LABEL} — todos los clientes")
     a("")
     a(f"**Fecha del analisis:** {pd.Timestamp.now():%d/%m/%Y}")
     a(f"**Clientes incluidos:** {len(result.client_results)}")
@@ -219,8 +231,8 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     n_improved = m6_stats.get("n_improved")
     a(
         f"Sobre {_fmt_num(n_total)} clientes cargados y {_fmt_num(m6.n_comparable_total)} series comparables en "
-        f"el semestre completo, ML **{veredicto}** el WAPE global ponderado frente a SCP "
-        f"({_fmt_signed_pct_scaled(m6.global_improvement_pct)}). ML mejora en **{_fmt_num(n_improved)} de "
+        f"el semestre completo, {OPTIMIZER_LABEL} **{veredicto}** el WAPE global ponderado frente a {AUTO_LABEL} "
+        f"({_fmt_signed_pct_scaled(m6.global_improvement_pct)}). {OPTIMIZER_LABEL} mejora frente a {AUTO_LABEL} en **{_fmt_num(n_improved)} de "
         f"{_fmt_num(n_evaluable)} clientes con performance calculable** en 6M "
         f"({_fmt_pct_scaled(m6_stats.get('pct_improved'))}; mediana de mejora por cliente: "
         f"{_fmt_signed_pct_scaled(m6_stats.get('median'))})"
@@ -266,7 +278,7 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     a("---")
     a("")
 
-    # 4 / 5. Semestre y trimestres
+    # 4 / 5. Semestre y bloques de tres meses
     a("## 4. Resultado del semestre completo")
     a("")
     a(_period_summary_line(result, "6M"))
@@ -288,17 +300,19 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     a("---")
     a("")
 
-    # 7. Comparacion entre trimestres
-    a("## 7. Comparacion entre trimestres")
+    # 7. Comparacion entre bloques de tres meses
+    a("## 7. Comparacion entre bloques de 3 meses")
     a("")
     sign_change = (
-        "cambia de signo entre trimestres"
+        "cambia de signo entre periodos"
         if (recent.global_improvement_pct * older.global_improvement_pct < 0)
-        else "mantiene el mismo signo en ambos trimestres"
+        else "mantiene el mismo signo en ambos periodos"
     )
     a(
-        f"Mejora ponderada: {_fmt_signed_pct_scaled(recent.global_improvement_pct)} (primer trimestre) vs "
-        f"{_fmt_signed_pct_scaled(older.global_improvement_pct)} (segundo trimestre). La mejora global {sign_change}."
+        f"Mejora ponderada {DIRECTIONAL_COMPARISON_LABEL}: "
+        f"{_fmt_signed_pct_scaled(recent.global_improvement_pct)} en {visible_label('RECENT_3M')} vs "
+        f"{_fmt_signed_pct_scaled(older.global_improvement_pct)} en {visible_label('OLDER_3M')}. "
+        f"La mejora global {sign_change}."
     )
     a("")
     a(
@@ -313,7 +327,7 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     a("## 8. Evolucion mensual")
     a("")
     a("\n".join(_table_from_rows(
-        ["Mes", "Comparables", "WAPE SCP", "WAPE ML", "Mejora ponderada", "% clientes mejoran", "% series gana ML"],
+        ["Mes", "Comparables", "WAPE Auto", "WAPE Optimizer", "Mejora ponderada Optimizer vs Auto", "% clientes donde Optimizer mejora", "% series donde gana Optimizer"],
         [
             [
                 month, _fmt_num(result.periods[month].n_comparable_total),
@@ -328,7 +342,7 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     )))
     a("")
     a(
-        "No se concluye que ML mejora de forma estable solo porque gane mas series en algun mes: comparar "
+        f"No se concluye que {OPTIMIZER_LABEL} mejora de forma estable frente a {AUTO_LABEL} solo porque gane mas series en algun mes: comparar "
         "siempre con la mejora ponderada y el % de clientes que mejoran de la misma fila."
     )
     a("")
@@ -341,7 +355,7 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     a("Perspectiva 1 (impacto ponderado por volumen) para cada periodo:")
     a("")
     a("\n".join(_table_from_rows(
-        ["Periodo", "WAPE SCP", "WAPE ML", "Mejora global ponderada"],
+        ["Periodo", "WAPE Auto", "WAPE Optimizer", "Mejora global ponderada Optimizer vs Auto"],
         [
             [p, _fmt_pct_fraction(result.periods[p].scp_wape_global), _fmt_pct_fraction(result.periods[p].ml_wape_global),
              _fmt_signed_pct_scaled(result.periods[p].global_improvement_pct)]
@@ -420,7 +434,7 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     a("")
 
     # 13 / 14. Clientes donde mejora / empeora
-    a("## 13. Clientes donde mejora ML")
+    a(f"## 13. Clientes donde {OPTIMIZER_LABEL} mejora frente a {AUTO_LABEL}")
     a("")
     improving = [
         (r.source.id_client, r.source.display_name, r.periods["6M"].wape.get("improvement_pct"))
@@ -430,13 +444,13 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     ]
     improving.sort(key=lambda x: -x[2])
     a(
-        f"ML mejora en **{len(improving)} de {_fmt_num(n_evaluable)} clientes con performance calculable** en "
+        f"{OPTIMIZER_LABEL} mejora frente a {AUTO_LABEL} en **{len(improving)} de {_fmt_num(n_evaluable)} clientes con performance calculable** en "
         f"6M" + (f". Otros {_fmt_num(n_missing)} clientes no tienen series comparables en 6M y no entran en "
                  f"este recuento." if n_missing else ".")
     )
     a("")
     a("\n".join(_table_from_rows(
-        ["ID_CLIENT", "Cliente", "Mejora ponderada 6M"],
+        ["ID_CLIENT", "Cliente", "Mejora ponderada Optimizer vs Auto 6M"],
         [[str(cid), name, _fmt_signed_pct_scaled(v)] for cid, name, v in improving],
     )) if improving else "_Ninguno._")
     a("")
@@ -459,7 +473,7 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     )
     a("")
     a("\n".join(_table_from_rows(
-        ["ID_CLIENT", "Cliente", "Mejora ponderada 6M"],
+        ["ID_CLIENT", "Cliente", "Mejora ponderada Optimizer vs Auto 6M"],
         [[str(cid), name, _fmt_signed_pct_scaled(v)] for cid, name, v in worsening],
     )) if worsening else "_Ninguno._")
     a("")
@@ -696,7 +710,7 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     a(
         f"Del universo candidato total ({_fmt_num(m6.n_candidates_total)} series), "
         f"{_fmt_pct_scaled(100 - m6.pct_comparable_global)} queda fuera de comparacion en 6M. "
-        f"Exclusiones ML reales (HAS_ML_EXCLUDED=1) en todos los clientes: {_fmt_num(total_excluded)}."
+        f"Exclusiones del {OPTIMIZER_LABEL} (`HAS_ML_EXCLUDED=1`, nombre tecnico) en todos los clientes: {_fmt_num(total_excluded)}."
     )
     a("")
     a("---")
@@ -737,8 +751,8 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
     a("## 21. Conclusion final")
     a("")
     a(
-        f"ML **{veredicto}** el WAPE global ponderado un {_fmt_signed_pct_scaled(m6.global_improvement_pct)} "
-        f"sobre el volumen total analizado en 6M. Mejora en **{_fmt_num(n_improved)} de {_fmt_num(n_evaluable)} "
+        f"{OPTIMIZER_LABEL} **{veredicto}** el WAPE global ponderado frente a {AUTO_LABEL} un {_fmt_signed_pct_scaled(m6.global_improvement_pct)} "
+        f"sobre el volumen total analizado en 6M. Mejora frente a {AUTO_LABEL} en **{_fmt_num(n_improved)} de {_fmt_num(n_evaluable)} "
         f"clientes con performance calculable** (mediana de mejora por cliente "
         f"{_fmt_signed_pct_scaled(m6.client_improvement_stats.get('median'))})"
         + (f", mientras que otros {_fmt_num(n_missing)} clientes no tienen series comparables en 6M" if n_missing else "")
@@ -776,8 +790,8 @@ def build_global_report(result: GlobalAnalysisResult) -> str:
         phase8 = m6.phase8
         bt = phase8.bias_total
         a(
-            f"**Bias agregado SCP:** {_fmt_signed_pct_fraction(bt.scp_bias_agg)} ({direction_label_es(bt.scp_direction)}). "
-            f"**Bias agregado ML:** {_fmt_signed_pct_fraction(bt.ml_bias_agg)} ({direction_label_es(bt.ml_direction)})."
+            f"**Bias agregado {AUTO_LABEL}:** {_fmt_signed_pct_fraction(bt.scp_bias_agg)} ({direction_label_es(bt.scp_direction)}). "
+            f"**Bias agregado {OPTIMIZER_LABEL}:** {_fmt_signed_pct_fraction(bt.ml_bias_agg)} ({direction_label_es(bt.ml_direction)})."
         )
         a("")
         a(BIAS_METHODOLOGY_NOTE)

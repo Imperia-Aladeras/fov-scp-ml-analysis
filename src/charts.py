@@ -3,7 +3,8 @@ Graficos individuales por cliente (7 subcarpetas: coverage, semester,
 quarters, monthly, models, classifications, impact_and_risk).
 
 Reglas de visualizacion (docs/analysis_requirements.md):
-    - ML: azul. SCP: rojo. Empate: gris. Colores coherentes en todos los graficos.
+    - Optimizer: azul. Auto: rojo. Empate: gris. Los nombres COLOR_ML y
+      COLOR_SCP son identificadores tecnicos preservados.
     - No cortar titulos. Incluir tamano de muestra, periodo y cliente.
     - Cerrar todas las figuras (no acumular memoria).
     - No recortar valores extremos silenciosamente: si un histograma se
@@ -31,6 +32,13 @@ from src.client_analysis import ClientAnalysisResult
 from src.metrics import relative_improvement_row
 from src.models import category_performance_table, top_absolute_impact, top_percentage_changes
 from src.periods import period_columns, visible_label
+from src.presentation_labels import (
+    AUTO_LABEL,
+    DIRECTIONAL_COMPARISON_LABEL,
+    GENERAL_COMPARISON_LABEL,
+    OPTIMIZER_LABEL,
+    winner_short_label,
+)
 from src.phase8_presentation import sort_volume_table, volume_bucket_label_es
 
 COLOR_ML = "#2a78d6"
@@ -65,8 +73,9 @@ def _apply_title(ax, title: str, subtitle: str) -> None:
     (no de ejes): usar ax.transAxes para el subtitulo lo situaba a menudo
     encima del propio titulo (se solapaban) porque no reserva espacio en el
     layout. fig.text si es tenido en cuenta por el rect de tight_layout.
+    El wrapping evita que los titulos largos excedan el ancho renderizado.
     """
-    ax.set_title(title, color=COLOR_TEXT, fontsize=12, loc="left", pad=16)
+    ax.set_title(title, color=COLOR_TEXT, fontsize=12, loc="left", pad=16, wrap=True)
     ax.figure.text(0.01, 0.975, subtitle, fontsize=8.5, color=COLOR_TEXT_SECONDARY, ha="left", va="top")
 
 
@@ -144,13 +153,13 @@ def generate_coverage_charts(result: ClientAnalysisResult, out_dir: Path) -> lis
     m6 = result.periods.get("6M")
     if m6 is not None:
         path = _chart_reason_distribution(
-            "Motivos de exclusion ML (ML_EXCLUSION_REASON)", "03_ml_exclusion_reasons.png",
+            "Motivos de exclusion del Optimizer (ML_EXCLUSION_REASON)", "03_ml_exclusion_reasons.png",
             m6.ml_exclusion_reason_counts, result, out_dir,
         )
         if path:
             generated.append(path)
         path = _chart_reason_distribution(
-            "Motivos de ausencia de forecast SCP (SCP_NO_OUTPUT_REASON, 6M)", "04_scp_no_output_reasons.png",
+            "Motivos de ausencia de forecast Auto (SCP_NO_OUTPUT_REASON, 6M)", "04_scp_no_output_reasons.png",
             m6.scp_no_output_reason_counts, result, out_dir,
         )
         if path:
@@ -171,12 +180,12 @@ def _chart_wape_comparison(period: str, result: ClientAnalysisResult, out_dir: P
     if scp_w is None or ml_w is None or (isinstance(scp_w, float) and np.isnan(scp_w)):
         return None
     fig, ax = _new_fig((5.5, 4.2))
-    bars = ax.bar(["SCP", "ML"], [scp_w * 100, ml_w * 100], color=[COLOR_SCP, COLOR_ML], width=0.5)
+    bars = ax.bar([AUTO_LABEL, OPTIMIZER_LABEL], [scp_w * 100, ml_w * 100], color=[COLOR_SCP, COLOR_ML], width=0.5)
     for bar, val in zip(bars, [scp_w * 100, ml_w * 100]):
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), f"{val:.1f}%",
                  ha="center", va="bottom", fontsize=10, color=COLOR_TEXT)
     ax.set_ylabel("WAPE (%)", color=COLOR_TEXT_SECONDARY, fontsize=9)
-    _apply_title(ax, f"WAPE global ponderado SCP vs ML - {pr.label}",
+    _apply_title(ax, f"WAPE global ponderado {GENERAL_COMPARISON_LABEL} - {pr.label}",
                  f"{_client_tag(result)} | n={pr.n_comparable:,}".replace(",", "."))
     return _save_close(fig, out_dir / fname)
 
@@ -190,7 +199,7 @@ def _chart_winner_distribution(period: str, result: ClientAnalysisResult, out_di
     colors = {"ML": COLOR_ML, "SCP": COLOR_SCP, "TIE": COLOR_TIE}
     values = [wc.get(m, {}).get("n", 0) for m in order]
     fig, ax = _new_fig((5.5, 4.2))
-    bars = ax.bar(order, values, color=[colors[m] for m in order], width=0.55)
+    bars = ax.bar([winner_short_label(m) for m in order], values, color=[colors[m] for m in order], width=0.55)
     for bar, m in zip(bars, order):
         pct = wc.get(m, {}).get("pct", float("nan"))
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
@@ -222,7 +231,7 @@ def _chart_improvement_histogram(period: str, result: ClientAnalysisResult, out_
         f"({n_below} por debajo, {n_above} por encima; estadisticas sin recortar)".replace(",", ".")
     )
     _apply_title(ax, f"Distribucion de mejora relativa por serie - {pr.label}", subtitle)
-    ax.set_xlabel("% mejora ML vs SCP (positivo = ML mejor)", color=COLOR_TEXT_SECONDARY, fontsize=9)
+    ax.set_xlabel(f"% mejora {DIRECTIONAL_COMPARISON_LABEL} (positivo = Optimizer mejor)", color=COLOR_TEXT_SECONDARY, fontsize=9)
     ax.set_ylabel("N series", color=COLOR_TEXT_SECONDARY, fontsize=9)
     return _save_close(fig, out_dir / fname)
 
@@ -236,13 +245,13 @@ def _chart_abs_error_reduction(period: str, result: ClientAnalysisResult, out_di
     if scp_err is None or ml_err is None:
         return None
     fig, ax = _new_fig((5.5, 4.2))
-    bars = ax.bar(["SCP", "ML"], [scp_err, ml_err], color=[COLOR_SCP, COLOR_ML], width=0.5)
+    bars = ax.bar([AUTO_LABEL, OPTIMIZER_LABEL], [scp_err, ml_err], color=[COLOR_SCP, COLOR_ML], width=0.5)
     for bar, val in zip(bars, [scp_err, ml_err]):
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), f"{val:,.0f}".replace(",", "."),
                  ha="center", va="bottom", fontsize=10, color=COLOR_TEXT)
     ax.set_ylabel("Error absoluto total", color=COLOR_TEXT_SECONDARY, fontsize=9)
     _apply_title(
-        ax, f"Error absoluto total SCP vs ML - {pr.label}",
+        ax, f"Error absoluto total {GENERAL_COMPARISON_LABEL} - {pr.label}",
         f"{_client_tag(result)} | reduccion={pr.abs_error_reduction_total:,.0f}".replace(",", "."),
     )
     return _save_close(fig, out_dir / fname)
@@ -263,8 +272,8 @@ def _chart_model_win_rates(period: str, result: ClientAnalysisResult, out_dir: P
     for bar, n in zip(bars, table["n_comparable"]):
         ax.text(bar.get_width(), bar.get_y() + bar.get_height() / 2, f" n={n}", va="center", fontsize=8, color=COLOR_TEXT_SECONDARY)
     ax.set_xlim(0, 100)
-    ax.set_xlabel("Tasa de victoria ML (%)", color=COLOR_TEXT_SECONDARY, fontsize=9)
-    _apply_title(ax, f"Modelos ML y tasa de victoria - {pr.label}", f"{_client_tag(result)} | top {top_n} modelos por frecuencia")
+    ax.set_xlabel("Tasa de victoria Optimizer (%)", color=COLOR_TEXT_SECONDARY, fontsize=9)
+    _apply_title(ax, f"Modelos seleccionados por Optimizer y tasa de victoria - {pr.label}", f"{_client_tag(result)} | top {top_n} modelos por frecuencia")
     return _save_close(fig, out_dir / fname)
 
 
@@ -306,8 +315,8 @@ def generate_quarters_charts(result: ClientAnalysisResult, out_dir: Path) -> lis
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), f"{val:+.1f}%" if val == val else "n/d",
                      ha="center", va="bottom" if (val or 0) >= 0 else "top", fontsize=10, color=COLOR_TEXT)
         ax.axhline(0, color=COLOR_AXIS, linewidth=1)
-        ax.set_ylabel("Mejora relativa ponderada (%)", color=COLOR_TEXT_SECONDARY, fontsize=9)
-        _apply_title(ax, "Mejora comparativa entre trimestres", f"{_client_tag(result)}")
+        ax.set_ylabel(f"Mejora ponderada {DIRECTIONAL_COMPARISON_LABEL} (%)", color=COLOR_TEXT_SECONDARY, fontsize=9)
+        _apply_title(ax, "Mejora comparada entre bloques de 3 meses", f"{_client_tag(result)}")
         generated.append(_save_close(fig, out_dir / "03_improvement_comparative.png"))
 
         fig, ax = _new_fig((7, 4.2))
@@ -315,12 +324,12 @@ def generate_quarters_charts(result: ClientAnalysisResult, out_dir: Path) -> lis
         x = np.arange(3)
         for offset, method, color in ((-width, "ML", COLOR_ML), (0, "SCP", COLOR_SCP), (width, "TIE", COLOR_TIE)):
             vals = [recent.winner_counts.get(method, {}).get("n", 0), older.winner_counts.get(method, {}).get("n", 0), 0]
-            ax.bar(x[:2] + offset, vals[:2], width=width, color=color, label=method)
+            ax.bar(x[:2] + offset, vals[:2], width=width, color=color, label=winner_short_label(method))
         ax.set_xticks([0, 1])
         ax.set_xticklabels([visible_label("RECENT_3M"), visible_label("OLDER_3M")])
         ax.legend(frameon=False, fontsize=8)
         ax.set_ylabel("N series", color=COLOR_TEXT_SECONDARY, fontsize=9)
-        _apply_title(ax, "Ganadores comparados entre trimestres", f"{_client_tag(result)}")
+        _apply_title(ax, "Ganadores comparados entre bloques de 3 meses", f"{_client_tag(result)}")
         generated.append(_save_close(fig, out_dir / "04_winners_comparative.png"))
 
         fig, ax = _new_fig((6, 4.2))
@@ -330,8 +339,8 @@ def generate_quarters_charts(result: ClientAnalysisResult, out_dir: Path) -> lis
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), f"{val:,.0f}".replace(",", "."),
                      ha="center", va="bottom", fontsize=10, color=COLOR_TEXT)
         ax.axhline(0, color=COLOR_AXIS, linewidth=1)
-        ax.set_ylabel("Reduccion absoluta de error", color=COLOR_TEXT_SECONDARY, fontsize=9)
-        _apply_title(ax, "Reduccion absoluta comparada entre trimestres", f"{_client_tag(result)}")
+        ax.set_ylabel(f"Reduccion absoluta {DIRECTIONAL_COMPARISON_LABEL}", color=COLOR_TEXT_SECONDARY, fontsize=9)
+        _apply_title(ax, "Reduccion absoluta comparada entre bloques de 3 meses", f"{_client_tag(result)}")
         generated.append(_save_close(fig, out_dir / "05_abs_reduction_comparative.png"))
 
     return generated
@@ -352,8 +361,8 @@ def generate_monthly_charts(result: ClientAnalysisResult, out_dir: Path) -> list
     fig, ax = _new_fig((8.5, 4.5))
     scp_vals = [pr.wape.get("scp_wape_global") * 100 if pr and pr.n_comparable else np.nan for pr in prs]
     ml_vals = [pr.wape.get("ml_wape_global") * 100 if pr and pr.n_comparable else np.nan for pr in prs]
-    ax.plot(months, scp_vals, marker="o", color=COLOR_SCP, label="SCP", linewidth=2)
-    ax.plot(months, ml_vals, marker="o", color=COLOR_ML, label="ML", linewidth=2)
+    ax.plot(months, scp_vals, marker="o", color=COLOR_SCP, label=AUTO_LABEL, linewidth=2)
+    ax.plot(months, ml_vals, marker="o", color=COLOR_ML, label=OPTIMIZER_LABEL, linewidth=2)
     ax.set_ylabel("WAPE (%)", color=COLOR_TEXT_SECONDARY, fontsize=9)
     ax.legend(frameon=False, fontsize=8)
     _apply_title(ax, "Evolucion mensual del WAPE (M1-M6)", f"{_client_tag(result)}")
@@ -363,7 +372,7 @@ def generate_monthly_charts(result: ClientAnalysisResult, out_dir: Path) -> list
     imp_vals = [pr.wape.get("improvement_pct") if pr and pr.n_comparable else np.nan for pr in prs]
     ax.plot(months, imp_vals, marker="o", color=COLOR_ML, linewidth=2)
     ax.axhline(0, color=COLOR_AXIS, linewidth=1)
-    ax.set_ylabel("Mejora relativa ponderada (%)", color=COLOR_TEXT_SECONDARY, fontsize=9)
+    ax.set_ylabel(f"Mejora ponderada {DIRECTIONAL_COMPARISON_LABEL} (%)", color=COLOR_TEXT_SECONDARY, fontsize=9)
     _apply_title(ax, "Evolucion mensual de la mejora relativa", f"{_client_tag(result)}")
     generated.append(_save_close(fig, out_dir / "02_improvement_evolution.png"))
 
@@ -380,12 +389,12 @@ def generate_monthly_charts(result: ClientAnalysisResult, out_dir: Path) -> list
     pct_ml = [pr.winner_counts.get("ML", {}).get("pct") if pr and pr.n_comparable else np.nan for pr in prs]
     pct_scp = [pr.winner_counts.get("SCP", {}).get("pct") if pr and pr.n_comparable else np.nan for pr in prs]
     pct_tie = [pr.winner_counts.get("TIE", {}).get("pct") if pr and pr.n_comparable else np.nan for pr in prs]
-    ax.plot(months, pct_ml, marker="o", color=COLOR_ML, label="ML", linewidth=2)
-    ax.plot(months, pct_scp, marker="o", color=COLOR_SCP, label="SCP", linewidth=2)
+    ax.plot(months, pct_ml, marker="o", color=COLOR_ML, label=OPTIMIZER_LABEL, linewidth=2)
+    ax.plot(months, pct_scp, marker="o", color=COLOR_SCP, label=AUTO_LABEL, linewidth=2)
     ax.plot(months, pct_tie, marker="o", color=COLOR_TIE, label="Empate", linewidth=2)
     ax.set_ylabel("% de series", color=COLOR_TEXT_SECONDARY, fontsize=9)
     ax.legend(frameon=False, fontsize=8)
-    _apply_title(ax, "Evolucion mensual de victorias ML/SCP/Empate", f"{_client_tag(result)}")
+    _apply_title(ax, "Evolucion mensual de victorias Optimizer/Auto/Empate", f"{_client_tag(result)}")
     generated.append(_save_close(fig, out_dir / "04_winner_pct_evolution.png"))
 
     fig, ax = _new_fig((8.5, 4.5))
@@ -496,7 +505,7 @@ def _pareto_bar_chart(
 
 def _chart_bias_by_volume_bucket(result: ClientAnalysisResult, out_dir: Path, fname: str) -> str | None:
     """
-    Unico chart nuevo de Fase 8 (8C): Bias agregado SCP vs ML por bucket de
+    Unico chart nuevo de Fase 8 (8C): Bias agregado Auto/Optimizer por bucket de
     volumen relativo (6M). Lee PeriodResult.phase8.volume_table ya calculado
     (src.phase8.category_performance_table_with_bias, nunca recalcula Bias ni
     buckets aqui). Solo se genera cuando el volumen es realmente segmentable
@@ -522,15 +531,15 @@ def _chart_bias_by_volume_bucket(result: ClientAnalysisResult, out_dir: Path, fn
     fig, ax = _new_fig((7.5, 4.5))
     x = np.arange(len(labels))
     width = 0.35
-    ax.bar(x - width / 2, scp_vals, width=width, color=COLOR_SCP, label="SCP")
-    ax.bar(x + width / 2, ml_vals, width=width, color=COLOR_ML, label="ML")
+    ax.bar(x - width / 2, scp_vals, width=width, color=COLOR_SCP, label=AUTO_LABEL)
+    ax.bar(x + width / 2, ml_vals, width=width, color=COLOR_ML, label=OPTIMIZER_LABEL)
     ax.axhline(0, color=COLOR_AXIS, linewidth=1)
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.set_ylabel("Bias agregado (%)", color=COLOR_TEXT_SECONDARY, fontsize=9)
     ax.legend(frameon=False, fontsize=8)
     _apply_title(
-        ax, "Bias agregado SCP vs ML por volumen relativo",
+        ax, f"Bias agregado {GENERAL_COMPARISON_LABEL} por volumen relativo",
         f"{_client_tag(result)} | {visible_label(MODEL_CLASSIFICATION_PERIOD)} | buckets RELATIVOS a este cliente",
     )
     return _save_close(fig, out_dir / fname)
@@ -546,10 +555,10 @@ def generate_impact_and_risk_charts(result: ClientAnalysisResult, out_dir: Path)
     sub_tag = f"{_client_tag(result)} | {visible_label(MODEL_CLASSIFICATION_PERIOD)}"
 
     top_reduction, top_increase = top_absolute_impact(df, pcols, pr.comparable_mask, n=15)
-    path = _bar_top_ranking(top_reduction, "ABS_ERROR_REDUCTION", "Top reducciones absolutas de error", sub_tag, COLOR_ML, out_dir / "01_top_absolute_reductions.png")
+    path = _bar_top_ranking(top_reduction, "ABS_ERROR_REDUCTION", f"Top reducciones absolutas {DIRECTIONAL_COMPARISON_LABEL}", sub_tag, COLOR_ML, out_dir / "01_top_absolute_reductions.png")
     if path:
         generated.append(path)
-    path = _bar_top_ranking(top_increase, "ABS_ERROR_REDUCTION", "Top aumentos absolutos de error", sub_tag, COLOR_SCP, out_dir / "02_top_absolute_increases.png")
+    path = _bar_top_ranking(top_increase, "ABS_ERROR_REDUCTION", f"Top aumentos absolutos {DIRECTIONAL_COMPARISON_LABEL}", sub_tag, COLOR_SCP, out_dir / "02_top_absolute_increases.png")
     if path:
         generated.append(path)
 

@@ -46,7 +46,7 @@
     <h3>Familias del Optimizer</h3>
     {% for group in global_portfolio.families %}
       <h4>{{ group.block }}</h4>
-      <div class="table-scroll"><table><thead><tr><th>Familia</th><th>Selecciones</th><th>Cuota</th><th>N performance</th><th>N clientes</th><th>Muestra</th><th>Volumen</th><th>Cuota volumen</th><th>WAPE Auto</th><th>WAPE Optimizer</th><th>Bias Auto</th><th>Bias Optimizer</th><th>Victoria Optimizer</th><th>Mejora Optimizer vs Auto</th><th>Reducción absoluta</th></tr></thead>
+      <div class="table-scroll"><table><thead><tr><th>Familia</th><th>Selecciones</th><th>Cuota</th><th>N performance</th><th>N clientes</th><th>Muestra</th><th>Volumen</th><th>Cuota volumen</th><th>WAPE Auto</th><th>WAPE Optimizer</th><th>Bias Auto</th><th>Bias Optimizer</th><th>Victoria Optimizer</th><th>Mejora Optimizer vs Auto</th><th>Reducción absoluta Optimizer vs Auto</th></tr></thead>
         <tbody>{% for r in group.rows %}<tr><td>{{ r.family }}</td><td>{{ r.selection_count }}</td><td>{{ r.selection_share_of_assignable }}</td><td>{{ r.n_performance }}</td><td>{{ r.n_clients }}</td><td>{{ r.sample_note or "Sin advertencia" }}</td><td>{{ r.historical_volume }}</td><td>{{ r.volume_share }}</td><td>{{ r.scp_wape }}</td><td>{{ r.optimizer_wape }}</td><td>{{ r.scp_bias }}</td><td>{{ r.optimizer_bias }}</td><td>{{ r.selected_engine_win_rate }}</td><td>{{ r.optimizer_improvement_vs_scp }}</td><td>{{ r.optimizer_abs_error_reduction_vs_scp }}</td></tr>{% endfor %}</tbody>
       </table></div>
       {% if group.truncated %}<p class="note">Se muestran {{ group.limit }} de {{ group.total_rows }} familias por frecuencia; Excel conserva todas.</p>{% endif %}
@@ -105,7 +105,7 @@
     {% if global_portfolio.classification_transitions.truncated %}<p class="note">Se muestran hasta {{ global_portfolio.classification_transitions.limit_per_engine }} transiciones por motor, ordenadas solo por frecuencia; Excel conserva todas.</p>{% endif %}
 
     <h4>Performance descriptiva por estabilidad</h4>
-    <div class="table-scroll"><table><thead><tr><th>Dimensión</th><th>Motor</th><th>Período</th><th>Estado</th><th>N performance</th><th>N clientes</th><th>Muestra</th><th>Volumen</th><th>WAPE Auto</th><th>WAPE Optimizer</th><th>Bias Auto</th><th>Bias Optimizer</th><th>Victoria motor analizado</th><th>Mejora Optimizer vs Auto</th><th>Reducción absoluta</th></tr></thead>
+    <div class="table-scroll"><table><thead><tr><th>Dimensión</th><th>Motor</th><th>Período</th><th>Estado</th><th>N performance</th><th>N clientes</th><th>Muestra</th><th>Volumen</th><th>WAPE Auto</th><th>WAPE Optimizer</th><th>Bias Auto</th><th>Bias Optimizer</th><th>Victoria motor analizado</th><th>Mejora Optimizer vs Auto</th><th>Reducción absoluta Optimizer vs Auto</th></tr></thead>
       <tbody>{% for r in global_portfolio.performance_by_stability %}<tr><td>{{ r.stability_type }}</td><td>{{ r.engine }}</td><td>{{ r.block }}</td><td>{{ r.stability_state }}</td><td>{{ r.n_performance }}</td><td>{{ r.n_clients }}</td><td>{{ r.sample_note or "Sin advertencia" }}</td><td>{{ r.historical_volume }}</td><td>{{ r.scp_wape }}</td><td>{{ r.optimizer_wape }}</td><td>{{ r.scp_bias }}</td><td>{{ r.optimizer_bias }}</td><td>{{ r.selected_engine_win_rate }}</td><td>{{ r.optimizer_improvement_vs_scp }}</td><td>{{ r.optimizer_abs_error_reduction_vs_scp }}</td></tr>{% endfor %}</tbody>
     </table></div>
     {% else %}<p class="note">Sin asignaciones observadas; la cobertura anterior sigue siendo informativa.</p>{% endif %}

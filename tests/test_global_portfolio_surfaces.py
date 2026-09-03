@@ -216,7 +216,7 @@ def test_global_excel_adds_18_19_and_preserves_native_formats_and_events(tmp_pat
     model_sheet = workbook["11_models_and_win_rates"]
     ratio = _cell_below_header(model_sheet, "Cuota de selección sobre asignaciones posibles")
     improvement = _cell_below_header(
-        model_sheet, "Mejora de WAPE — SCP Classic Optimizer frente a SCP Classic Auto",
+        model_sheet, "Mejora de WAPE — Optimizer vs Auto",
     )
     assert isinstance(ratio.value, (int, float)) and ratio.number_format == "0.0%"
     assert isinstance(improvement.value, (int, float)) and abs(improvement.value) > 1

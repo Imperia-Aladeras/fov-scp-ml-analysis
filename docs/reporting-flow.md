@@ -1,8 +1,8 @@
-# Flujo técnico de reporting SCP frente a ML
+# Flujo técnico de reporting SCP Classic Auto vs SCP Classic Optimizer
 
 ## 1. Resumen ejecutivo
 
-Este repositorio construye informes retrospectivos para comparar, por serie de forecast, el resultado del método operativo SCP con el resultado de ML. La métrica principal es WAPE; MAE, RMSE y Bias se tratan como métricas de auditoría. El sistema calcula cobertura, ganadores, mejora relativa de ML frente a SCP, reducción absoluta de error, estadísticas por serie, análisis por modelo y clasificación, rankings y cuatro perspectivas globales entre clientes.
+Este repositorio construye informes retrospectivos para comparar, por serie de forecast, el resultado de SCP Classic Auto con el de SCP Classic Optimizer. La métrica principal es WAPE; MAE, RMSE y Bias se tratan como métricas de auditoría. El sistema calcula cobertura, ganadores, mejora Optimizer vs Auto, reducción absoluta de error, estadísticas por serie, análisis por modelo y clasificación, rankings y cuatro perspectivas globales entre clientes.
 
 **Confirmado por código.** El flujo ejecutable actual es completamente local y basado en archivos:
 
@@ -50,7 +50,7 @@ Los outputs existentes se han usado solo para comprobar estructura y tamaños. `
 **Confirmado por código.** Cada fila representa una configuración/serie identificada principalmente por `ID_CLIENT` e `ID_CONFIGURATION`, dentro de un batch/run. Para nueve periodos técnicos (`M1..M6`, `RECENT_3M`, `OLDER_3M`, `6M`), el proyecto:
 
 1. determina la población candidata y comparable;
-2. compara error SCP y ML;
+2. compara error Auto y Optimizer;
 3. conserva como fuente de verdad el ganador suministrado por el CSV;
 4. agrega resultados dentro de un cliente y entre clientes;
 5. materializa artefactos navegables y auditables por ejecución.
@@ -268,9 +268,9 @@ Columnas adicionales se toleran y quedan ignoradas. Una sola columna obligatoria
 | Forecast negativo | Warning, pero sigue siendo comparable y participa |
 | Histórico cero/nulo/negativo | No comparable para ese periodo; negativo genera warning |
 | Error absoluto/WAPE negativo | No se filtra ni valida el signo; puede participar |
-| WAPE ambos aproximadamente cero | Mejora ML-vs-SCP = NaN; se audita que winner sea TIE |
-| SCP WAPE ~0 y ML positivo | Mejora = NaN para evitar división explosiva |
-| ML WAPE ~0 y SCP positivo | Mejora = +100% |
+| WAPE ambos aproximadamente cero | Mejora Optimizer vs Auto = NaN; se audita que el winner raw sea TIE |
+| WAPE Auto ~0 y WAPE Optimizer positivo | Mejora = NaN para evitar división explosiva |
+| WAPE Optimizer ~0 y WAPE Auto positivo | Mejora = +100% |
 | Winner nulo en fila comparable | ERROR del periodo, pero no invalida el fichero/cliente |
 
 ## 8. Linaje completo de datos
@@ -296,7 +296,7 @@ Columnas adicionales se toleran y quedan ignoradas. Una sola columna obligatoria
 
 - **Llega calculado:** forecasts, errores firmados/absolutos/cuadráticos, totales, contadores de meses positivos, MAE, RMSE, WAPE, Bias, winners/finalistas, mejora del ganador, estados, flags y motivos.
 - **Se reutiliza directamente:** forecasts y errores para comparabilidad; totales de histórico/error; WAPE por fila; `WINNER_METHOD_*`; modelos, clasificaciones, flags y motivos.
-- **Se recalcula para reporting:** WAPE ponderado agregado, mejora asimétrica de ML frente a SCP, reducción absoluta, descriptivos, rates y contribuciones.
+- **Se recalcula para reporting:** WAPE ponderado agregado, mejora asimétrica Optimizer vs Auto, reducción absoluta, descriptivos, rates y contribuciones.
 - **Se reconstruye solo como auditoría:** sumas temporales, error mensual, WAPE, MAE, RMSE y Bias; las columnas originales no se sobrescriben.
 - **Se exige pero no se usa analíticamente:** `ID`, `ML_STATUS`, `SCP_STATUS`, `COPIED_AT`, `WINNER_MODEL_*`, `FINALIST_METHOD_*`, `FINALIST_MODEL_*`, `WINNER_IMPROVEMENT_PCT_*` (esta última solo se coerciona). Esto hace el contrato más estricto que el consumo real.
 - **Derivadas visuales:** etiquetas de periodo, veredictos por signo, `N/D`, flags de estado HTML, nombres de carpeta y URLs.
@@ -323,20 +323,20 @@ No se parsea `COPIED_AT`, no existe `RUN_START_DATE` en el contrato, y `ID_BATCH
 |---|---|---|---|---|
 | Cobertura | Medir evaluabilidad | `HAS_BASE_CANDIDATE==1` en periodos parciales; universo `COMPARISON_STATUS` (todas las filas) en `6M` | `n_comparable/n_candidates*100` (mismo universo que la población del periodo, ver §10.2) | cliente/periodo y global |
 | No comparables | Explicar ausencias | candidato y no comparable P | conteo por motivo derivado y por status original | tablas/gráficos cobertura |
-| Exclusión ML | Contar flags/motivos | candidatos con `HAS_ML_EXCLUDED==1` | candidatos; no depende realmente de P | repetido por periodo |
+| Exclusión del Optimizer | Contar flags/motivos | candidatos con `HAS_ML_EXCLUDED==1` | candidatos; no depende realmente de P | repetido por periodo |
 | WAPE agregado | Comparar error ponderado | filas comparables de P | `sum(abs_error)/sum(history)` | cliente, global, categoría |
-| Mejora agregada | Cambio de ML vs SCP | mismo universo | `(WAPE_SCP-WAPE_ML)/WAPE_SCP*100` si SCP>0 | cliente/global/categoría |
+| Mejora agregada | Cambio de Optimizer vs Auto | mismo universo | `(WAPE_SCP-WAPE_ML)/WAPE_SCP*100` si SCP>0 | cliente/global/categoría |
 | Reducción absoluta | Impacto en unidades | mismo universo | `sum(SCP_ABS)-sum(ML_ABS)` | cliente/global/categoría |
-| Ganadores | Frecuencia ML/SCP/TIE | winner no nulo en comparables | conteo/total winner no nulo | cliente/global |
-| Mejora por serie | Distribución asimétrica ML vs SCP | comparables con ambos WAPE y caso calculable | misma fórmula por fila | media, mediana, std, p10/25/75/90, extremos |
+| Ganadores | Frecuencia Auto/Optimizer/Empate (raw `SCP/ML/TIE`) | winner no nulo en comparables | conteo/total winner no nulo | cliente/global |
+| Mejora por serie | Distribución asimétrica Optimizer vs Auto | comparables con ambos WAPE y caso calculable | misma fórmula por fila | media, mediana, std, p10/25/75/90, extremos |
 | Mejora por cliente | Cada cliente pesa igual | un WAPE agregado por cliente; NaN sin performance | descriptivos sobre evaluables | global |
-| Modelos | Frecuencia y valor | comparables 6M | win rate ML, WAPE, mejora, reducción, % volumen | ML/SCP best model |
-| Clasificaciones | Segmentación categórica | comparables 6M | mismas métricas por categoría | ML classification/type, series y SCP classification |
+| Modelos | Frecuencia y valor | comparables 6M | win rate Optimizer, WAPE, mejora, reducción, % volumen | campos técnicos `ML/SCP best model` |
+| Clasificaciones | Segmentación categórica | comparables 6M | mismas métricas por categoría | campos técnicos `ML classification/type`, series y `SCP classification` |
 | Impacto por cliente | Concentración | clientes con reducción >0 o <0 | % dentro de positivos o deterioros, nunca sobre neto | dos rankings globales |
 | Rankings de serie | Casos de impacto/riesgo | comparables 6M | orden por reducción o mejora | top 20 tablas, 15 PNG, 10 HTML |
 | Calidad | Reconciliar contrato | todas las filas disponibles | tolerancias abs `1e-6`, rel `1e-4` | issues por fichero/periodo |
 
-La mejora por serie no usa `WINNER_IMPROVEMENT_PCT_*`: reconstruye una métrica con ML como referencia fija. Por tanto puede ser negativa y, en una fila marcada TIE, puede ser pequeña pero distinta de cero. La mejora del backend, en cambio, mide ganador frente a finalista, siempre es no negativa y vale 0 para TIE.
+La mejora por serie no usa `WINNER_IMPROVEMENT_PCT_*`: reconstruye la métrica direccional Optimizer vs Auto. Por tanto puede ser negativa y, en una fila marcada técnicamente `TIE`, puede ser pequeña pero distinta de cero. La mejora del backend, en cambio, mide ganador frente a finalista, siempre es no negativa y vale 0 para `TIE`.
 
 ### 10.2 Comparabilidad exacta
 
@@ -370,7 +370,7 @@ Pertenencia a la población de `6M` y evaluabilidad de una métrica concreta son
 | Cobertura/no comparables/exclusiones | Implementado, con las diferencias de máscara descritas |
 | Ganadores y empates | Implementado usando `WINNER_METHOD_*`; empate no reconstruido salvo auditoría ambos cero |
 | OLDER_3M, RECENT_3M, 6M y evolución mensual | Implementado |
-| Modelos SCP/ML y clasificaciones | Implementado principalmente para 6M |
+| Modelos de Auto/Optimizer y clasificaciones | Implementado principalmente para 6M |
 | Bias, MAE, RMSE | Solo auditoría de coherencia; no agregación/reporting de performance |
 | WAPE y mejora | Implementado |
 | Rankings e impacto | Implementado |
@@ -406,12 +406,12 @@ Pertenencia a la población de `6M` y evaluabilidad de una métrica concreta son
 | Bias | `SCP_BIAS_*`, `ML_BIAS_*` | solo QC | Sí para auditoría | Ídem |
 | Winner | `WINNER_METHOD_*` | fuente de verdad | No, salvo ambos WAPE cero | El backend ya documenta la fórmula completa, pero el código sigue diciendo que no es auditable |
 | Winner/finalista modelo | `WINNER_MODEL_*`, `FINALIST_*` | obligatorios, no consumidos | No | Sobrevalidación y comentario engañoso |
-| Mejora del ganador | `WINNER_IMPROVEMENT_PCT_*` | obligatoria, no consumida | Reporting calcula otra mejora | Semántica distinta: ganador-finalista vs ML-SCP |
+| Mejora del ganador | `WINNER_IMPROVEMENT_PCT_*` | obligatoria, no consumida | Reporting calcula otra mejora | Semántica distinta: ganador-finalista vs Optimizer-Auto |
 | Status | `COMPARISON_STATUS` | fuente de verdad de la población de `6M`/global (`==COMPARABLE`); distribución en periodos parciales | No | Selecciona la comparabilidad de `6M`; no interviene en periodos parciales |
 | Base | `HAS_BASE_CANDIDATE` | filtro candidato en periodos parciales; cobertura/auditoría en `6M` (no filtra su población) | No | Coincide con backend |
 | Flags calculado | `HAS_SCP_CALCULATED`, `HAS_ML_CALCULATED` | QC forecast presente con flag 0 | No | No seleccionan comparables, coherente con que son trazas best-effort |
-| Exclusión ML | `HAS_ML_EXCLUDED`, `ML_EXCLUSION_REASON` | cobertura/motivos | No | No se excluye expresamente de la máscara; se confía en nulos de métricas |
-| Sin output SCP | `SCP_NO_OUTPUT_REASON` | motivo cuando forecast SCP del periodo es nulo | No | Se repite por periodo aunque el motivo sea de fila |
+| Exclusión del Optimizer | `HAS_ML_EXCLUDED`, `ML_EXCLUSION_REASON` | cobertura/motivos | No | No se excluye expresamente de la máscara; se confía en nulos de métricas |
+| Sin output Auto | `SCP_NO_OUTPUT_REASON` | motivo cuando el forecast Auto del periodo es nulo | No | Se repite por periodo aunque el motivo sea de fila |
 | Nulos | Todos | NaN; excluidos según máscara/formula | No se rellenan con cero | Compatible con `NULL != 0` |
 | Ceros | Forecast/error/WAPE | preservados; historia 0 no comparable | No | Forecast cero compatible; WAPE cero tiene casos especiales |
 
@@ -435,7 +435,7 @@ La entrada es `analyze_global(results)`. Solo incluye clientes con `file_valid=T
 | Cabecera/resumen/perspectivas | `html_view_models` + 6M | tablas HTML | `index.html` |
 | Clientes y cobertura | `client_period_tables`, resultados válidos | tabla; cobertura por cliente | HTML/XLSX/MD/PNG |
 | Semestre | `periods['6M']` | WAPE, mejora, reducción, media/mediana cliente | XLSX/MD/PNG |
-| Trimestres | `RECENT_3M`, `OLDER_3M` | WAPE y mejora | XLSX/MD/PNG |
+| Bloques de 3 meses | `RECENT_3M`, `OLDER_3M` | WAPE y mejora Optimizer vs Auto | XLSX/MD/PNG |
 | Evolución mensual | `M1..M6` | WAPE global y mejora por cliente | HTML/XLSX/MD/PNG |
 | Modelos | `global_category_performance_table(...,'ML_BEST_MODEL')` 6M | top 10 | XLSX/MD/PNG |
 | Clasificaciones | cuatro categorías en Excel; series en gráfico/MD | tablas/rates | XLSX/MD/PNG |
@@ -458,7 +458,7 @@ Solo se sustituyen caracteres incompatibles con Windows; no hay timestamps ni ve
 | Identificación/estado | `ClientSource`, quality | fichero | HTML/MD/XLSX/log |
 | Cobertura/status/motivos | `PeriodResult`, status original | candidatos | HTML/MD/XLSX/PNG |
 | 6M | WAPE/reducción/winner/descriptivos | comparable 6M | HTML/MD/XLSX/PNG |
-| Trimestres | dos `PeriodResult` agregados | comparable por trimestre | HTML/MD/XLSX/PNG |
+| Bloques de 3 meses | dos `PeriodResult` agregados | comparable por bloque | HTML/MD/XLSX/PNG |
 | Mensual | `M1..M6` | comparable por mes | HTML/MD/XLSX/PNG |
 | Modelos | `category_performance_table` | comparable 6M | HTML/MD/XLSX/PNG |
 | Clasificaciones | cuatro columnas categóricas | comparable 6M | HTML/MD/XLSX; dos PNG |
@@ -489,11 +489,11 @@ Los números HTML usan miles `.` y decimales `,`; WAPE se convierte de fracción
 
 | Subcarpeta | Gráficos posibles |
 |---|---|
-| `coverage` | status; cobertura por periodo; motivos ML; motivos sin output SCP |
-| `semester` | WAPE SCP/ML; winners; histograma mejora; error absoluto; win rate modelo ML |
-| `quarters` | WAPE de cada trimestre; mejora; winners; reducción comparativa |
+| `coverage` | status; cobertura por periodo; motivos del Optimizer; motivos sin output Auto |
+| `semester` | WAPE Auto/Optimizer; winners visibles Auto/Optimizer/Empate; histograma de mejora Optimizer vs Auto; error absoluto; win rate del modelo Optimizer |
+| `quarters` | WAPE de cada bloque de 3 meses; mejora Optimizer vs Auto; winners; reducción comparativa |
 | `monthly` | evolución WAPE, mejora, reducción, winners y cobertura |
-| `models` | win rate modelos ML; frecuencia modelos SCP |
+| `models` | win rate de modelos seleccionados por Optimizer; frecuencia de modelos Auto |
 | `classifications` | win rate por `SERIES_CLASSIFICATION` y `ML_CLASSIFICATION` |
 | `impact_and_risk` | top reducciones/aumentos absolutos y porcentuales |
 
@@ -501,7 +501,7 @@ Máximo nominal: 29 PNG por cliente. Con cero comparables solo se generan gráfi
 
 ### 14.3 Gráficos globales
 
-Cobertura por cliente (1), semestre (4), trimestres (2), mensual (2), indicadores por periodo (2), modelos (1), clasificaciones (1) e impacto/riesgo (2): máximo nominal 15 PNG.
+Cobertura por cliente (1), semestre (4), bloques de 3 meses (2), mensual (2), indicadores por periodo (2), modelos (1), clasificaciones (1) e impacto/riesgo (2): máximo nominal 15 PNG.
 
 ### 14.4 Portabilidad HTML
 
@@ -559,7 +559,7 @@ El código actual publica en `outputs/runs/<run-name>/`, no directamente en `out
 | Muestra pequeña | `<10` | models | categorías | No |
 | Top rankings | 20/15/10 según formato | models/charts/HTML | tablas/gráficos | Solo argumento interno |
 | Clip visual mejora | ±100% | charts | histogramas | No |
-| Colores | ML azul, SCP rojo, TIE gris | charts | PNG | No |
+| Colores | Optimizer azul, Auto rojo, Empate gris | charts | PNG | No |
 | Issues consola | 6 | entrypoint | stdout | No |
 
 No hay configuración de logging, templates, CSS, cliente, batch, run, ventana temporal, delimitador o encoding.
@@ -662,7 +662,7 @@ Otras deudas:
 - El global de winners ignora valores `OTHER` en su denominador, mientras el cliente los incluye en el total válido; si aparecen categorías inesperadas, los porcentajes difieren.
 - No se valida que abs error/squared error/WAPE sean no negativos.
 - `int(ID_CLIENT)` no comprueba que el valor sea entero antes de convertir.
-- El mismo flag/motivo de exclusión ML se repite por periodo aunque no sea temporal.
+- El mismo flag/motivo técnico de exclusión del Optimizer se repite por periodo aunque no sea temporal.
 - Sin lock de dependencias ni metadata de versiones en manifest.
 
 ## 21. Compatibilidad con `TA_FOV_SCP_ML_SERIES_COMPARISON`
@@ -818,7 +818,7 @@ stateDiagram-v2
 3. La tabla no aporta un nombre de cliente en el contrato observado. ¿Se acepta mostrar solo `ID_CLIENT`?
 4. **RESUELTO (Fase 4):** para 6M prevalece el status backend (`COMPARISON_STATUS`); la máscara reporting queda solo como auditoría/reconciliación (ver §10.2).
 5. **RESUELTO (Fase 4):** para meses/trimestres se confirma mantener máscaras específicas por periodo, sin usar `COMPARISON_STATUS` (ver §10.2).
-6. ¿Debe mostrarse `WINNER_IMPROVEMENT_PCT` además de la mejora ML-vs-SCP? Son métricas distintas.
+6. ¿Debe mostrarse `WINNER_IMPROVEMENT_PCT` además de la mejora Optimizer vs Auto? Son métricas distintas.
 7. ¿Las columnas actualmente obligatorias pero no usadas deben seguir siendo requisito de integridad del full export?
 8. El documento backend enlaza un diccionario de datos que no está en este repositorio. Por ello no se confirmaron tipos SQL exactos, longitudes ni nullability columna por columna.
 9. Los outputs existentes demuestran estructura histórica, no que el HEAD actual produzca exactamente los mismos bytes; no se ejecutó el pipeline por restricción expresa.
@@ -980,8 +980,10 @@ git diff --check; git status --short; git diff --numstat -- docs\reporting-flow.
 
 | Término | Definición en este proyecto |
 |---|---|
-| SCP | Método/ruta de forecast existente comparada con ML |
-| ML | Método de machine learning candidato |
+| SCP Classic Auto (Auto) | Método/ruta de forecast existente |
+| SCP Classic Optimizer (Optimizer) | Motor de clasificación, selección y routing de modelos comparado con Auto |
+| `SCP_*` / `ML_*` | Prefijos técnicos históricos preservados en el schema y el código |
+| ML | Familia de modelos de aprendizaje automático cuando se usa en ese sentido específico |
 | Serie/configuración | Fila lógica identificada por cliente/configuración dentro de batch/run |
 | Candidata | Fila con `HAS_BASE_CANDIDATE=1` |
 | Comparable | Candidata que supera la máscara específica del periodo |
@@ -989,7 +991,7 @@ git diff --check; git status --short; git diff --numstat -- docs\reporting-flow.
 | MAE | Error absoluto medio por meses con histórico positivo; auditoría |
 | RMSE | Raíz del error cuadrático medio por meses positivos; auditoría |
 | Bias | Error firmado total/histórico total; auditoría |
-| Mejora ML vs SCP | `(WAPE_SCP-WAPE_ML)/WAPE_SCP*100`; puede ser negativa |
+| Mejora Optimizer vs Auto | `(WAPE_SCP-WAPE_ML)/WAPE_SCP*100`; puede ser negativa |
 | Winner improvement | Campo backend ganador-finalista; no usado actualmente |
 | Cobertura | Comparables/candidatas |
 | Run de reporting | Carpeta inmutable/publicada bajo `outputs/runs` |

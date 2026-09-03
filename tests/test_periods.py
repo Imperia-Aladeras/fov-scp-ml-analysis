@@ -26,7 +26,10 @@ def test_all_periods_contains_nine_technical_periods():
 
 
 def test_visible_labels_do_not_use_forbidden_terms():
-    forbidden = ["trimestre reciente", "trimestre anterior", "Q1", "Q2"]
+    forbidden = [
+        "primer trimestre del semestre", "segundo trimestre del semestre",
+        "trimestre reciente", "trimestre anterior", "Q1", "Q2",
+    ]
     for period in ALL_PERIODS:
         label = visible_label(period)
         for term in forbidden:
@@ -34,7 +37,12 @@ def test_visible_labels_do_not_use_forbidden_terms():
 
 
 def test_visible_label_semester():
-    assert visible_label("6M") == "Semestre completo (M1-M6)"
+    assert visible_label("6M") == "Semestre completo (M1–M6)"
+
+
+def test_visible_labels_use_canonical_recent_and_older_copy():
+    assert visible_label("RECENT_3M") == "3 meses recientes (M3–M1)"
+    assert visible_label("OLDER_3M") == "3 meses anteriores (M6–M4)"
 
 
 def test_period_columns_monthly_naming():
